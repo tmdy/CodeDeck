@@ -1,0 +1,537 @@
+{
+  "version": 1,
+  "updatedAt": "2026-05-04T03:27:53.589Z",
+  "entries": {
+    "codex:minimax-docx": [
+      "文档操作"
+    ],
+    "codex:minimax-pdf": [
+      "文档操作"
+    ],
+    "codex:minimax-xlsx": [
+      "文档操作"
+    ],
+    "codex:0-autoresearch-skill": [
+      "AI研究"
+    ],
+    "codex:academic-plotting": [
+      "AI研究"
+    ],
+    "codex:accelerate": [
+      "AI研究"
+    ],
+    "codex:audiocraft": [
+      "AI研究"
+    ],
+    "codex:autogpt": [
+      "AI研究"
+    ],
+    "codex:awq": [
+      "AI研究"
+    ],
+    "codex:axolotl": [
+      "AI研究"
+    ],
+    "codex:bigcode-evaluation-harness": [
+      "AI研究"
+    ],
+    "codex:bitsandbytes": [
+      "AI研究"
+    ],
+    "codex:blip-2": [
+      "AI研究"
+    ],
+    "codex:chroma": [
+      "AI研究"
+    ],
+    "codex:clip": [
+      "AI研究"
+    ],
+    "codex:constitutional-ai": [
+      "AI研究"
+    ],
+    "codex:crewai": [
+      "AI研究"
+    ],
+    "codex:deepspeed": [
+      "AI研究"
+    ],
+    "codex:dspy": [
+      "AI研究"
+    ],
+    "codex:faiss": [
+      "AI研究"
+    ],
+    "codex:flash-attention": [
+      "AI研究"
+    ],
+    "codex:gguf": [
+      "AI研究"
+    ],
+    "codex:gptq": [
+      "AI研究"
+    ],
+    "codex:grpo-rl-training": [
+      "AI研究"
+    ],
+    "codex:guidance": [
+      "AI研究"
+    ],
+    "codex:hqq": [
+      "AI研究"
+    ],
+    "codex:huggingface-tokenizers": [
+      "AI研究"
+    ],
+    "codex:instructor": [
+      "AI研究"
+    ],
+    "codex:knowledge-distillation": [
+      "AI研究"
+    ],
+    "codex:lambda-labs": [
+      "AI研究"
+    ],
+    "codex:langchain": [
+      "AI研究"
+    ],
+    "codex:langsmith": [
+      "AI研究"
+    ],
+    "codex:litgpt": [
+      "AI研究"
+    ],
+    "codex:llama-cpp": [
+      "AI研究"
+    ],
+    "codex:llama-factory": [
+      "AI研究"
+    ],
+    "codex:llamaguard": [
+      "AI研究"
+    ],
+    "codex:llamaindex": [
+      "AI研究"
+    ],
+    "codex:llava": [
+      "AI研究"
+    ],
+    "codex:lm-evaluation-harness": [
+      "AI研究"
+    ],
+    "codex:long-context": [
+      "AI研究"
+    ],
+    "codex:mamba": [
+      "AI研究"
+    ],
+    "codex:megatron-core": [
+      "AI研究"
+    ],
+    "codex:miles": [
+      "AI研究"
+    ],
+    "codex:ml-paper-writing": [
+      "AI研究"
+    ],
+    "codex:mlflow": [
+      "AI研究"
+    ],
+    "codex:modal": [
+      "AI研究"
+    ],
+    "codex:model-merging": [
+      "AI研究"
+    ],
+    "codex:model-pruning": [
+      "AI研究"
+    ],
+    "codex:moe-training": [
+      "AI研究"
+    ],
+    "codex:nanogpt": [
+      "AI研究"
+    ],
+    "codex:nemo-curator": [
+      "AI研究"
+    ],
+    "codex:nemo-evaluator": [
+      "AI研究"
+    ],
+    "codex:nemo-guardrails": [
+      "AI研究"
+    ],
+    "codex:nnsight": [
+      "AI研究"
+    ],
+    "codex:openrlhf": [
+      "AI研究"
+    ],
+    "codex:outlines": [
+      "AI研究"
+    ],
+    "codex:peft": [
+      "AI研究"
+    ],
+    "codex:phoenix": [
+      "AI研究"
+    ],
+    "codex:pinecone": [
+      "AI研究"
+    ],
+    "codex:prompt-guard": [
+      "AI研究"
+    ],
+    "codex:pytorch-fsdp2": [
+      "AI研究"
+    ],
+    "codex:pytorch-lightning": [
+      "AI研究"
+    ],
+    "codex:pyvene": [
+      "AI研究"
+    ],
+    "codex:qdrant": [
+      "AI研究"
+    ],
+    "codex:ray-data": [
+      "AI研究"
+    ],
+    "codex:ray-train": [
+      "AI研究"
+    ],
+    "codex:rwkv": [
+      "AI研究"
+    ],
+    "codex:saelens": [
+      "AI研究"
+    ],
+    "codex:segment-anything": [
+      "AI研究"
+    ],
+    "codex:sentence-transformers": [
+      "AI研究"
+    ],
+    "codex:sentencepiece": [
+      "AI研究"
+    ],
+    "codex:sglang": [
+      "AI研究"
+    ],
+    "codex:simpo": [
+      "AI研究"
+    ],
+    "codex:skypilot": [
+      "AI研究"
+    ],
+    "codex:slime": [
+      "AI研究"
+    ],
+    "codex:speculative-decoding": [
+      "AI研究"
+    ],
+    "codex:stable-diffusion": [
+      "AI研究"
+    ],
+    "codex:tensorboard": [
+      "AI研究"
+    ],
+    "codex:tensorrt-llm": [
+      "AI研究"
+    ],
+    "codex:torchforge": [
+      "AI研究"
+    ],
+    "codex:torchtitan": [
+      "AI研究"
+    ],
+    "codex:trl-fine-tuning": [
+      "AI研究"
+    ],
+    "codex:unsloth": [
+      "AI研究"
+    ],
+    "codex:verl": [
+      "AI研究"
+    ],
+    "codex:vllm": [
+      "AI研究"
+    ],
+    "codex:weights-and-biases": [
+      "AI研究"
+    ],
+    "codex:whisper": [
+      "AI研究"
+    ],
+    "claude:0-autoresearch-skill": [
+      "AI研究"
+    ],
+    "claude:academic-plotting": [
+      "AI研究"
+    ],
+    "claude:accelerate": [
+      "AI研究"
+    ],
+    "claude:audiocraft": [
+      "AI研究"
+    ],
+    "claude:autogpt": [
+      "AI研究"
+    ],
+    "claude:awq": [
+      "AI研究"
+    ],
+    "claude:axolotl": [
+      "AI研究"
+    ],
+    "claude:bigcode-evaluation-harness": [
+      "AI研究"
+    ],
+    "claude:bitsandbytes": [
+      "AI研究"
+    ],
+    "claude:blip-2": [
+      "AI研究"
+    ],
+    "claude:chroma": [
+      "AI研究"
+    ],
+    "claude:clip": [
+      "AI研究"
+    ],
+    "claude:constitutional-ai": [
+      "AI研究"
+    ],
+    "claude:crewai": [
+      "AI研究"
+    ],
+    "claude:deepspeed": [
+      "AI研究"
+    ],
+    "claude:dspy": [
+      "AI研究"
+    ],
+    "claude:faiss": [
+      "AI研究"
+    ],
+    "claude:flash-attention": [
+      "AI研究"
+    ],
+    "claude:gguf": [
+      "AI研究"
+    ],
+    "claude:gptq": [
+      "AI研究"
+    ],
+    "claude:grpo-rl-training": [
+      "AI研究"
+    ],
+    "claude:guidance": [
+      "AI研究"
+    ],
+    "claude:hqq": [
+      "AI研究"
+    ],
+    "claude:huggingface-tokenizers": [
+      "AI研究"
+    ],
+    "claude:instructor": [
+      "AI研究"
+    ],
+    "claude:knowledge-distillation": [
+      "AI研究"
+    ],
+    "claude:lambda-labs": [
+      "AI研究"
+    ],
+    "claude:langchain": [
+      "AI研究"
+    ],
+    "claude:langsmith": [
+      "AI研究"
+    ],
+    "claude:litgpt": [
+      "AI研究"
+    ],
+    "claude:llama-cpp": [
+      "AI研究"
+    ],
+    "claude:llama-factory": [
+      "AI研究"
+    ],
+    "claude:llamaguard": [
+      "AI研究"
+    ],
+    "claude:llamaindex": [
+      "AI研究"
+    ],
+    "claude:llava": [
+      "AI研究"
+    ],
+    "claude:lm-evaluation-harness": [
+      "AI研究"
+    ],
+    "claude:long-context": [
+      "AI研究"
+    ],
+    "claude:mamba": [
+      "AI研究"
+    ],
+    "claude:megatron-core": [
+      "AI研究"
+    ],
+    "claude:miles": [
+      "AI研究"
+    ],
+    "claude:ml-paper-writing": [
+      "AI研究"
+    ],
+    "claude:mlflow": [
+      "AI研究"
+    ],
+    "claude:modal": [
+      "AI研究"
+    ],
+    "claude:model-merging": [
+      "AI研究"
+    ],
+    "claude:model-pruning": [
+      "AI研究"
+    ],
+    "claude:moe-training": [
+      "AI研究"
+    ],
+    "claude:nanogpt": [
+      "AI研究"
+    ],
+    "claude:nemo-curator": [
+      "AI研究"
+    ],
+    "claude:nemo-evaluator": [
+      "AI研究"
+    ],
+    "claude:nemo-guardrails": [
+      "AI研究"
+    ],
+    "claude:nnsight": [
+      "AI研究"
+    ],
+    "claude:openrlhf": [
+      "AI研究"
+    ],
+    "claude:outlines": [
+      "AI研究"
+    ],
+    "claude:peft": [
+      "AI研究"
+    ],
+    "claude:phoenix": [
+      "AI研究"
+    ],
+    "claude:pinecone": [
+      "AI研究"
+    ],
+    "claude:prompt-guard": [
+      "AI研究"
+    ],
+    "claude:pytorch-fsdp2": [
+      "AI研究"
+    ],
+    "claude:pytorch-lightning": [
+      "AI研究"
+    ],
+    "claude:pyvene": [
+      "AI研究"
+    ],
+    "claude:qdrant": [
+      "AI研究"
+    ],
+    "claude:ray-data": [
+      "AI研究"
+    ],
+    "claude:ray-train": [
+      "AI研究"
+    ],
+    "claude:rwkv": [
+      "AI研究"
+    ],
+    "claude:saelens": [
+      "AI研究"
+    ],
+    "claude:segment-anything": [
+      "AI研究"
+    ],
+    "claude:sentence-transformers": [
+      "AI研究"
+    ],
+    "claude:sentencepiece": [
+      "AI研究"
+    ],
+    "claude:sglang": [
+      "AI研究"
+    ],
+    "claude:simpo": [
+      "AI研究"
+    ],
+    "claude:skypilot": [
+      "AI研究"
+    ],
+    "claude:slime": [
+      "AI研究"
+    ],
+    "claude:speculative-decoding": [
+      "AI研究"
+    ],
+    "claude:stable-diffusion": [
+      "AI研究"
+    ],
+    "claude:tensorboard": [
+      "AI研究"
+    ],
+    "claude:tensorrt-llm": [
+      "AI研究"
+    ],
+    "claude:torchforge": [
+      "AI研究"
+    ],
+    "claude:torchtitan": [
+      "AI研究"
+    ],
+    "claude:trl-fine-tuning": [
+      "AI研究"
+    ],
+    "claude:unsloth": [
+      "AI研究"
+    ],
+    "claude:verl": [
+      "AI研究"
+    ],
+    "claude:vllm": [
+      "AI研究"
+    ],
+    "claude:weights-and-biases": [
+      "AI研究"
+    ],
+    "claude:whisper": [
+      "AI研究"
+    ],
+    "codex:brainstorming-research-ideas": [
+      "AI研究"
+    ],
+    "codex:creative-thinking-for-research": [
+      "AI研究"
+    ],
+    "codex:transformer-lens": [
+      "AI研究"
+    ],
+    "claude:brainstorming-research-ideas": [
+      "AI研究"
+    ],
+    "claude:creative-thinking-for-research": [
+      "AI研究"
+    ],
+    "claude:transformer-lens": [
+      "AI研究"
+    ]
+  }
+}

@@ -1,0 +1,213 @@
+// 本地状态持久化 — 翻译自 Go internal/storage/localstate/store.go
+// 与 Go/Python 版本的 local_state.json 格式完全兼容
+
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import type { ProfileKey, RuntimeSettings, GlobalSettings } from "../profile/types.js";
+import {
+  normalizeProvider,
+  normalizeRuntimeSettings,
+  normalizeGlobalSettings,
+  DEFAULT_PROVIDER,
+} from "../profile/types.js";
+import {
+  buildKey,
+  splitKey,
+  normalizeKeyWithFallback,
+} from "../profile/keys-internal.js";
+import type { ConnectivityTestState } from "../connectivity/types.js";
+import type { ModelMappingEntry } from "../model-mapping/types.js";
+import type { ParameterSettings } from "../parameter/types.js";
+import type { LocalState } from "./local-state.js";
+import { defaultLocalState, ensureInitialized } from "./local-state.js";
+
+interface RawState {
+  selected_provider: string;
+  selected_profile_key: string;
+  selected_profile_name?: string;  // 遗留字段
+  selected_profile_key_by_provider: Record<string, string>;
+  profile_order_by_provider: Record<string, string[]>;
+  runtime_by_profile: Record<string, RuntimeSettings>;
+  connectivity_tests_by_profile: Record<string, ConnectivityTestState>;
+  global_settings: GlobalSettings;
+  model_mappings?: ModelMappingEntry[];
+  parameter_settings?: ParameterSettings;
+}
+
+export class LocalStateStore {
+  private filePath: string;
+
+  constructor(filePath: string) {
+    this.filePath = filePath;
+  }
+
+  async load(): Promise<LocalState> {
+    try {
+      await fs.access(this.filePath);
+    } catch {
+      return defaultLocalState();
+    }
+
+    let raw: RawState;
+    try {
+      const data = await fs.readFile(this.filePath, "utf-8");
+      raw = JSON.parse(data);
+    } catch {
+      return defaultLocalState();
+    }
+
+    return normalizeState(raw);
+  }
+
+  async save(state: LocalState): Promise<void> {
+    const normalized = ensureInitialized({ ...state });
+    const selectedProviderID = normalizeProvider(normalized.selected_provider) || DEFAULT_PROVIDER;
+
+    if (normalized.selected_profile_key) {
+      normalized.selected_profile_key_by_provider[selectedProviderID] =
+        normalized.selected_profile_key;
+    }
+
+    const payload: RawState = {
+      selected_provider: selectedProviderID,
+      selected_profile_key: normalized.selected_profile_key,
+      selected_profile_key_by_provider: {},
+      profile_order_by_provider: {},
+      runtime_by_profile: {},
+      connectivity_tests_by_profile: {},
+      global_settings: normalizeGlobalSettings(normalized.global_settings),
+      model_mappings: normalized.model_mappings ?? [],
+      parameter_settings: normalized.parameter_settings,
+    };
+
+    // 序列化 selected keys by provider
+    for (const [providerID, key] of Object.entries(normalized.selected_profile_key_by_provider)) {
+      const nKey = normalizeKeyWithFallback(key, providerID);
+      if (nKey) {
+        payload.selected_profile_key_by_provider[normalizeProvider(providerID)] = nKey;
+      }
+    }
+
+    // 序列化 profile order by provider
+    for (const [providerID, orderedKeys] of Object.entries(normalized.profile_order_by_provider)) {
+      const nProv = normalizeProvider(providerID);
+      payload.profile_order_by_provider[nProv] = orderedKeys
+        .map((k) => normalizeKeyWithFallback(k, nProv))
+        .filter(Boolean);
+    }
+
+    // 序列化 runtime by profile
+    for (const [key, runtime] of Object.entries(normalized.runtime_by_profile)) {
+      const [prov] = splitKey(key);
+      const nKey = normalizeKeyWithFallback(key, prov);
+      if (nKey) {
+        payload.runtime_by_profile[nKey] = normalizeRuntimeSettings(runtime, prov);
+      }
+    }
+
+    // 序列化 connectivity tests
+    for (const [key, testState] of Object.entries(normalized.connectivity_tests_by_profile)) {
+      const [prov, name] = splitKey(key);
+      const nKey = normalizeKeyWithFallback(key, prov);
+      if (!nKey) continue;
+
+      const ts = { ...testState };
+      ts.provider = ts.provider ? normalizeProvider(ts.provider) : prov;
+      ts.profile_name = ts.profile_name || name;
+      payload.connectivity_tests_by_profile[nKey] = ts;
+    }
+
+    const dir = path.dirname(this.filePath);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(this.filePath, JSON.stringify(payload, null, 2), "utf-8");
+  }
+}
+
+/**
+ * 将原始状态数据标准化为 LocalState
+ * 处理遗留 selected_profile_name → selected_profile_key 迁移
+ */
+function normalizeState(raw: RawState): LocalState {
+  const state = defaultLocalState();
+  const legacyProviderID = normalizeProvider(raw.selected_provider) || DEFAULT_PROVIDER;
+
+  state.selected_provider = legacyProviderID;
+  state.global_settings = normalizeGlobalSettings(raw.global_settings ?? state.global_settings);
+  state.model_mappings = raw.model_mappings ?? [];
+  if (raw.parameter_settings) {
+    state.parameter_settings = raw.parameter_settings;
+  }
+
+  // selected_profile_key 处理
+  state.selected_profile_key = normalizeKeyWithFallback(
+    raw.selected_profile_key ?? "",
+    legacyProviderID,
+  ) || "";
+
+  // 遗留 selected_profile_name 迁移
+  if (!state.selected_profile_key && raw.selected_profile_name) {
+    state.selected_profile_key = buildKey(legacyProviderID, raw.selected_profile_name);
+  }
+
+  // selected by provider
+  for (const [providerID, key] of Object.entries(raw.selected_profile_key_by_provider ?? {})) {
+    const nProv = normalizeProvider(providerID);
+    const nKey = normalizeKeyWithFallback(key, nProv);
+    if (nKey) state.selected_profile_key_by_provider[nProv] = nKey;
+  }
+  if (state.selected_profile_key) {
+    state.selected_profile_key_by_provider[legacyProviderID] = state.selected_profile_key;
+  }
+
+  // profile order
+  for (const [providerID, orderedKeys] of Object.entries(raw.profile_order_by_provider ?? {})) {
+    const nProv = normalizeProvider(providerID) || legacyProviderID;
+    state.profile_order_by_provider[nProv] = orderedKeys
+      .map((k) => normalizeKeyWithFallback(k, nProv))
+      .filter(Boolean) as ProfileKey[];
+  }
+
+  // runtime by profile
+  for (const [rawKey, runtime] of Object.entries(raw.runtime_by_profile ?? {})) {
+    const nKey = normalizeKeyWithFallback(rawKey, legacyProviderID);
+    if (!nKey) continue;
+    const [prov] = splitKey(nKey);
+    state.runtime_by_profile[nKey] = normalizeRuntimeSettings(runtime, prov);
+  }
+
+  // connectivity tests
+  for (const [rawKey, testState] of Object.entries(raw.connectivity_tests_by_profile ?? {})) {
+    const nKey = normalizeKeyWithFallback(rawKey, legacyProviderID);
+    if (!nKey) continue;
+    const [prov, name] = splitKey(nKey);
+    const ts = { ...testState };
+    ts.provider = ts.provider ? normalizeProvider(ts.provider) : prov;
+    ts.profile_name = ts.profile_name || name;
+    state.connectivity_tests_by_profile[nKey] = ts;
+  }
+
+  return ensureInitialized(state);
+}
+
+/**
+ * 深拷贝 LocalState（翻译自 Go cloneLocalState）
+ */
+export function cloneLocalState(state: LocalState): LocalState {
+  return {
+    selected_provider: state.selected_provider,
+    selected_profile_key: state.selected_profile_key,
+    selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+    profile_order_by_provider: Object.fromEntries(
+      Object.entries(state.profile_order_by_provider).map(([k, v]) => [k, [...v]]),
+    ),
+    runtime_by_profile: Object.fromEntries(
+      Object.entries(state.runtime_by_profile).map(([k, v]) => [k, { ...v }]),
+    ),
+    connectivity_tests_by_profile: Object.fromEntries(
+      Object.entries(state.connectivity_tests_by_profile).map(([k, v]) => [k, { ...v }]),
+    ),
+    global_settings: { ...state.global_settings },
+    model_mappings: state.model_mappings.map((m) => ({ ...m })),
+    parameter_settings: { ...state.parameter_settings },
+  };
+}
