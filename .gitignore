@@ -26,6 +26,7 @@ app-data/projects.json
 app-data/backups/
 app-data/operations/
 app-data/*.log
+app-data/codex-profiles/codex__999Code/.tmp/plugins/
 
 # Workflow artifacts
 .playwright-mcp/
