@@ -18,6 +18,12 @@ body {
   min-height: 100vh;
 }
 
+body.unlock-route {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 button,
 input,
 select {
@@ -55,6 +61,11 @@ select {
 
 #root {
   min-height: 100vh;
+}
+
+body.unlock-route #root {
+  min-height: 100vh;
+  overflow: hidden;
 }
 
 .app-shell {
@@ -535,6 +546,9 @@ ul {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  padding: 24px;
   background:
     radial-gradient(circle at top left, rgba(196, 155, 90, 0.18), transparent 28%),
     linear-gradient(135deg, #f6f1e6 0%, #eef1ec 55%, #e4edf4 100%);
@@ -546,8 +560,9 @@ ul {
   backdrop-filter: blur(12px);
   box-shadow: 0 24px 80px rgba(50, 68, 92, 0.15);
   border-radius: 28px;
-  padding: 40px;
-  width: 420px;
+  padding: 32px;
+  width: min(420px, calc(100vw - 48px));
+  max-width: 100%;
   display: grid;
   gap: 16px;
   text-align: center;
@@ -779,10 +794,20 @@ ul {
   gap: 10px;
 }
 
+.path-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.path-field input {
+  min-width: 0;
+}
+
 /* Profiles Layout */
 .profiles-layout {
   display: grid;
-  grid-template-columns: 260px 1fr 280px;
+  grid-template-columns: 260px minmax(0, 1fr) 320px;
   gap: 18px;
   align-items: start;
 }
@@ -790,6 +815,11 @@ ul {
 .profiles-left,
 .profiles-center,
 .profiles-right {
+  display: grid;
+  gap: 14px;
+}
+
+.profiles-launch-panel {
   display: grid;
   gap: 14px;
 }
@@ -895,6 +925,37 @@ ul {
 .session-meta {
   font-size: 0.82rem;
   color: #607084;
+}
+
+.session-picker {
+  gap: 12px;
+}
+
+.session-picker-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.session-picker-toolbar select {
+  min-width: 0;
+}
+
+.session-picker-summary {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.88);
+  border: 1px solid rgba(29, 39, 51, 0.08);
+}
+
+.session-picker-heading {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #31557a;
 }
 
 /* Settings Layout */

@@ -26,6 +26,8 @@ export interface ProviderCommandOptions {
   settingsFile?: string;
   baseUrl?: string;
   model?: string;
+  settingSources?: string;
+  wireApi?: string;
 }
 
 function createClaudeAdapter(): ProviderAdapter {
@@ -39,6 +41,8 @@ function createClaudeAdapter(): ProviderAdapter {
         sessionId: opts.sessionId,
         excludeUserSettings: opts.excludeUserSettings ?? false,
         settingsFile: opts.settingsFile,
+        settingSources: opts.settingSources,
+        model: opts.model,
       });
     },
     normalizeProfile(profile: Profile): Profile {
@@ -61,6 +65,7 @@ function createCodexAdapter(): ProviderAdapter {
         sessionId: opts.sessionId,
         baseUrl: opts.baseUrl ?? "",
         model: opts.model,
+        wireApi: opts.wireApi,
       });
     },
     normalizeProfile(profile: Profile): Profile {

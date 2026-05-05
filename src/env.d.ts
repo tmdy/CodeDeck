@@ -16,7 +16,7 @@ import type {
 import type { Profile, ProfileKey, RuntimeSettings, GlobalSettings } from "./shared/profile/types.js";
 import type { CommandPreview, LaunchRequest } from "./shared/launcher/types.js";
 import type { ConnectivityTestState } from "./shared/connectivity/types.js";
-import type { ModelMappingEntry } from "./shared/model-mapping/types.js";
+import type { ModelMappingsState } from "./shared/model-mapping/config-types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
 import type { LocalState } from "./shared/state/local-state.js";
 
@@ -48,6 +48,7 @@ declare global {
       // Auth
       checkEncryptedConfig: () => Promise<boolean>;
       unlock: (passphrase: string) => Promise<{ success: boolean }>;
+      skipUnlock: () => Promise<void>;
       initializeEncryption: (passphrase: string) => Promise<{ success: boolean }>;
 
       // Profile CRUD
@@ -58,9 +59,15 @@ declare global {
       selectProfile: (provider: string, key: ProfileKey) => Promise<void>;
       reorderProfiles: (provider: string, orderedKeys: ProfileKey[]) => Promise<void>;
       activateProvider: (provider: string) => Promise<void>;
+      pickWorkingDirectory: () => Promise<string | undefined>;
 
       // Launcher
-      previewForDraft: (draft: Profile, runtime: RuntimeSettings) => Promise<CommandPreview>;
+      previewForDraft: (
+        draft: Profile,
+        runtime: RuntimeSettings,
+        mappingsState?: ModelMappingsState,
+        sessionId?: string,
+      ) => Promise<CommandPreview>;
       previewForProfile: (profileKey: ProfileKey) => Promise<CommandPreview>;
       launch: (request: LaunchRequest) => Promise<void>;
 
@@ -72,18 +79,18 @@ declare global {
       testConnection: (profileKey: ProfileKey) => Promise<void>;
       getConnectivityState: (profileKey: ProfileKey) => Promise<ConnectivityTestState>;
 
-      // Model Mapping
-      listModelMappings: () => Promise<ModelMappingEntry[]>;
-      addModelMapping: (entry: Omit<ModelMappingEntry, "id">) => Promise<ModelMappingEntry>;
-      updateModelMapping: (id: string, update: Partial<ModelMappingEntry>) => Promise<ModelMappingEntry | null>;
-      deleteModelMapping: (id: string) => Promise<boolean>;
-      resolveModel: (provider: string, model: string) => Promise<string>;
+      // Model Mappings
+      getModelMappings: () => Promise<ModelMappingsState>;
+      saveModelMappings: (state: ModelMappingsState) => Promise<ModelMappingsState>;
+      fetchSiteModels: (draft: Pick<Profile, "url" | "key">) => Promise<{ models: string[] }>;
 
       // Settings
       getGlobalSettings: () => Promise<GlobalSettings>;
       updateGlobalSettings: (settings: Partial<GlobalSettings>) => Promise<GlobalSettings>;
       getParameterSettings: () => Promise<ParameterSettings>;
       updateParameterSettings: (settings: Partial<ParameterSettings>) => Promise<ParameterSettings>;
+      promptUnsavedProfileAction: () => Promise<"save" | "discard" | "cancel">;
+      promptLaunchWithUnsavedChanges: () => Promise<"save_and_launch" | "launch_saved" | "cancel">;
 
       // Events
       onStateChanged: (callback: (state: LocalState) => void) => () => void;

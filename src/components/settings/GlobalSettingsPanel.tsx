@@ -13,11 +13,11 @@ export function GlobalSettingsPanel({ settings, onChange, disabled }: GlobalSett
   return (
     <GlassCard title="全局设置">
       <label>
-        代理
+        全局代理
         <input
           value={settings.proxy ?? ""}
           onChange={(e) => onChange({ proxy: e.target.value })}
-          placeholder="HTTP 代理（可选）"
+          placeholder="HTTP 代理（作用于所有配置，可选）"
           disabled={disabled}
         />
       </label>

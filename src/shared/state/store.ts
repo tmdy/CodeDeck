@@ -16,8 +16,8 @@ import {
   normalizeKeyWithFallback,
 } from "../profile/keys-internal.js";
 import type { ConnectivityTestState } from "../connectivity/types.js";
-import type { ModelMappingEntry } from "../model-mapping/types.js";
 import type { ParameterSettings } from "../parameter/types.js";
+import { normalizeParameterSettings } from "../parameter/types.js";
 import type { LocalState } from "./local-state.js";
 import { defaultLocalState, ensureInitialized } from "./local-state.js";
 
@@ -30,7 +30,7 @@ interface RawState {
   runtime_by_profile: Record<string, RuntimeSettings>;
   connectivity_tests_by_profile: Record<string, ConnectivityTestState>;
   global_settings: GlobalSettings;
-  model_mappings?: ModelMappingEntry[];
+  model_mappings?: unknown[];
   parameter_settings?: ParameterSettings;
 }
 
@@ -76,8 +76,7 @@ export class LocalStateStore {
       runtime_by_profile: {},
       connectivity_tests_by_profile: {},
       global_settings: normalizeGlobalSettings(normalized.global_settings),
-      model_mappings: normalized.model_mappings ?? [],
-      parameter_settings: normalized.parameter_settings,
+      parameter_settings: normalizeParameterSettings(normalized.parameter_settings),
     };
 
     // 序列化 selected keys by provider
@@ -134,15 +133,19 @@ function normalizeState(raw: RawState): LocalState {
   state.selected_provider = legacyProviderID;
   state.global_settings = normalizeGlobalSettings(raw.global_settings ?? state.global_settings);
   state.model_mappings = raw.model_mappings ?? [];
-  if (raw.parameter_settings) {
-    state.parameter_settings = raw.parameter_settings;
-  }
+  state.parameter_settings = normalizeParameterSettings(raw.parameter_settings);
 
   // selected_profile_key 处理
   state.selected_profile_key = normalizeKeyWithFallback(
     raw.selected_profile_key ?? "",
     legacyProviderID,
   ) || "";
+  if (state.selected_profile_key) {
+    const [selectedProvider] = splitKey(state.selected_profile_key);
+    if (selectedProvider !== legacyProviderID) {
+      state.selected_profile_key = "";
+    }
+  }
 
   // 遗留 selected_profile_name 迁移
   if (!state.selected_profile_key && raw.selected_profile_name) {
@@ -153,7 +156,11 @@ function normalizeState(raw: RawState): LocalState {
   for (const [providerID, key] of Object.entries(raw.selected_profile_key_by_provider ?? {})) {
     const nProv = normalizeProvider(providerID);
     const nKey = normalizeKeyWithFallback(key, nProv);
-    if (nKey) state.selected_profile_key_by_provider[nProv] = nKey;
+    if (!nKey) continue;
+    const [keyProvider] = splitKey(nKey);
+    if (keyProvider === nProv) {
+      state.selected_profile_key_by_provider[nProv] = nKey;
+    }
   }
   if (state.selected_profile_key) {
     state.selected_profile_key_by_provider[legacyProviderID] = state.selected_profile_key;
@@ -201,13 +208,16 @@ export function cloneLocalState(state: LocalState): LocalState {
       Object.entries(state.profile_order_by_provider).map(([k, v]) => [k, [...v]]),
     ),
     runtime_by_profile: Object.fromEntries(
-      Object.entries(state.runtime_by_profile).map(([k, v]) => [k, { ...v }]),
+      Object.entries(state.runtime_by_profile).map(([k, v]) => [
+        k,
+        { ...v },
+      ]),
     ),
     connectivity_tests_by_profile: Object.fromEntries(
       Object.entries(state.connectivity_tests_by_profile).map(([k, v]) => [k, { ...v }]),
     ),
     global_settings: { ...state.global_settings },
-    model_mappings: state.model_mappings.map((m) => ({ ...m })),
+    model_mappings: state.model_mappings ? [...state.model_mappings] : undefined,
     parameter_settings: { ...state.parameter_settings },
   };
 }

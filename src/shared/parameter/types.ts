@@ -39,24 +39,78 @@ export interface ParameterSettings {
   cli_settings: CLISpecificSettings;
 }
 
+function stripWrappingSingleQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+export function normalizeParameterSettings(settings?: Partial<ParameterSettings> | null): ParameterSettings {
+  const defaults = defaultParameterSettings();
+  const launchModeArgs = {
+    ...defaults.launch_mode_args,
+    ...(settings?.launch_mode_args ?? {}),
+  };
+  if (settings?.launch_mode_args?.direct !== undefined) {
+    launchModeArgs.new = settings.launch_mode_args.direct;
+  }
+  if (settings?.launch_mode_args?.continue !== undefined) {
+    launchModeArgs.continue_last = settings.launch_mode_args.continue;
+  }
+  const normalized: ParameterSettings = {
+    launch_timeout_ms: settings?.launch_timeout_ms ?? defaults.launch_timeout_ms,
+    connectivity_test_timeout_ms:
+      settings?.connectivity_test_timeout_ms ?? defaults.connectivity_test_timeout_ms,
+    provider_defaults: settings?.provider_defaults ?? defaults.provider_defaults,
+    launch_mode_args: launchModeArgs,
+    extra_env: settings?.extra_env ?? defaults.extra_env,
+    cli_settings: {
+      claude: {
+        ...defaults.cli_settings.claude,
+        ...(settings?.cli_settings?.claude ?? {}),
+      },
+      codex: {
+        ...defaults.cli_settings.codex,
+        ...(settings?.cli_settings?.codex ?? {}),
+      },
+    },
+  };
+
+  normalized.cli_settings.claude.setting_sources = stripWrappingSingleQuotes(
+    normalized.cli_settings.claude.setting_sources,
+  );
+  normalized.cli_settings.claude.permission_mode = stripWrappingSingleQuotes(
+    normalized.cli_settings.claude.permission_mode,
+  );
+  normalized.cli_settings.codex.wire_api = stripWrappingSingleQuotes(
+    normalized.cli_settings.codex.wire_api,
+  );
+
+  return normalized;
+}
+
 export function defaultParameterSettings(): ParameterSettings {
   return {
     launch_timeout_ms: 30000,
     connectivity_test_timeout_ms: 60000,
     provider_defaults: {},
     launch_mode_args: {
-      direct: "",
-      continue: "",
+      new: "",
+      continue_last: "",
       resume_selected: "",
+      resume_picker: "",
+      resume_picker_all: "",
     },
     extra_env: {},
     cli_settings: {
       claude: {
-        setting_sources: "'project,local'",
-        permission_mode: "'acceptEdits'",
+        setting_sources: "project,local",
+        permission_mode: "acceptEdits",
       },
       codex: {
-        wire_api: "'responses'",
+        wire_api: "responses",
         skip_git_repo_check: false,
       },
     },

@@ -1,0 +1,146 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildNewProfileDraft,
+  buildRuntimeSettingsFromDraft,
+  buildSelectedProfileDraft,
+  hasProfileDraftChanges,
+  hasOnlyProfileDraftCwdChange,
+  hasOnlyProfileDraftSelectedModelIdChange,
+  type ProfileEditorDraft,
+} from "../profile-editor-state.js";
+import type { Profile } from "../profile/types.js";
+
+const claudeProfile: Profile = {
+  provider: "claude",
+  name: "Claude Official",
+  url: "https://api.anthropic.com",
+  key: "sk-ant",
+  selectedModelId: "deepseek-v4-pro",
+};
+
+function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDraft {
+  return {
+    name: "Claude Official",
+    url: "https://api.anthropic.com",
+    key: "sk-ant",
+    selectedModelId: "deepseek-v4-pro",
+    advancedModelMapping: {
+      enabled: false,
+      claude: {
+        defaultTarget: "",
+        opusTarget: "",
+        sonnetTarget: "",
+        haikuTarget: "",
+        subagentTarget: "",
+      },
+      codex: {
+        commandLineModelOverride: "",
+      },
+    },
+    cwd: "C:/workspace",
+    command_base: "claude",
+    settings_file: "",
+    launch_mode: "new",
+    extra_args: "--verbose",
+    exclude_user_settings: true,
+    ...overrides,
+  };
+}
+
+describe("profile-editor-state", () => {
+  it("should build selected profile draft from profile and runtime", () => {
+    const draft = buildSelectedProfileDraft(
+      claudeProfile,
+      {
+        cwd: "C:/repo",
+        command_base: "claude-dev",
+        model: "legacy-model",
+        settings_file: "C:/Users/test/.claude/settings.local.json",
+        launch_mode: "continue_last",
+        extra_args: "--debug",
+        exclude_user_settings: false,
+      },
+      "claude",
+    );
+
+    expect(draft).toEqual({
+      name: "Claude Official",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+      selectedModelId: "deepseek-v4-pro",
+      advancedModelMapping: {
+        enabled: false,
+        claude: {
+          defaultTarget: "",
+          opusTarget: "",
+          sonnetTarget: "",
+          haikuTarget: "",
+          subagentTarget: "",
+        },
+        codex: {
+          commandLineModelOverride: "",
+        },
+      },
+      cwd: "C:/repo",
+      command_base: "claude-dev",
+      settings_file: "C:/Users/test/.claude/settings.local.json",
+      launch_mode: "continue_last",
+      extra_args: "--debug",
+      exclude_user_settings: false,
+    });
+  });
+
+  it("should build new profile draft with provider defaults", () => {
+    const draft = buildNewProfileDraft("codex");
+
+    expect(draft.name).toBe("");
+    expect(draft.url).toBe("");
+    expect(draft.key).toBe("");
+    expect(draft.command_base).toBe("codex");
+    expect(draft.selectedModelId).toBe("");
+    expect(draft.exclude_user_settings).toBe(true);
+  });
+
+  it("should detect unsaved changes including selectedModelId and command_base", () => {
+    const baseline = makeDraft();
+    const changed = makeDraft({ command_base: "claude-alt", selectedModelId: "glm-4.6" });
+
+    expect(hasProfileDraftChanges(changed, baseline)).toBe(true);
+    expect(hasProfileDraftChanges(baseline, baseline)).toBe(false);
+  });
+
+  it("should identify cwd-only changes for silent autosave", () => {
+    const baseline = makeDraft();
+
+    expect(hasOnlyProfileDraftCwdChange(makeDraft({ cwd: "C:/new-workspace" }), baseline)).toBe(true);
+    expect(hasOnlyProfileDraftCwdChange(makeDraft({ cwd: "C:/new-workspace", extra_args: "--debug" }), baseline)).toBe(false);
+    expect(hasOnlyProfileDraftCwdChange(baseline, baseline)).toBe(false);
+  });
+
+  it("should identify selectedModelId-only changes for silent autosave", () => {
+    const baseline = makeDraft();
+
+    expect(hasOnlyProfileDraftSelectedModelIdChange(makeDraft({ selectedModelId: "glm-4.6" }), baseline)).toBe(true);
+    expect(
+      hasOnlyProfileDraftSelectedModelIdChange(
+        makeDraft({ selectedModelId: "glm-4.6", url: "https://changed.example.com" }),
+        baseline,
+      ),
+    ).toBe(false);
+    expect(hasOnlyProfileDraftSelectedModelIdChange(baseline, baseline)).toBe(false);
+  });
+
+  it("should convert draft back to runtime settings without proxy", () => {
+    const runtime = buildRuntimeSettingsFromDraft(makeDraft({ command_base: "claude-dev" }));
+
+    expect(runtime).toEqual({
+      cwd: "C:/workspace",
+      command_base: "claude-dev",
+      model: "",
+      settings_file: "",
+      launch_mode: "new",
+      extra_args: "--verbose",
+      exclude_user_settings: true,
+    });
+  });
+});

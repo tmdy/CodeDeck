@@ -1,7 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { initializeWorkspace, resolveWorkspaceLayout } from "../src/shared/app-workspace.js";
 import { resolveElectronRuntimePaths } from "../src/shared/electron-runtime-paths.js";
 import {
@@ -16,16 +18,27 @@ import { EncryptedConfigStore } from "../src/shared/crypto/store.js";
 import { LocalStateStore } from "../src/shared/state/store.js";
 import { ProfileService } from "../src/shared/services/profile-service.js";
 import { LaunchService } from "../src/shared/services/launch-service.js";
-import { ModelMappingService } from "../src/shared/services/model-mapping-service.js";
+import { SettingsStateService } from "../src/shared/services/settings-state-service.js";
+import { ModelMappingConfigService } from "../src/shared/services/model-mapping-config-service.js";
+import { ModelCatalogService } from "../src/shared/services/model-catalog-service.js";
+import { pickDirectoryPath } from "../src/shared/electron/dialog-helpers.js";
+import { executeLaunchPlan, type ExternalTerminalLaunchSpec } from "../src/shared/electron/launch-runtime.js";
+import { listSessionsForProvider } from "../src/shared/services/session-service.js";
 import {
   type LocalState,
 } from "../src/shared/state/local-state.js";
-import type { Profile, ProfileKey, RuntimeSettings, GlobalSettings } from "../src/shared/profile/types.js";
+import {
+  defaultRuntimeSettings,
+  type Profile,
+  type ProfileKey,
+  type RuntimeSettings,
+  type GlobalSettings,
+} from "../src/shared/profile/types.js";
 import { itemKey } from "../src/shared/profile/keys-internal.js";
 import type { LaunchRequest, CommandPreview } from "../src/shared/launcher/types.js";
 import type { ConnectivityTestState } from "../src/shared/connectivity/types.js";
-import type { ModelMappingEntry } from "../src/shared/model-mapping/types.js";
 import type { ParameterSettings } from "../src/shared/parameter/types.js";
+import type { ModelMappingsState } from "../src/shared/model-mapping/config-types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,10 +56,33 @@ let skillsService: SkillsManagerService | null = null;
 // ---- Profile 服务实例 ----
 let profileService: ProfileService | null = null;
 let launchService: LaunchService | null = null;
-let modelMappingService: ModelMappingService | null = null;
+let settingsStateService: SettingsStateService | null = null;
+let modelMappingConfigService: ModelMappingConfigService | null = null;
+let modelCatalogService: ModelCatalogService | null = null;
+let modelMappingsStateCache: ModelMappingsState | null = null;
 let encryptedStore: EncryptedConfigStore | null = null;
 let localStateStore: LocalStateStore | null = null;
 let currentPassphrase: string = "";
+let mainWindow: BrowserWindow | null = null;
+let isTransitioningFromUnlock = false;
+
+function writeDebugLog(message: string): void {
+  try {
+    const dir = path.join(projectRoot || process.cwd(), "app-data");
+    mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "unlock-debug.log");
+    const line = `[${new Date().toISOString()}] ${message}\n`;
+    appendFileSync(file, line, "utf-8");
+  } catch {
+    // ignore logging failures
+  }
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
 
 // ---- Skills 服务 ----
 
@@ -78,13 +114,96 @@ function getLaunchService(): LaunchService {
   return launchService;
 }
 
-function getModelMappingService(): ModelMappingService {
-  if (!modelMappingService) throw new Error("Model Mapping 服务尚未初始化。");
-  return modelMappingService;
+function getSettingsStateService(): SettingsStateService {
+  if (!settingsStateService) throw new Error("Settings 服务尚未初始化。");
+  return settingsStateService;
+}
+
+function getModelMappingConfigService(): ModelMappingConfigService {
+  if (!modelMappingConfigService) throw new Error("Model Mapping Config 服务尚未初始化。");
+  return modelMappingConfigService;
+}
+
+function getModelCatalogService(): ModelCatalogService {
+  if (!modelCatalogService) throw new Error("Model Catalog 服务尚未初始化。");
+  return modelCatalogService;
 }
 
 function getPassphrase(): string {
   return currentPassphrase || process.env[CONFIG_PASSWORD_ENV] || "";
+}
+
+function currentModelMappingsState(): ModelMappingsState {
+  if (!modelMappingsStateCache) {
+    throw new Error("Model mappings state 尚未初始化。");
+  }
+  return modelMappingsStateCache;
+}
+
+async function directoryExists(targetPath: string): Promise<boolean> {
+  const fs = await import("node:fs/promises");
+  try {
+    const stat = await fs.stat(targetPath);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function commandExists(commandBase: string): Promise<boolean> {
+  const fs = await import("node:fs/promises");
+  const candidate = commandBase.trim();
+  if (!candidate) {
+    return false;
+  }
+  if (candidate.includes("/") || candidate.includes("\\") || /^[a-zA-Z]:/.test(candidate)) {
+    try {
+      await fs.access(candidate);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return new Promise<boolean>((resolve) => {
+    const whereProcess = spawn("where.exe", [candidate], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    whereProcess.on("error", () => resolve(false));
+    whereProcess.on("close", (code) => resolve(code === 0));
+  });
+}
+
+async function spawnExternalTerminal(spec: ExternalTerminalLaunchSpec): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(spec.filePath, spec.args, {
+      cwd: spec.cwd,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      reject(new Error(`spawn 失败：${error.message}`));
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(
+        stderr.trim() || stdout.trim() || "外部终端启动失败。",
+      ));
+    });
+  });
 }
 
 // ---- 初始化 Profile 服务 ----
@@ -103,6 +222,9 @@ async function initProfileServices(): Promise<void> {
   // 本地状态存储
   const statePath = path.join(appDataDir, LOCAL_STATE_FILE);
   localStateStore = new LocalStateStore(statePath);
+  modelMappingConfigService = new ModelMappingConfigService({ appDataRoot: appDataDir });
+  modelCatalogService = new ModelCatalogService();
+  modelMappingsStateCache = await modelMappingConfigService.load();
 }
 
 async function loadProfilesAndState(
@@ -184,9 +306,12 @@ function getPreloadPath(): string {
 
 async function createUnlockWindow(): Promise<string> {
   return new Promise((resolve) => {
+    writeDebugLog("createUnlockWindow: open");
     const unlockWin = new BrowserWindow({
-      width: 480,
-      height: 360,
+      width: 760,
+      height: 560,
+      minWidth: 640,
+      minHeight: 480,
       resizable: false,
       frame: false,
       backgroundColor: "#f2efe7",
@@ -201,23 +326,32 @@ async function createUnlockWindow(): Promise<string> {
 
     // 处理解锁请求
     const unlockHandler = async (_event: Electron.IpcMainInvokeEvent, passphrase: string) => {
+      writeDebugLog(`profile:unlock invoked, passphrase_length=${passphrase?.length ?? 0}`);
       try {
         if (!encryptedStore || !localStateStore) {
           await initProfileServices();
+          writeDebugLog("profile:unlock initProfileServices completed");
         }
         const { profiles, state } = await loadProfilesAndState(passphrase!);
+        writeDebugLog(`profile:unlock loaded profiles=${profiles.length}`);
         currentPassphrase = passphrase!;
 
         // 创建 Profile 服务
         const stateAccessor = new StateAccessor(localStateStore!, state);
         const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase());
         profileService = new ProfileService(profiles, stateAccessor, syncStore);
-        launchService = new LaunchService(profileService);
-        modelMappingService = new ModelMappingService(stateAccessor);
+        launchService = new LaunchService(profileService, {
+          getModelMappingsState: () => currentModelMappingsState(),
+          codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
+        });
+        settingsStateService = new SettingsStateService(stateAccessor);
 
+        isTransitioningFromUnlock = true;
+        writeDebugLog("profile:unlock success, closing unlock window");
         unlockWin.close();
         resolve(passphrase!);
       } catch (err: any) {
+        writeDebugLog(`profile:unlock failed: ${err?.stack || err?.message || String(err)}`);
         // 密码错误，通知渲染进程
         unlockWin.webContents.send("profile:unlock-error", err.message || "解锁失败");
       }
@@ -231,6 +365,7 @@ async function createUnlockWindow(): Promise<string> {
     });
 
     ipcMain.handle("profile:skip-unlock", async () => {
+      writeDebugLog("profile:skip-unlock invoked");
       // 跳过加密，使用空配置
       if (!localStateStore) {
         await initProfileServices();
@@ -238,9 +373,14 @@ async function createUnlockWindow(): Promise<string> {
       const state = await localStateStore!.load();
       const stateAccessor = new StateAccessor(localStateStore!, state);
       profileService = new ProfileService([], stateAccessor, null);
-      launchService = new LaunchService(profileService);
-      modelMappingService = new ModelMappingService(stateAccessor);
+      launchService = new LaunchService(profileService, {
+        getModelMappingsState: () => currentModelMappingsState(),
+        codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
+      });
+      settingsStateService = new SettingsStateService(stateAccessor);
 
+      isTransitioningFromUnlock = true;
+      writeDebugLog("profile:skip-unlock success, closing unlock window");
       unlockWin.close();
       resolve("");
     });
@@ -257,6 +397,7 @@ async function createUnlockWindow(): Promise<string> {
 }
 
 async function createMainWindow(): Promise<void> {
+  writeDebugLog("createMainWindow: start");
   const browserWindow = new BrowserWindow({
     width: 1520,
     height: 920,
@@ -270,6 +411,20 @@ async function createMainWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+  mainWindow = browserWindow;
+  isTransitioningFromUnlock = false;
+  browserWindow.webContents.on("did-finish-load", () => {
+    writeDebugLog("createMainWindow: did-finish-load");
+  });
+  browserWindow.on("ready-to-show", () => {
+    writeDebugLog("createMainWindow: ready-to-show");
+  });
+
+  browserWindow.on("closed", () => {
+    if (mainWindow === browserWindow) {
+      mainWindow = null;
+    }
   });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -293,16 +448,15 @@ function registerAllIpcHandlers(): void {
   );
   ipcMain.handle("skills-manager:pick-project-directory", async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
-    const result = browserWindow
-      ? await dialog.showOpenDialog(browserWindow, {
-          title: "选择项目文件夹",
-          properties: ["openDirectory", "createDirectory"],
-        })
-      : await dialog.showOpenDialog({
-          title: "选择项目文件夹",
-          properties: ["openDirectory", "createDirectory"],
-        });
-    return result.canceled ? undefined : result.filePaths[0];
+    return browserWindow
+      ? pickDirectoryPath(
+          (options) => dialog.showOpenDialog(browserWindow, options),
+          "选择项目文件夹",
+        )
+      : pickDirectoryPath(
+          (options) => dialog.showOpenDialog(options),
+          "选择项目文件夹",
+        );
   });
   ipcMain.handle("skills-manager:select-project", async (_event, projectPath: string) =>
     getSkillsService().selectProject(projectPath),
@@ -341,11 +495,6 @@ function registerAllIpcHandlers(): void {
 
   // ============ Profile IPC ============
 
-  // 加密 & 认证
-  ipcMain.handle("profile:check-encrypted-config", () => {
-    return encryptedStore?.exists() ?? false;
-  });
-
   ipcMain.handle(
     "profile:initialize-encryption",
     async (_event, passphrase: string) => {
@@ -357,8 +506,11 @@ function registerAllIpcHandlers(): void {
       const stateAccessor = new StateAccessor(localStateStore!, state);
       const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase());
       profileService = new ProfileService([], stateAccessor, syncStore);
-      launchService = new LaunchService(profileService);
-      modelMappingService = new ModelMappingService(stateAccessor);
+      launchService = new LaunchService(profileService, {
+        getModelMappingsState: () => currentModelMappingsState(),
+        codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
+      });
+      settingsStateService = new SettingsStateService(stateAccessor);
       return { success: true };
     },
   );
@@ -415,13 +567,31 @@ function registerAllIpcHandlers(): void {
       await getProfileService().activateProvider(provider);
     },
   );
+  ipcMain.handle("profile:pick-working-directory", async () => {
+    const browserWindow = BrowserWindow.getFocusedWindow();
+    return browserWindow
+      ? pickDirectoryPath(
+          (options) => dialog.showOpenDialog(browserWindow, options),
+          "选择工作目录",
+        )
+      : pickDirectoryPath(
+          (options) => dialog.showOpenDialog(options),
+          "选择工作目录",
+        );
+  });
 
   // Launcher
   ipcMain.handle(
     "launcher:preview-for-draft",
-    (_event, draft: Profile, runtime: RuntimeSettings): CommandPreview => {
+    (
+      _event,
+      draft: Profile,
+      runtime: RuntimeSettings,
+      mappingsState?: ModelMappingsState,
+      sessionId?: string,
+    ): CommandPreview => {
       const svc = getLaunchService();
-      return svc.buildPreview(draft, runtime);
+      return svc.buildPreview(draft, runtime, mappingsState, sessionId);
     },
   );
 
@@ -431,52 +601,50 @@ function registerAllIpcHandlers(): void {
       const svc = getLaunchService();
       const profiles = getProfileService().getProfiles();
       const profile = profiles.find((p) => itemKey(p) === profileKey);
-      if (!profile) return { command: "", valid: false };
+      if (!profile) {
+        return {
+          command: "",
+          cwd: "",
+          env: [],
+          valid: false,
+          error: "Profile 不存在。",
+        };
+      }
 
       const state = getProfileService().getState();
-      const runtime = state.runtime_by_profile[profileKey] ?? {
-        proxy: "",
-        cwd: "",
-        command_base: "",
-        model: "",
-        launch_mode: "direct",
-        extra_args: "",
-        exclude_user_settings: false,
-      };
+      const runtime = state.runtime_by_profile[profileKey] ?? defaultRuntimeSettings(profile.provider);
       return svc.buildPreview(profile, runtime);
     },
   );
 
   ipcMain.handle("launcher:launch", async (_event, request: LaunchRequest) => {
-    // 启动终端
-    const { spawn } = await import("node:child_process");
-
-    const preview = getLaunchService().previewForRequest(request);
-    if (!preview.valid) {
-      throw new Error("无法生成启动命令");
+    const plan = getLaunchService().buildExecutionPlan(request);
+    if (!plan.valid) {
+      throw new Error(plan.error || "无法生成启动命令");
     }
-
-    // Windows: 使用 start cmd 启动
-    if (process.platform === "win32") {
-      spawn("cmd", ["/c", "start", "cmd", "/k", preview.command], {
-        detached: true,
-        stdio: "ignore",
-      });
-    } else {
-      // macOS/Linux
-      spawn("sh", ["-c", preview.command], {
-        detached: true,
-        stdio: "ignore",
+    if (plan.codexConfig) {
+      await getModelMappingConfigService().writeCodexProfile({
+        profileId: request.profile_key,
+        providerId: plan.codexConfig.providerId,
+        providerName: plan.codexConfig.providerName,
+        baseUrl: plan.codexConfig.baseUrl,
+        apiKeyEnv: plan.codexConfig.apiKeyEnv,
+        targetModel: plan.codexConfig.targetModel,
       });
     }
+
+    await executeLaunchPlan(plan, {
+      directoryExists,
+      commandExists,
+      spawnExternalTerminal,
+    });
   });
 
   // Sessions
   ipcMain.handle(
     "session:list",
-    async (_event, _provider: string, _cwd: string) => {
-      // 基础实现：返回空列表，完整实现在第5层
-      return [];
+    async (_event, provider: string, cwd: string) => {
+      return listSessionsForProvider(provider, cwd);
     },
   );
 
@@ -545,126 +713,135 @@ function registerAllIpcHandlers(): void {
     },
   );
 
-  // Model Mapping
-  ipcMain.handle("model-mapping:list", () => getModelMappingService().list());
-
-  ipcMain.handle(
-    "model-mapping:add",
-    async (_event, entry: Omit<ModelMappingEntry, "id">) =>
-      getModelMappingService().add(entry),
-  );
-
-  ipcMain.handle(
-    "model-mapping:update",
-    async (_event, id: string, update: Partial<ModelMappingEntry>) =>
-      getModelMappingService().update(id, update),
-  );
-
-  ipcMain.handle(
-    "model-mapping:delete",
-    async (_event, id: string) => getModelMappingService().delete(id),
-  );
-
-  ipcMain.handle(
-    "model-mapping:resolve",
-    (_event, provider: string, model: string) =>
-      getModelMappingService().resolve(provider, model),
-  );
+  ipcMain.handle("model-mapping-config:get", async () => currentModelMappingsState());
+  ipcMain.handle("model-mapping-config:save", async (_event, state: ModelMappingsState) => {
+    const saved = await getModelMappingConfigService().save(state);
+    modelMappingsStateCache = saved;
+    return saved;
+  });
+  ipcMain.handle("model-mapping-config:fetch-site-models", async (_event, draft: Pick<Profile, "url" | "key">) => {
+    return getModelCatalogService().fetch({
+      baseUrl: draft.url,
+      apiKey: draft.key,
+    });
+  });
 
   // Parameter Settings
   ipcMain.handle("parameter:get", (): ParameterSettings => {
-    return getProfileService().getState().parameter_settings;
+    return getSettingsStateService().getParameterSettings();
   });
 
   ipcMain.handle(
     "parameter:update",
     async (_event, settings: Partial<ParameterSettings>) => {
-      const svc = getProfileService();
-      const st = svc.getState();
-      st.parameter_settings = { ...st.parameter_settings, ...settings };
-      await svc.saveProfile(
-        st.selected_profile_key,
-        svc.getProfiles().find((p) => itemKey(p) === st.selected_profile_key)!,
-        st.runtime_by_profile[st.selected_profile_key] ?? {
-          proxy: "",
-          cwd: "",
-          command_base: "",
-          model: "",
-          launch_mode: "direct",
-          extra_args: "",
-          exclude_user_settings: false,
-        },
-      );
-      return st.parameter_settings;
+      return getSettingsStateService().updateParameterSettings(settings);
     },
   );
 
   // Global Settings
   ipcMain.handle("settings:get-global", (): GlobalSettings => {
-    return getProfileService().getState().global_settings;
+    return getSettingsStateService().getGlobalSettings();
   });
 
   ipcMain.handle(
     "settings:update-global",
     async (_event, settings: Partial<GlobalSettings>) => {
-      const svc = getProfileService();
-      const st = svc.getState();
-      st.global_settings = { ...st.global_settings, ...settings };
-      const profiles = svc.getProfiles();
-      const currentProfile = profiles.find(
-        (p) => itemKey(p) === st.selected_profile_key,
-      );
-      if (currentProfile) {
-        await svc.saveProfile(
-          st.selected_profile_key,
-          currentProfile,
-          st.runtime_by_profile[st.selected_profile_key] ?? {
-            proxy: "",
-            cwd: "",
-            command_base: "",
-            model: "",
-            launch_mode: "direct",
-            extra_args: "",
-            exclude_user_settings: false,
-          },
-        );
-      }
-      return st.global_settings;
+      return getSettingsStateService().updateGlobalSettings(settings);
     },
   );
+
+  ipcMain.handle("dialog:unsaved-profile-action", async () => {
+    const browserWindow = BrowserWindow.getFocusedWindow();
+    const result = browserWindow
+      ? await dialog.showMessageBox(browserWindow, {
+          type: "warning",
+          buttons: ["保存当前配置", "放弃修改", "取消"],
+          defaultId: 0,
+          cancelId: 2,
+          title: "未保存修改",
+          message: "当前配置有未保存修改。",
+          detail: "切换配置、切换 Provider 或新建配置前，请先决定如何处理当前草稿。",
+        })
+      : await dialog.showMessageBox({
+          type: "warning",
+          buttons: ["保存当前配置", "放弃修改", "取消"],
+          defaultId: 0,
+          cancelId: 2,
+          title: "未保存修改",
+          message: "当前配置有未保存修改。",
+          detail: "切换配置、切换 Provider 或新建配置前，请先决定如何处理当前草稿。",
+        });
+
+    return ["save", "discard", "cancel"][result.response] as "save" | "discard" | "cancel";
+  });
+
+  ipcMain.handle("dialog:launch-unsaved-profile", async () => {
+    const browserWindow = BrowserWindow.getFocusedWindow();
+    const result = browserWindow
+      ? await dialog.showMessageBox(browserWindow, {
+          type: "warning",
+          buttons: ["保存并启动", "启动已保存配置", "取消"],
+          defaultId: 0,
+          cancelId: 2,
+          title: "启动前发现未保存修改",
+          message: "当前配置有未保存修改。",
+          detail: "你可以先保存草稿再启动，也可以丢弃草稿并启动已保存配置。",
+        })
+      : await dialog.showMessageBox({
+          type: "warning",
+          buttons: ["保存并启动", "启动已保存配置", "取消"],
+          defaultId: 0,
+          cancelId: 2,
+          title: "启动前发现未保存修改",
+          message: "当前配置有未保存修改。",
+          detail: "你可以先保存草稿再启动，也可以丢弃草稿并启动已保存配置。",
+        });
+
+    return ["save_and_launch", "launch_saved", "cancel"][result.response] as
+      | "save_and_launch"
+      | "launch_saved"
+      | "cancel";
+  });
 }
 
 // ---- 应用生命周期 ----
 
 app.setAppUserModelId("com.local.skillsmanager");
 
+if (gotSingleInstanceLock) {
+  app.on("second-instance", () => {
+    const visibleWindow = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+    if (!visibleWindow) {
+      return;
+    }
+    if (visibleWindow.isMinimized()) {
+      visibleWindow.restore();
+    }
+    visibleWindow.focus();
+  });
+}
+
 app.whenReady().then(async () => {
+  writeDebugLog("app.whenReady: start");
   // 1. 初始化 Skills 工作区
   await initSkillsService();
+  writeDebugLog("app.whenReady: initSkillsService done");
 
   // 2. 初始化 Profile 存储
   await initProfileServices();
+  writeDebugLog("app.whenReady: initProfileServices done");
 
-  // 3. 检查加密配置
-  const hasEncryptedConfig = encryptedStore?.exists() ?? false;
-
-  if (hasEncryptedConfig) {
-    // 显示解锁窗口
-    await createUnlockWindow();
-  } else {
-    // 无加密配置，直接初始化
-    const state = await localStateStore!.load();
-    const stateAccessor = new StateAccessor(localStateStore!, state);
-    profileService = new ProfileService([], stateAccessor, null);
-    launchService = new LaunchService(profileService);
-    modelMappingService = new ModelMappingService(stateAccessor);
-  }
+  // 3. 始终先经过解锁/设口令窗口
+  await createUnlockWindow();
+  writeDebugLog("app.whenReady: createUnlockWindow resolved");
 
   // 4. 注册所有 IPC 处理器
   registerAllIpcHandlers();
+  writeDebugLog("app.whenReady: registerAllIpcHandlers done");
 
   // 5. 创建主窗口
   await createMainWindow();
+  writeDebugLog("app.whenReady: createMainWindow done");
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -674,7 +851,19 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  writeDebugLog(`window-all-closed: transitioning=${isTransitioningFromUnlock}`);
+  if (isTransitioningFromUnlock) {
+    return;
+  }
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+process.on("uncaughtException", (error) => {
+  writeDebugLog(`uncaughtException: ${error?.stack || error?.message || String(error)}`);
+});
+
+process.on("unhandledRejection", (reason) => {
+  writeDebugLog(`unhandledRejection: ${String(reason)}`);
 });

@@ -7,6 +7,7 @@ import {
   normalizeProvider,
   extractSyncedProfile,
   normalizeRuntimeSettings,
+  defaultRuntimeSettings,
 } from "../profile/types.js";
 import {
   splitKey,
@@ -52,13 +53,13 @@ export class ProfileService {
 
   /** 获取当前状态 */
   getState(): LocalState {
-    return this.stateAccessor.get();
+    return sanitizeProviderSelectionState(this.profiles, this.stateAccessor.get());
   }
 
   // ---- 排序 ----
 
   async reorderProfiles(providerID: string, orderedKeys: ProfileKey[]): Promise<void> {
-    const st = cloneLocalState(this.stateAccessor.get());
+    const st = this.getState();
     st.profile_order_by_provider[normalizeProvider(providerID)] = [...orderedKeys];
     await this.stateAccessor.save(st);
   }
@@ -66,9 +67,15 @@ export class ProfileService {
   // ---- 选择 ----
 
   async selectProfile(providerID: string, selectedKey: ProfileKey): Promise<void> {
-    const st = cloneLocalState(this.stateAccessor.get());
     const nProv = normalizeProvider(providerID);
     const nKey = normalizeKeyWithFallback(selectedKey, nProv);
+    if (!belongsToProvider(nKey, nProv)) {
+      throw new Error("所选 Profile 与当前 provider 不匹配。");
+    }
+    if (!profileExists(this.profiles, nKey)) {
+      throw new Error(`profile not found: ${nKey}`);
+    }
+    const st = this.getState();
     st.selected_provider = nProv;
     st.selected_profile_key = nKey;
     st.selected_profile_key_by_provider[nProv] = nKey;
@@ -78,15 +85,16 @@ export class ProfileService {
   // ---- Provider 切换 ----
 
   async activateProvider(providerID: string): Promise<void> {
-    const st = cloneLocalState(this.stateAccessor.get());
+    const st = this.getState();
     const nProv = normalizeProvider(providerID);
     st.selected_provider = nProv;
 
-    let candidate = normalizeKeyWithFallback(
+    let candidate = resolveRememberedSelection(
+      this.profiles,
       st.selected_profile_key_by_provider[nProv] ?? "",
       nProv,
     );
-    if (!candidate || !profileExists(this.profiles, candidate)) {
+    if (!candidate) {
       candidate = selectProfileForProvider(this.profiles, st, nProv);
     }
     st.selected_profile_key = candidate;
@@ -149,7 +157,7 @@ export class ProfileService {
       nextProfiles.push(nd);
     }
 
-    const st = cloneLocalState(this.stateAccessor.get());
+    const st = this.getState();
     const nRuntime = normalizeRuntimeSettings(runtime, nProv);
     const newKey = itemKey(nd);
 
@@ -210,9 +218,9 @@ export class ProfileService {
     cloned = adapter.normalizeProfile(cloned);
 
     const nextProfiles = [...this.profiles.map((p) => ({ ...p })), cloned];
-    const st = cloneLocalState(this.stateAccessor.get());
-
     const clonedKey = itemKey(cloned);
+    const st = this.getState();
+    st.runtime_by_profile[clonedKey] = defaultRuntimeSettings(targetProv);
     st.selected_provider = targetProv;
     st.selected_profile_key = clonedKey;
     st.selected_profile_key_by_provider[targetProv] = clonedKey;
@@ -347,12 +355,64 @@ function selectProfileForProvider(
   providerID: string,
 ): ProfileKey {
   for (const k of st.profile_order_by_provider[providerID] ?? []) {
-    if (profileExists(profiles, k)) return k;
+    if (belongsToProvider(k, providerID) && profileExists(profiles, k)) return k;
   }
   for (const item of profiles) {
     if (normalizeProvider(item.provider) === providerID) return itemKey(item);
   }
   return "";
+}
+
+function belongsToProvider(key: ProfileKey, providerID: string): boolean {
+  if (!key) return false;
+  const [keyProvider] = splitKey(key);
+  return normalizeProvider(keyProvider) === normalizeProvider(providerID);
+}
+
+function resolveRememberedSelection(
+  profiles: Profile[],
+  key: ProfileKey,
+  providerID: string,
+): ProfileKey {
+  const normalized = normalizeKeyWithFallback(key, providerID);
+  if (!normalized || !belongsToProvider(normalized, providerID)) {
+    return "";
+  }
+  return profileExists(profiles, normalized) ? normalized : "";
+}
+
+function sanitizeProviderSelectionState(profiles: Profile[], state: LocalState): LocalState {
+  const next = cloneLocalState(state);
+
+  for (const [providerID, rememberedKey] of Object.entries(next.selected_profile_key_by_provider)) {
+    const resolved = resolveRememberedSelection(profiles, rememberedKey, providerID);
+    if (resolved) {
+      next.selected_profile_key_by_provider[normalizeProvider(providerID)] = resolved;
+    } else {
+      delete next.selected_profile_key_by_provider[normalizeProvider(providerID)];
+    }
+  }
+
+  const activeProvider = normalizeProvider(next.selected_provider);
+  next.selected_provider = activeProvider;
+
+  const activeSelected = resolveRememberedSelection(profiles, next.selected_profile_key, activeProvider);
+  const rememberedSelected = resolveRememberedSelection(
+    profiles,
+    next.selected_profile_key_by_provider[activeProvider] ?? "",
+    activeProvider,
+  );
+  const fallbackSelected = selectProfileForProvider(profiles, next, activeProvider);
+  const finalSelected = activeSelected || rememberedSelected || fallbackSelected;
+
+  next.selected_profile_key = finalSelected;
+  if (finalSelected) {
+    next.selected_profile_key_by_provider[activeProvider] = finalSelected;
+  } else {
+    delete next.selected_profile_key_by_provider[activeProvider];
+  }
+
+  return next;
 }
 
 function migrateProfileStateKey(

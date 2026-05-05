@@ -1,93 +1,126 @@
-// 模型映射类型 — 新增功能
-// 支持将用户友好的模型别名映射到实际 CLI 模型名
+const PROVIDER_CLAUDE = "claude";
+const PROVIDER_CODEX = "codex";
 
-export interface ModelMappingEntry {
-  id: string;
-  provider: "claude" | "codex";
-  /** 匹配模式，支持 * 和 ? 通配符 */
-  pattern: string;
-  /** 实际传给 CLI 的模型名 */
-  target_model: string;
-  /** UI 显示名称 */
-  display_name: string;
-  /** 可选描述（参数大小、速度等） */
-  description?: string;
-  max_tokens?: number;
-  supports_vision?: boolean;
-  supports_tools?: boolean;
-  enabled: boolean;
-  /** 匹配优先级，数字越小越优先 */
-  priority: number;
+function normalizeProvider(providerID: string): string {
+  return providerID.trim().toLowerCase() === PROVIDER_CODEX ? PROVIDER_CODEX : PROVIDER_CLAUDE;
 }
 
-/**
- * 将 glob 模式转换为正则表达式
- */
-function globToRegex(pattern: string): RegExp {
-  let regexStr = "";
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
-    switch (ch) {
-      case "*":
-        regexStr += ".*";
-        break;
-      case "?":
-        regexStr += ".";
-        break;
-      // 转义正则特殊字符
-      case ".":
-      case "+":
-      case "^":
-      case "$":
-      case "{":
-      case "}":
-      case "(":
-      case ")":
-      case "|":
-      case "\\":
-      case "[":
-      case "]":
-        regexStr += "\\" + ch;
-        break;
-      default:
-        regexStr += ch;
-    }
-  }
-  return new RegExp(`^${regexStr}$`, "i");
+export const PROFILE_MODEL_SLOT_IDS = [
+  "default",
+  "claude-opus",
+  "claude-sonnet",
+  "claude-haiku",
+  "cc-default",
+  "cc-opus",
+  "cc-sonnet",
+  "cc-haiku",
+] as const;
+
+export type ModelSlotId = (typeof PROFILE_MODEL_SLOT_IDS)[number];
+export type ModelCatalogAuthScheme = "bearer" | "x-api-key";
+
+export interface ProfileModelMapping {
+  auth_scheme: ModelCatalogAuthScheme;
+  slots: Record<ModelSlotId, string>;
+  fetched_models: string[];
+  fetched_at?: string;
 }
 
-/**
- * 解析用户输入的模型名，返回映射后的模型名
- * 按 priority 排序，返回第一个匹配的 enabled 映射
- * 如果没有匹配，返回原始模型名
- */
-export function resolveModel(
-  model: string,
-  mappings: ModelMappingEntry[],
-  provider: string,
-): string {
-  const candidates = mappings
-    .filter((m) => m.enabled && m.provider === provider)
-    .sort((a, b) => a.priority - b.priority);
+export const PROFILE_MODEL_SLOT_LABELS: Record<ModelSlotId, string> = {
+  default: "Default",
+  "claude-opus": "Claude Opus",
+  "claude-sonnet": "Claude Sonnet",
+  "claude-haiku": "Claude Haiku",
+  "cc-default": "cc default",
+  "cc-opus": "cc opus",
+  "cc-sonnet": "cc sonnet",
+  "cc-haiku": "cc haiku",
+};
 
-  for (const entry of candidates) {
-    const regex = globToRegex(entry.pattern);
-    if (regex.test(model)) {
-      return entry.target_model;
-    }
-  }
-
-  return model;
-}
-
-/**
- * 创建新的映射条目（生成唯一 ID）
- */
-export function createMappingEntry(
-  partial: Omit<ModelMappingEntry, "id">,
-): ModelMappingEntry {
+export function createEmptyModelSlots(): Record<ModelSlotId, string> {
   return {
-    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    ...partial,
+    default: "",
+    "claude-opus": "",
+    "claude-sonnet": "",
+    "claude-haiku": "",
+    "cc-default": "",
+    "cc-opus": "",
+    "cc-sonnet": "",
+    "cc-haiku": "",
   };
+}
+
+export function createEmptyProfileModelMapping(): ProfileModelMapping {
+  return {
+    auth_scheme: "bearer",
+    slots: createEmptyModelSlots(),
+    fetched_models: [],
+  };
+}
+
+export function normalizeProfileModelMapping(
+  mapping?: Partial<ProfileModelMapping> | null,
+): ProfileModelMapping {
+  const defaults = createEmptyProfileModelMapping();
+  const authScheme = mapping?.auth_scheme === "x-api-key" ? "x-api-key" : "bearer";
+
+  return {
+    auth_scheme: authScheme,
+    slots: {
+      ...defaults.slots,
+      ...Object.fromEntries(
+        PROFILE_MODEL_SLOT_IDS.map((slotId) => [
+          slotId,
+          (mapping?.slots?.[slotId] ?? "").trim(),
+        ]),
+      ) as Record<ModelSlotId, string>,
+    },
+    fetched_models: Array.from(
+      new Set((mapping?.fetched_models ?? []).map((item) => item.trim()).filter(Boolean)),
+    ),
+    fetched_at: mapping?.fetched_at?.trim() || undefined,
+  };
+}
+
+export function cloneProfileModelMapping(
+  mapping?: Partial<ProfileModelMapping> | null,
+): ProfileModelMapping {
+  return normalizeProfileModelMapping(mapping);
+}
+
+export function detectModelSlot(providerID: string, model: string): ModelSlotId {
+  const normalizedProvider = normalizeProvider(providerID);
+  const normalizedModel = model.trim().toLowerCase();
+
+  if (!normalizedModel || normalizedModel === "default") {
+    return "default";
+  }
+
+  if (normalizedProvider === PROVIDER_CLAUDE) {
+    if (normalizedModel.includes("opus")) return "claude-opus";
+    if (normalizedModel.includes("sonnet")) return "claude-sonnet";
+    if (normalizedModel.includes("haiku")) return "claude-haiku";
+    return "default";
+  }
+
+  if (normalizedProvider === PROVIDER_CODEX) {
+    if (normalizedModel.includes("opus")) return "cc-opus";
+    if (normalizedModel.includes("sonnet")) return "cc-sonnet";
+    if (normalizedModel.includes("haiku")) return "cc-haiku";
+    return "cc-default";
+  }
+
+  return "default";
+}
+
+export function resolveProfileModel(
+  providerID: string,
+  slotModel: string,
+  mapping?: Partial<ProfileModelMapping> | null,
+): string {
+  const normalizedModel = slotModel.trim();
+  const resolvedMapping = normalizeProfileModelMapping(mapping);
+  const slotId = detectModelSlot(providerID, normalizedModel);
+  const target = resolvedMapping.slots[slotId]?.trim() ?? "";
+  return target || normalizedModel;
 }

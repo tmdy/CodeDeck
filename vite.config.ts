@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "node",
-    include: ["src/shared/**/*.test.ts"],
+    include: ["src/shared/**/*.test.ts", "src/shared/**/*.test.tsx"],
     coverage: {
       reporter: ["text", "html"],
     },

@@ -68,6 +68,8 @@ const profileApi = {
     passphrase: string,
   ): Promise<{ success: boolean; profiles?: unknown[]; state?: unknown }> =>
     ipcRenderer.invoke("profile:unlock", passphrase),
+  skipUnlock: (): Promise<void> =>
+    ipcRenderer.invoke("profile:skip-unlock"),
   initializeEncryption: (passphrase: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke("profile:initialize-encryption", passphrase),
 
@@ -90,10 +92,17 @@ const profileApi = {
     ipcRenderer.invoke("profile:reorder", provider, orderedKeys),
   activateProvider: (provider: string): Promise<void> =>
     ipcRenderer.invoke("profile:activate-provider", provider),
+  pickWorkingDirectory: (): Promise<string | undefined> =>
+    ipcRenderer.invoke("profile:pick-working-directory"),
 
   // Launcher
-  previewForDraft: (draft: unknown, runtime: unknown): Promise<unknown> =>
-    ipcRenderer.invoke("launcher:preview-for-draft", draft, runtime),
+  previewForDraft: (
+    draft: unknown,
+    runtime: unknown,
+    mappingsState?: unknown,
+    sessionId?: string,
+  ): Promise<unknown> =>
+    ipcRenderer.invoke("launcher:preview-for-draft", draft, runtime, mappingsState, sessionId),
   previewForProfile: (profileKey: string): Promise<unknown> =>
     ipcRenderer.invoke("launcher:preview-for-profile", profileKey),
   launch: (request: unknown): Promise<void> =>
@@ -111,17 +120,13 @@ const profileApi = {
   getConnectivityState: (profileKey: string): Promise<unknown> =>
     ipcRenderer.invoke("connectivity:get-state", profileKey),
 
-  // Model Mapping
-  listModelMappings: (): Promise<unknown[]> =>
-    ipcRenderer.invoke("model-mapping:list"),
-  addModelMapping: (entry: unknown): Promise<unknown> =>
-    ipcRenderer.invoke("model-mapping:add", entry),
-  updateModelMapping: (id: string, update: unknown): Promise<unknown | null> =>
-    ipcRenderer.invoke("model-mapping:update", id, update),
-  deleteModelMapping: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke("model-mapping:delete", id),
-  resolveModel: (provider: string, model: string): Promise<string> =>
-    ipcRenderer.invoke("model-mapping:resolve", provider, model),
+  // Model Mappings
+  getModelMappings: (): Promise<unknown> =>
+    ipcRenderer.invoke("model-mapping-config:get"),
+  saveModelMappings: (state: unknown): Promise<unknown> =>
+    ipcRenderer.invoke("model-mapping-config:save", state),
+  fetchSiteModels: (draft: unknown): Promise<unknown> =>
+    ipcRenderer.invoke("model-mapping-config:fetch-site-models", draft),
 
   // Settings
   getGlobalSettings: (): Promise<unknown> =>
@@ -132,6 +137,10 @@ const profileApi = {
     ipcRenderer.invoke("parameter:get"),
   updateParameterSettings: (settings: unknown): Promise<unknown> =>
     ipcRenderer.invoke("parameter:update", settings),
+  promptUnsavedProfileAction: (): Promise<"save" | "discard" | "cancel"> =>
+    ipcRenderer.invoke("dialog:unsaved-profile-action"),
+  promptLaunchWithUnsavedChanges: (): Promise<"save_and_launch" | "launch_saved" | "cancel"> =>
+    ipcRenderer.invoke("dialog:launch-unsaved-profile"),
 
   // 事件监听
   onStateChanged: (callback: (state: unknown) => void): (() => void) => {

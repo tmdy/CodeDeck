@@ -1,33 +1,56 @@
 // Profile 领域模型 — 翻译自 Go internal/domain/profile/
 // 与 Go/Python 版本的 Profile 结构完全兼容
 
+import {
+  normalizeLaunchMode as normalizeLaunchModeValue,
+  type LaunchMode,
+} from "./launch-mode.js";
+
 export const PROVIDER_CLAUDE = "claude" as const;
 export const PROVIDER_CODEX = "codex" as const;
 export const DEFAULT_PROVIDER = PROVIDER_CLAUDE;
 export const DEFAULT_CLAUDE_COMMAND = "claude";
 export const DEFAULT_CODEX_COMMAND = "codex";
-export const DEFAULT_CODEX_MODEL = "gpt-5.4";
-export const DEFAULT_LAUNCH_MODE = "direct";
+export const DEFAULT_LAUNCH_MODE = "new";
 export const DEFAULT_PERMISSION_PRESET = "全部允许（推荐）";
 export const KEY_SEPARATOR = "::";
 
 export type ProviderID = typeof PROVIDER_CLAUDE | typeof PROVIDER_CODEX;
 export type ProfileKey = string; // "provider::name"
 
+export interface ClaudeAdvancedModelMapping {
+  defaultTarget?: string;
+  opusTarget?: string;
+  sonnetTarget?: string;
+  haikuTarget?: string;
+  subagentTarget?: string;
+}
+
+export interface CodexAdvancedModelMapping {
+  commandLineModelOverride?: string;
+}
+
+export interface AdvancedModelMapping {
+  enabled: boolean;
+  claude?: ClaudeAdvancedModelMapping;
+  codex?: CodexAdvancedModelMapping;
+}
+
 export interface Profile {
   provider: ProviderID;
   name: string;
   url: string;  // Base URL
   key: string;  // API Key / Token
+  selectedModelId?: string;
+  advancedModelMapping?: AdvancedModelMapping;
 }
-
-export type LaunchMode = "direct" | "continue" | "resume_selected";
+export type { LaunchMode } from "./launch-mode.js";
 
 export interface RuntimeSettings {
-  proxy: string;
   cwd: string;
   command_base: string;
-  model: string;
+  model: string; // 兼容旧状态，仅作为 selectedModelId 迁移回退字段
+  settings_file?: string;
   launch_mode: LaunchMode;
   extra_args: string;
   exclude_user_settings: boolean;
@@ -51,11 +74,14 @@ export function normalizeProvider(raw: string): ProviderID {
 }
 
 export function normalizeProfile(profile: Profile): Profile {
+  const selectedModelId = normalizeSelectedModelId(profile);
   return {
     provider: normalizeProvider(profile.provider),
     name: profile.name.trim(),
     url: profile.url.trim(),
     key: profile.key.trim(),
+    selectedModelId,
+    advancedModelMapping: normalizeAdvancedModelMapping(profile.advancedModelMapping),
   };
 }
 
@@ -67,27 +93,22 @@ export function extractSyncedProfile(profile: Profile): Profile {
     name: n.name,
     url: n.url,
     key: n.key,
+    selectedModelId: n.selectedModelId,
+    advancedModelMapping: n.advancedModelMapping,
   };
 }
 
 export function normalizeLaunchMode(mode: string): LaunchMode {
-  switch (mode.trim()) {
-    case "continue":
-      return "continue";
-    case "resume_selected":
-      return "resume_selected";
-    default:
-      return DEFAULT_LAUNCH_MODE;
-  }
+  return normalizeLaunchModeValue(mode);
 }
 
 export function defaultRuntimeSettings(providerID: string): RuntimeSettings {
   const provider = normalizeProvider(providerID);
   return {
-    proxy: "",
     cwd: "",
     command_base: provider === PROVIDER_CODEX ? DEFAULT_CODEX_COMMAND : DEFAULT_CLAUDE_COMMAND,
-    model: provider === PROVIDER_CODEX ? DEFAULT_CODEX_MODEL : "",
+    model: "",
+    settings_file: "",
     launch_mode: DEFAULT_LAUNCH_MODE,
     extra_args: "",
     exclude_user_settings: true,
@@ -96,15 +117,14 @@ export function defaultRuntimeSettings(providerID: string): RuntimeSettings {
 
 export function normalizeRuntimeSettings(settings: RuntimeSettings, providerID: string): RuntimeSettings {
   const defaults = defaultRuntimeSettings(providerID);
-  const provider = normalizeProvider(providerID);
   return {
-    proxy: settings.proxy.trim(),
     cwd: settings.cwd.trim(),
     command_base: settings.command_base.trim() || defaults.command_base,
-    model: settings.model.trim() || (provider === PROVIDER_CODEX ? DEFAULT_CODEX_MODEL : ""),
+    model: settings.model?.trim() ?? "",
+    settings_file: settings.settings_file?.trim() ?? defaults.settings_file,
     launch_mode: normalizeLaunchMode(settings.launch_mode),
     extra_args: settings.extra_args.trim(),
-    exclude_user_settings: settings.exclude_user_settings,
+    exclude_user_settings: settings.exclude_user_settings ?? defaults.exclude_user_settings,
   };
 }
 
@@ -116,6 +136,41 @@ export function defaultGlobalSettings(): GlobalSettings {
     disable_nonessential_traffic: true,
     permissions_preset: DEFAULT_PERMISSION_PRESET,
     include_co_authored_by: false,
+  };
+}
+
+function normalizeSelectedModelId(profile: Profile): string {
+  const candidates = [
+    profile.selectedModelId,
+    (profile as Profile & { targetModel?: string }).targetModel,
+    (profile as Profile & { codexTargetModel?: string }).codexTargetModel,
+    (profile as Profile & { claudeTargetModel?: string }).claudeTargetModel,
+    (profile as Profile & { claudeModelAlias?: string }).claudeModelAlias,
+    (profile as Profile & { defaultModelTarget?: string }).defaultModelTarget,
+  ];
+  const selected = candidates.find((value) => typeof value === "string" && value.trim());
+  return selected?.trim() ?? "";
+}
+
+function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedModelMapping | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const claude = value.claude ? {
+    defaultTarget: value.claude.defaultTarget?.trim() || undefined,
+    opusTarget: value.claude.opusTarget?.trim() || undefined,
+    sonnetTarget: value.claude.sonnetTarget?.trim() || undefined,
+    haikuTarget: value.claude.haikuTarget?.trim() || undefined,
+    subagentTarget: value.claude.subagentTarget?.trim() || undefined,
+  } : undefined;
+  const codex = value.codex ? {
+    commandLineModelOverride: value.codex.commandLineModelOverride?.trim() || undefined,
+  } : undefined;
+
+  return {
+    enabled: value.enabled ?? false,
+    claude,
+    codex,
   };
 }
 

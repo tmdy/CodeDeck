@@ -47,12 +47,12 @@ export function ParameterSettingsPanel({
         <label>
           直接启动
           <input
-            value={settings.launch_mode_args?.direct ?? ""}
+            value={settings.launch_mode_args?.new ?? ""}
             onChange={(e) =>
               onChange({
                 launch_mode_args: {
                   ...settings.launch_mode_args,
-                  direct: e.target.value,
+                  new: e.target.value,
                 },
               })
             }
@@ -63,12 +63,12 @@ export function ParameterSettingsPanel({
         <label>
           继续上次
           <input
-            value={settings.launch_mode_args?.continue ?? ""}
+            value={settings.launch_mode_args?.continue_last ?? ""}
             onChange={(e) =>
               onChange({
                 launch_mode_args: {
                   ...settings.launch_mode_args,
-                  continue: e.target.value,
+                  continue_last: e.target.value,
                 },
               })
             }
@@ -96,7 +96,7 @@ export function ParameterSettingsPanel({
         <label>
           Setting Sources
           <input
-            value={settings.cli_settings?.claude?.setting_sources ?? "'project,local'"}
+            value={settings.cli_settings?.claude?.setting_sources ?? "project,local"}
             onChange={(e) =>
               onChange({
                 cli_settings: {
@@ -114,7 +114,7 @@ export function ParameterSettingsPanel({
         <label>
           权限模式
           <input
-            value={settings.cli_settings?.claude?.permission_mode ?? "'acceptEdits'"}
+            value={settings.cli_settings?.claude?.permission_mode ?? "acceptEdits"}
             onChange={(e) =>
               onChange({
                 cli_settings: {
@@ -135,7 +135,7 @@ export function ParameterSettingsPanel({
         <label>
           Wire API
           <input
-            value={settings.cli_settings?.codex?.wire_api ?? "'responses'"}
+            value={settings.cli_settings?.codex?.wire_api ?? "responses"}
             onChange={(e) =>
               onChange({
                 cli_settings: {

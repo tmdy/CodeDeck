@@ -218,9 +218,17 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
 
     setBusy(true);
     try {
-      await window.skillsManager.clearCurrentProjectSelection();
+      // 先清空前端状态
       setProjectScan(null);
+      setSelectedSkillIds([]);
+      setDetailSkillId("");
+      setFilters(INITIAL_FILTERS);
       setPreviewState(null);
+      setLastExecution(null);
+
+      // 再清空后端持久化状态
+      await window.skillsManager.clearCurrentProjectSelection();
+
       onSuccess("已返回全局 Skills 管理。");
     } catch (error) {
       onError(error instanceof Error ? error.message : "清空项目失败。");

@@ -5,9 +5,8 @@ import type { ProfileKey } from "../profile/types.js";
 import type { RuntimeSettings, GlobalSettings } from "../profile/types.js";
 import { DEFAULT_PROVIDER, normalizeProvider, defaultGlobalSettings } from "../profile/types.js";
 import type { ConnectivityTestState } from "../connectivity/types.js";
-import type { ModelMappingEntry } from "../model-mapping/types.js";
 import type { ParameterSettings } from "../parameter/types.js";
-import { defaultParameterSettings } from "../parameter/types.js";
+import { defaultParameterSettings, normalizeParameterSettings } from "../parameter/types.js";
 
 export interface LocalState {
   selected_provider: string;
@@ -17,8 +16,8 @@ export interface LocalState {
   runtime_by_profile: Record<ProfileKey, RuntimeSettings>;
   connectivity_tests_by_profile: Record<ProfileKey, ConnectivityTestState>;
   global_settings: GlobalSettings;
-  /** 模型映射配置 */
-  model_mappings: ModelMappingEntry[];
+  /** 遗留的全局模型映射配置，仅为兼容旧状态读取 */
+  model_mappings?: unknown[];
   /** 参数设置 */
   parameter_settings: ParameterSettings;
 }
@@ -32,7 +31,6 @@ export function defaultLocalState(): LocalState {
     runtime_by_profile: {},
     connectivity_tests_by_profile: {},
     global_settings: defaultGlobalSettings(),
-    model_mappings: [],
     parameter_settings: defaultParameterSettings(),
   };
 }
@@ -51,8 +49,9 @@ export function ensureInitialized(state: LocalState): LocalState {
   state.runtime_by_profile ??= {};
   state.connectivity_tests_by_profile ??= {};
   state.global_settings ??= defaultGlobalSettings();
-  state.model_mappings ??= [];
-  state.parameter_settings ??= defaultParameterSettings();
+  state.parameter_settings = normalizeParameterSettings(
+    state.parameter_settings ?? defaultParameterSettings(),
+  );
 
   return state;
 }

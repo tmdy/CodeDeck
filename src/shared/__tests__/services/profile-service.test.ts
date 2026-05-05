@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { ProfileService, type LocalStateAccessor } from "../../services/profile-service.js";
 import { defaultLocalState, type LocalState } from "../../state/local-state.js";
 import { cloneLocalState } from "../../state/store.js";
-import type { Profile, RuntimeSettings } from "../../profile/types.js";
+import { normalizeProfile, type Profile, type RuntimeSettings } from "../../profile/types.js";
 import { itemKey } from "../../profile/keys-internal.js";
 
 // 内存状态存储（测试用）
@@ -34,11 +34,11 @@ function makeProfiles(): Profile[] {
 
 function makeRuntime(): RuntimeSettings {
   return {
-    proxy: "",
     cwd: "/home/user",
     command_base: "claude",
     model: "",
-    launch_mode: "direct",
+    settings_file: "",
+    launch_mode: "new",
     extra_args: "",
     exclude_user_settings: true,
   };
@@ -76,6 +76,21 @@ describe("ProfileService", () => {
       };
       const result = await service.saveProfile(key, draft, makeRuntime());
       expect(result.url).toBe("https://updated.example.com");
+    });
+
+    it("should save runtime settings only under runtime_by_profile", async () => {
+      const key = itemKey(makeProfiles()[0]);
+      const runtime = {
+        ...makeRuntime(),
+        cwd: "C:/project",
+        command_base: "claude-dev",
+      };
+
+      await service.saveProfile(key, makeProfiles()[0], runtime);
+
+      const state = accessor.get();
+      expect(state.runtime_by_profile[key]).toEqual(runtime);
+      expect(service.getProfiles()[0]).toEqual(normalizeProfile(makeProfiles()[0]));
     });
 
     it("should reject duplicate name", async () => {
@@ -210,30 +225,23 @@ describe("ProfileService", () => {
       expect(state.selected_provider).toBe("codex");
       expect(state.selected_profile_key).toBe(codexKey);
     });
-  });
-});
 
-describe("model mapping integration", () => {
-  it("should resolve model through mappings in state", async () => {
-    const accessor = new MemoryStateAccessor();
-    const state = accessor.get();
-    state.model_mappings = [
-      {
-        id: "1",
-        provider: "claude" as const,
-        pattern: "sonnet",
-        target_model: "claude-sonnet-4-20250514",
-        display_name: "Sonnet 4",
-        enabled: true,
-        priority: 1,
-      },
-    ];
-    await accessor.save(state);
+    it("should ignore remembered selections from another provider", async () => {
+      const claudeKey = itemKey(makeProfiles()[0]);
 
-    const { ModelMappingService } = await import("../../services/model-mapping-service.js");
-    const mappingService = new ModelMappingService(accessor);
+      await accessor.save({
+        ...defaultLocalState(),
+        selected_profile_key: claudeKey,
+        selected_profile_key_by_provider: { codex: claudeKey, claude: claudeKey },
+        profile_order_by_provider: { codex: [], claude: [claudeKey] },
+      });
 
-    const resolved = mappingService.resolve("claude", "sonnet");
-    expect(resolved).toBe("claude-sonnet-4-20250514");
+      await service.activateProvider("codex");
+
+      const state = accessor.get();
+      expect(state.selected_provider).toBe("codex");
+      expect(state.selected_profile_key).toBe(itemKey(makeProfiles().find((p) => p.provider === "codex")!));
+      expect(state.selected_profile_key_by_provider.codex).toBe(itemKey(makeProfiles().find((p) => p.provider === "codex")!));
+    });
   });
 });

@@ -5,6 +5,7 @@ interface LaunchControlsProps {
   onContinueLaunch: () => void;
   onResumeLaunch: () => void;
   disabled?: boolean;
+  resumeDisabled?: boolean;
 }
 
 export function LaunchControls({
@@ -12,6 +13,7 @@ export function LaunchControls({
   onContinueLaunch,
   onResumeLaunch,
   disabled,
+  resumeDisabled,
 }: LaunchControlsProps) {
   return (
     <div className="launch-controls">
@@ -21,7 +23,12 @@ export function LaunchControls({
       <button type="button" className="launch-btn" onClick={onContinueLaunch} disabled={disabled}>
         继续上次
       </button>
-      <button type="button" className="launch-btn" onClick={onResumeLaunch} disabled={disabled}>
+      <button
+        type="button"
+        className="launch-btn"
+        onClick={onResumeLaunch}
+        disabled={disabled || resumeDisabled}
+      >
         恢复选中
       </button>
     </div>

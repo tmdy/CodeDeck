@@ -1,125 +1,152 @@
-// ModelMappingPanel 模型映射配置表
-
-import { useState } from "react";
-import type { ModelMappingEntry } from "../../shared/model-mapping/types.js";
 import { GlassCard } from "../common/GlassCard.jsx";
+import {
+  CLAUDE_ALIASES,
+  CLAUDE_ALIAS_LABELS,
+  CODEX_ALIASES,
+  CODEX_ALIAS_LABELS,
+  type ClaudeAlias,
+  type CodexAlias,
+  type MappingAlias,
+  type MappingClient,
+  type ModelMappingsState,
+} from "../../shared/model-mapping/config-types.js";
 
 interface ModelMappingPanelProps {
-  mappings: ModelMappingEntry[];
-  onAdd: (entry: Omit<ModelMappingEntry, "id">) => void;
-  onUpdate: (id: string, update: Partial<ModelMappingEntry>) => void;
-  onDelete: (id: string) => void;
+  state: ModelMappingsState;
+  client: MappingClient;
+  currentSiteLabel: string;
   disabled?: boolean;
+  busy?: boolean;
+  error?: string | null;
+  success?: string | null;
+  onClientChange: (client: MappingClient) => void;
+  onSelectedAliasChange: (alias: ClaudeAlias | CodexAlias) => void;
+  onMappingChange: (
+    alias: MappingAlias,
+    changes: Partial<{
+      targetModel: string;
+      enabled: boolean;
+      fallbackToDefault: boolean;
+    }>,
+  ) => void;
+  onSave: () => void;
+  onFetchModels: (client: MappingClient) => void;
+}
+
+function getAliasLabel(client: MappingClient, alias: MappingAlias): string {
+  return client === "claude"
+    ? CLAUDE_ALIAS_LABELS[alias as ClaudeAlias]
+    : CODEX_ALIAS_LABELS[alias as CodexAlias];
 }
 
 export function ModelMappingPanel({
-  mappings,
-  onAdd,
-  onUpdate,
-  onDelete,
+  state,
+  client,
+  currentSiteLabel,
   disabled,
+  busy,
+  error,
+  success,
+  onClientChange,
+  onSelectedAliasChange,
+  onMappingChange,
+  onSave,
+  onFetchModels,
 }: ModelMappingPanelProps) {
-  const [newPattern, setNewPattern] = useState("");
-  const [newTarget, setNewTarget] = useState("");
-  const [newDisplay, setNewDisplay] = useState("");
-  const [newProvider, setNewProvider] = useState<"claude" | "codex">("claude");
-
-  function handleAdd() {
-    if (!newPattern.trim() || !newTarget.trim()) return;
-    onAdd({
-      provider: newProvider,
-      pattern: newPattern.trim(),
-      target_model: newTarget.trim(),
-      display_name: newDisplay.trim() || newPattern.trim(),
-      enabled: true,
-      priority: mappings.length + 1,
-    });
-    setNewPattern("");
-    setNewTarget("");
-    setNewDisplay("");
-  }
+  const aliases = client === "claude" ? CLAUDE_ALIASES : CODEX_ALIASES;
+  const selectedAlias = client === "claude" ? state.selectedClaudeAlias : state.selectedCodexAlias;
+  const fetchedModels = state.fetchedModelsByClient[client] ?? [];
+  const fetchedAt = state.lastFetchedAtByClient[client];
 
   return (
-    <GlassCard title="模型映射">
-      <p className="muted">
-        将简短的模型别名映射到真实的 CLI 模型名称。支持 * 和 ? 通配符。
-      </p>
-
-      <div className="model-mapping-table">
-        <div className="mm-row mm-header">
-          <span>Provider</span>
-          <span>模式</span>
-          <span>目标模型</span>
-          <span>显示名称</span>
-          <span>启用</span>
-          <span>操作</span>
-        </div>
-        {mappings.map((m) => (
-          <div key={m.id} className="mm-row">
-            <span>{m.provider}</span>
-            <span>
-              <input
-                value={m.pattern}
-                onChange={(e) => onUpdate(m.id, { pattern: e.target.value })}
-                disabled={disabled}
-              />
-            </span>
-            <span>
-              <input
-                value={m.target_model}
-                onChange={(e) => onUpdate(m.id, { target_model: e.target.value })}
-                disabled={disabled}
-              />
-            </span>
-            <span>{m.display_name}</span>
-            <span>
-              <input
-                type="checkbox"
-                checked={m.enabled}
-                onChange={(e) => onUpdate(m.id, { enabled: e.target.checked })}
-                disabled={disabled}
-              />
-            </span>
-            <span>
-              <button
-                type="button"
-                className="secondary-button small"
-                onClick={() => onDelete(m.id)}
-                disabled={disabled}
-              >
-                删除
-              </button>
-            </span>
-          </div>
-        ))}
+    <GlassCard title="模型映射" subtitle={client === "claude" ? "Claude Code" : "Codex / CC"}>
+      <div className="model-mapping-toolbar">
+        <label>
+          客户端
+          <select value={client} onChange={(e) => onClientChange(e.target.value as MappingClient)} disabled={disabled}>
+            <option value="claude">Claude Code</option>
+            <option value="codex">Codex / CC</option>
+          </select>
+        </label>
+        <label>
+          当前启动槽位
+          <select
+            value={selectedAlias}
+            onChange={(e) => onSelectedAliasChange(e.target.value as ClaudeAlias | CodexAlias)}
+            disabled={disabled}
+          >
+            {aliases.map((alias) => (
+              <option key={alias} value={alias}>
+                {getAliasLabel(client, alias)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" className="secondary-button" onClick={onSave} disabled={disabled || busy}>
+          {busy ? "保存中..." : "保存映射"}
+        </button>
       </div>
 
-      <div className="mm-add-row">
-        <select value={newProvider} onChange={(e) => setNewProvider(e.target.value as typeof newProvider)} disabled={disabled}>
-          <option value="claude">Claude</option>
-          <option value="codex">Codex</option>
-        </select>
-        <input
-          value={newPattern}
-          onChange={(e) => setNewPattern(e.target.value)}
-          placeholder="模式 (如 sonnet)"
-          disabled={disabled}
-        />
-        <input
-          value={newTarget}
-          onChange={(e) => setNewTarget(e.target.value)}
-          placeholder="目标模型 (如 claude-sonnet-4)"
-          disabled={disabled}
-        />
-        <input
-          value={newDisplay}
-          onChange={(e) => setNewDisplay(e.target.value)}
-          placeholder="显示名称"
-          disabled={disabled}
-        />
-        <button type="button" onClick={handleAdd} disabled={disabled || !newPattern.trim() || !newTarget.trim()}>
-          添加
+      <p className="muted">当前站点：{currentSiteLabel}。不需要额外 provider；映射直接作用于这个站点返回的模型列表。</p>
+      <div className="inline-actions">
+        <button type="button" className="secondary-button" onClick={() => onFetchModels(client)} disabled={disabled || busy}>
+          {busy ? "获取中..." : "从当前站点获取模型"}
         </button>
+      </div>
+      {fetchedAt && <p className="muted">最近获取：{fetchedAt}</p>}
+      {error && <div className="banner error">{error}</div>}
+      {success && <div className="banner success">{success}</div>}
+
+      <div className="mapping-grid">
+        {aliases.map((alias) => {
+          const mapping = state.mappings.find((item) => item.client === client && item.alias === alias);
+          if (!mapping) {
+            return null;
+          }
+          return (
+            <div key={alias} className="model-mapping-row">
+              <label>
+                槽位
+                <input value={getAliasLabel(client, alias)} disabled />
+              </label>
+              <label>
+                目标模型
+                <input
+                  list={`mapping-model-options-${client}-${alias}`}
+                  value={mapping.targetModel}
+                  onChange={(e) => onMappingChange(alias, { targetModel: e.target.value })}
+                  placeholder="留空表示继续使用站点官方模型"
+                  disabled={disabled}
+                />
+                <datalist id={`mapping-model-options-${client}-${alias}`}>
+                  {fetchedModels.map((item) => (
+                    <option key={`${client}-${alias}-${item}`} value={item} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={mapping.enabled}
+                  onChange={(e) => onMappingChange(alias, { enabled: e.target.checked })}
+                  disabled={disabled}
+                />
+                启用
+              </label>
+              {alias !== "default" && (
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={mapping.fallbackToDefault}
+                    onChange={(e) => onMappingChange(alias, { fallbackToDefault: e.target.checked })}
+                    disabled={disabled}
+                  />
+                  缺失时回退 Default
+                </label>
+              )}
+            </div>
+          );
+        })}
       </div>
     </GlassCard>
   );

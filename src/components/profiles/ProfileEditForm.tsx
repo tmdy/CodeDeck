@@ -1,6 +1,10 @@
 // ProfileEditForm 编辑表单
 
-import type { LaunchMode } from "../../shared/profile/types.js";
+import type {
+  AdvancedModelMapping,
+  LaunchMode,
+  ProviderID,
+} from "../../shared/profile/types.js";
 import { GlassCard } from "../common/GlassCard.jsx";
 
 interface ProfileEditFormProps {
@@ -8,17 +12,30 @@ interface ProfileEditFormProps {
     name: string;
     url: string;
     key: string;
+    selectedModelId: string;
+    advancedModelMapping: AdvancedModelMapping;
   };
   runtime: {
-    model: string;
     cwd: string;
+    command_base: string;
+    settings_file: string;
     extra_args: string;
     launch_mode: LaunchMode;
-    proxy: string;
     exclude_user_settings: boolean;
   };
+  provider: ProviderID;
+  modelOptions: string[];
+  modelFetchedAt?: string;
+  modelFetchBusy?: boolean;
+  modelFetchError?: string | null;
+  modelFetchSuccess?: string | null;
   onChange: (field: string, value: string | boolean) => void;
+  onDraftCommit?: (field: string, value?: string | boolean) => void;
+  onAdvancedModelMappingChange: (next: AdvancedModelMapping) => void;
   onRuntimeChange: (field: string, value: string | boolean) => void;
+  onRuntimeCommit?: (field: string) => void;
+  onFetchModels: () => void;
+  onPickCwd: () => void;
   onSave: () => void;
   onCancel: () => void;
   disabled?: boolean;
@@ -27,12 +44,44 @@ interface ProfileEditFormProps {
 export function ProfileEditForm({
   draft,
   runtime,
+  provider,
+  modelOptions,
+  modelFetchedAt,
+  modelFetchBusy,
+  modelFetchError,
+  modelFetchSuccess,
   onChange,
+  onDraftCommit,
+  onAdvancedModelMappingChange,
   onRuntimeChange,
+  onRuntimeCommit,
+  onFetchModels,
+  onPickCwd,
   onSave,
   onCancel,
   disabled,
 }: ProfileEditFormProps) {
+  const advancedMapping = draft.advancedModelMapping;
+  const modelFetchStatus = [
+    modelFetchedAt ? `最近获取：${modelFetchedAt}` : "",
+    modelFetchSuccess ?? "",
+  ].filter(Boolean).join(" · ");
+
+  function updateAdvancedMapping(changes: Partial<AdvancedModelMapping>) {
+    onAdvancedModelMappingChange({
+      ...advancedMapping,
+      ...changes,
+      claude: {
+        ...advancedMapping.claude,
+        ...(changes.claude ?? {}),
+      },
+      codex: {
+        ...advancedMapping.codex,
+        ...(changes.codex ?? {}),
+      },
+    });
+  }
+
   return (
     <div className="profile-edit-form">
       <GlassCard title="Profile 信息">
@@ -66,25 +115,79 @@ export function ProfileEditForm({
         </label>
       </GlassCard>
 
-      <GlassCard title="运行时设置">
+      <GlassCard title="模型配置">
+        <p className="muted">
+          当前模型 ID 可选。填写后会按原始 model id 启动 CLI；留空时不注入模型参数，交给 CLI 默认配置处理。
+          除非开启高级别名映射，否则不会自动转换成 default / sonnet / opus / haiku。
+        </p>
         <label>
-          模型
+          当前模型 ID
           <input
-            value={runtime.model}
-            onChange={(e) => onRuntimeChange("model", e.target.value)}
-            placeholder="模型名称（留空使用默认）"
+            list={`profile-model-options-${provider}`}
+            value={draft.selectedModelId}
+            onChange={(e) => {
+              const nextValue = e.target.value;
+              onChange("selectedModelId", nextValue);
+              if (modelOptions.includes(nextValue)) {
+                onDraftCommit?.("selectedModelId", nextValue);
+              }
+            }}
+            onBlur={() => onDraftCommit?.("selectedModelId")}
+            placeholder="可选：站点返回什么 model id，这里就填什么 model id"
             disabled={disabled}
           />
+          <datalist id={`profile-model-options-${provider}`}>
+            {modelOptions.map((item) => (
+              <option key={`${provider}-${item}`} value={item} />
+            ))}
+          </datalist>
         </label>
+        <div className="inline-actions">
+          <button type="button" className="secondary-button" onClick={onFetchModels} disabled={disabled || modelFetchBusy}>
+            {modelFetchBusy ? "获取中..." : "获取模型列表"}
+          </button>
+        </div>
+        {modelFetchStatus && <p className="muted">{modelFetchStatus}</p>}
+        {modelFetchError && <div className="banner error">{modelFetchError}</div>}
+      </GlassCard>
+
+      <GlassCard title="当前配置专属运行时设置">
+        <p className="muted">以下字段仅作用于当前配置。代理请在“全局设置”中维护。</p>
         <label>
           工作目录
+          <div className="path-field">
+            <input
+              value={runtime.cwd}
+              onChange={(e) => onRuntimeChange("cwd", e.target.value)}
+              onBlur={() => onRuntimeCommit?.("cwd")}
+              placeholder="留空使用系统默认"
+              disabled={disabled}
+            />
+            <button type="button" className="secondary-button" onClick={onPickCwd} disabled={disabled}>
+              选择
+            </button>
+          </div>
+        </label>
+        <label>
+          命令基座
           <input
-            value={runtime.cwd}
-            onChange={(e) => onRuntimeChange("cwd", e.target.value)}
-            placeholder="留空使用系统默认"
+            value={runtime.command_base}
+            onChange={(e) => onRuntimeChange("command_base", e.target.value)}
+            placeholder="例如 claude 或 codex"
             disabled={disabled}
           />
         </label>
+        {provider === "claude" && (
+          <label>
+            自定义 Claude settings 文件
+            <input
+              value={runtime.settings_file}
+              onChange={(e) => onRuntimeChange("settings_file", e.target.value)}
+              placeholder="可选：例如 C:/Users/you/.claude/settings.local.json"
+              disabled={disabled}
+            />
+          </label>
+        )}
         <label>
           额外参数
           <input
@@ -101,19 +204,10 @@ export function ProfileEditForm({
             onChange={(e) => onRuntimeChange("launch_mode", e.target.value)}
             disabled={disabled}
           >
-            <option value="direct">直接启动</option>
-            <option value="continue">继续最近会话 (--continue)</option>
-            <option value="resume_selected">恢复选中会话 (--resume)</option>
+            <option value="new">直接启动（新会话）</option>
+            <option value="continue_last">继续当前目录最近会话</option>
+            <option value="resume_selected">恢复指定会话</option>
           </select>
-        </label>
-        <label>
-          代理
-          <input
-            value={runtime.proxy}
-            onChange={(e) => onRuntimeChange("proxy", e.target.value)}
-            placeholder="HTTP 代理（可选）"
-            disabled={disabled}
-          />
         </label>
         <label className="checkbox-label">
           <input
@@ -124,6 +218,73 @@ export function ProfileEditForm({
           />
           排除用户级设置
         </label>
+      </GlassCard>
+
+      <GlassCard title="高级选项" subtitle="默认关闭，仅在确实需要别名映射或覆盖行为时启用">
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={advancedMapping.enabled}
+            onChange={(e) => updateAdvancedMapping({ enabled: e.target.checked })}
+            disabled={disabled}
+          />
+          启用高级模型别名映射
+        </label>
+        {advancedMapping.enabled && provider === "claude" && (
+          <div className="mapping-grid">
+            <label>
+              Default Target
+              <input
+                value={advancedMapping.claude?.defaultTarget ?? ""}
+                onChange={(e) => updateAdvancedMapping({ claude: { defaultTarget: e.target.value } })}
+                disabled={disabled}
+              />
+            </label>
+            <label>
+              Opus Target
+              <input
+                value={advancedMapping.claude?.opusTarget ?? ""}
+                onChange={(e) => updateAdvancedMapping({ claude: { opusTarget: e.target.value } })}
+                disabled={disabled}
+              />
+            </label>
+            <label>
+              Sonnet Target
+              <input
+                value={advancedMapping.claude?.sonnetTarget ?? ""}
+                onChange={(e) => updateAdvancedMapping({ claude: { sonnetTarget: e.target.value } })}
+                disabled={disabled}
+              />
+            </label>
+            <label>
+              Haiku Target
+              <input
+                value={advancedMapping.claude?.haikuTarget ?? ""}
+                onChange={(e) => updateAdvancedMapping({ claude: { haikuTarget: e.target.value } })}
+                disabled={disabled}
+              />
+            </label>
+            <label>
+              Subagent Target
+              <input
+                value={advancedMapping.claude?.subagentTarget ?? ""}
+                onChange={(e) => updateAdvancedMapping({ claude: { subagentTarget: e.target.value } })}
+                disabled={disabled}
+              />
+            </label>
+          </div>
+        )}
+        {advancedMapping.enabled && provider === "codex" && (
+          <label>
+            Codex 命令行模型覆盖
+            <input
+              value={advancedMapping.codex?.commandLineModelOverride ?? ""}
+              onChange={(e) => updateAdvancedMapping({ codex: { commandLineModelOverride: e.target.value } })}
+              placeholder="可选：仅在需要显式追加 --model 时填写"
+              disabled={disabled}
+            />
+          </label>
+        )}
       </GlassCard>
 
       <div className="form-actions">

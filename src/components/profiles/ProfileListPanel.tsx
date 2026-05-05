@@ -1,13 +1,14 @@
 // ProfileListPanel 列表组件 — 含拖拽排序
 
 import { useRef, useState, type DragEvent } from "react";
-import type { ProfileKey } from "../../shared/profile/types.js";
+import type { ProfileKey, ProviderID } from "../../shared/profile/types.js";
 import type { Profile } from "../../shared/profile/types.js";
 import { itemKey } from "../../shared/profile/keys-internal.js";
 import { ProfileItem } from "./ProfileItem.jsx";
 
 interface ProfileListPanelProps {
   profiles: Profile[];
+  activeProvider: ProviderID;
   selectedKey: ProfileKey;
   orderedKeys: ProfileKey[];
   connectivityStates: Record<ProfileKey, string>;
@@ -21,6 +22,7 @@ interface ProfileListPanelProps {
 
 export function ProfileListPanel({
   profiles,
+  activeProvider,
   selectedKey,
   orderedKeys,
   connectivityStates,
@@ -60,14 +62,15 @@ export function ProfileListPanel({
   }
 
   const visible: { key: ProfileKey; name: string; provider: string }[] = [];
+  const providerProfiles = profiles.filter((profile) => profile.provider === activeProvider);
   const orderedSet = new Set(orderedKeys);
   for (const k of orderedKeys) {
-    const profile = profiles.find((p) => itemKey(p) === k);
+    const profile = providerProfiles.find((p) => itemKey(p) === k);
     if (profile) {
       visible.push({ key: k, name: profile.name, provider: profile.provider });
     }
   }
-  for (const profile of profiles) {
+  for (const profile of providerProfiles) {
     if (!orderedSet.has(itemKey(profile))) {
       visible.push({
         key: itemKey(profile),

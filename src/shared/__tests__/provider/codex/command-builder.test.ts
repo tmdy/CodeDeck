@@ -4,39 +4,34 @@ import { describe, it, expect } from "vitest";
 import { buildCodexCommand } from "../../../provider/codex/command-builder.js";
 
 describe("buildCodexCommand", () => {
-  it("should use temporary provider for continue mode", () => {
+  it("should build a continue_last command without changing the resume subcommand structure", () => {
     const cmd = buildCodexCommand({
       commandBase: "codex",
-      launchMode: "continue",
+      launchMode: "continue_last",
       extraArgs: "--search",
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-5.4",
     });
 
-    expect(cmd).toContain("codex");
-    expect(cmd).toContain("resume --last");
-    expect(cmd).toContain("model_provider");
-    expect(cmd).toContain("CODEX_PROFILE_LAUNCHER_API_KEY");
-    expect(cmd).toContain(".env_key");
-    expect(cmd).toContain("-m gpt-5.4");
-    expect(cmd).toContain("--search");
+    expect(cmd).toBe("codex resume --last --search");
   });
 
-  it("should use default model when not provided", () => {
+  it("should omit the model flag because config.toml carries the selected model", () => {
     const cmd = buildCodexCommand({
       commandBase: "codex",
-      launchMode: "direct",
+      launchMode: "new",
       extraArgs: "",
       baseUrl: "https://api.openai.com/v1",
+      model: "gpt-5.4",
     });
 
-    expect(cmd).toContain("-m gpt-5.4");
+    expect(cmd).toBe("codex");
   });
 
-  it("should handle direct launch mode", () => {
+  it("should handle new launch mode", () => {
     const cmd = buildCodexCommand({
       commandBase: "codex",
-      launchMode: "direct",
+      launchMode: "new",
       extraArgs: "",
       baseUrl: "https://example.com",
     });
@@ -45,7 +40,29 @@ describe("buildCodexCommand", () => {
     expect(cmd).not.toContain("--continue");
   });
 
-  it("should handle resume_selected mode with session id", () => {
+  it("should handle resume_picker mode", () => {
+    const cmd = buildCodexCommand({
+      commandBase: "codex",
+      launchMode: "resume_picker",
+      extraArgs: "",
+      baseUrl: "https://example.com/v1",
+    });
+
+    expect(cmd).toBe("codex resume");
+  });
+
+  it("should handle resume_picker_all mode", () => {
+    const cmd = buildCodexCommand({
+      commandBase: "codex",
+      launchMode: "resume_picker_all",
+      extraArgs: "",
+      baseUrl: "https://example.com/v1",
+    });
+
+    expect(cmd).toBe("codex resume --all");
+  });
+
+  it("should handle resume_selected mode with a quoted session id", () => {
     const cmd = buildCodexCommand({
       commandBase: "codex",
       launchMode: "resume_selected",
@@ -54,13 +71,13 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com/v1",
     });
 
-    expect(cmd).toContain("resume session-456");
+    expect(cmd).toBe('codex resume "session-456"');
   });
 
   it("should default to codex when empty command base", () => {
     const cmd = buildCodexCommand({
       commandBase: "",
-      launchMode: "direct",
+      launchMode: "new",
       extraArgs: "",
       baseUrl: "https://example.com",
     });
@@ -71,7 +88,7 @@ describe("buildCodexCommand", () => {
   it("should normalize base URL for command", () => {
     const cmd = buildCodexCommand({
       commandBase: "codex",
-      launchMode: "direct",
+      launchMode: "new",
       extraArgs: "",
       baseUrl: "https://proxy.example.com/v1/responses",
     });

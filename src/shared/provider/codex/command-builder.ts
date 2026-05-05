@@ -1,10 +1,7 @@
 // Codex CLI 命令构建器 — 翻译自 Go internal/provider/codex/command_builder.go
 
 import { normalizeCodexUrl } from "./url-normalizer.js";
-
-const TEMP_PROVIDER_ID = "launcher_temp";
-const TEMP_ENV_KEY = "CODEX_PROFILE_LAUNCHER_API_KEY";
-const DEFAULT_MODEL = "gpt-5.4";
+import { formatPreviewToken, parseCliArgs } from "../cli-args.js";
 
 export interface CodexCommandOptions {
   commandBase: string;
@@ -13,40 +10,22 @@ export interface CodexCommandOptions {
   sessionId?: string;
   baseUrl: string;
   model?: string;
+  wireApi?: string;
 }
 
-function formatOverride(key: string, value: string): string {
-  const serialized = JSON.stringify(value);
-  return `'${key}=${serialized}'`;
-}
-
-function buildConfigArgs(baseUrl: string): string[] {
-  const pairs: [string, string][] = [
-    ["model_provider", TEMP_PROVIDER_ID],
-    [`model_providers.${TEMP_PROVIDER_ID}.name`, "Launcher Temporary"],
-    [`model_providers.${TEMP_PROVIDER_ID}.base_url`, baseUrl],
-    [`model_providers.${TEMP_PROVIDER_ID}.wire_api`, "responses"],
-    [`model_providers.${TEMP_PROVIDER_ID}.env_key`, TEMP_ENV_KEY],
-  ];
-
-  return pairs.flatMap(([k, v]) => ["-c", formatOverride(k, v)]);
-}
-
-export function buildCodexCommand(options: CodexCommandOptions): string {
-  const commandBase = options.commandBase.trim() || "codex";
-  const baseUrl = normalizeCodexUrl(options.baseUrl);
-  const model = options.model?.trim() || DEFAULT_MODEL;
-
-  const parts: string[] = [commandBase];
-  parts.push(...buildConfigArgs(baseUrl));
-
-  if (model) {
-    parts.push("-m", model);
-  }
+export function buildCodexArgs(options: CodexCommandOptions): string[] {
+  normalizeCodexUrl(options.baseUrl);
+  const parts: string[] = [];
 
   switch (options.launchMode.trim()) {
-    case "continue":
+    case "continue_last":
       parts.push("resume", "--last");
+      break;
+    case "resume_picker":
+      parts.push("resume");
+      break;
+    case "resume_picker_all":
+      parts.push("resume", "--all");
       break;
     case "resume_selected": {
       parts.push("resume");
@@ -58,9 +37,21 @@ export function buildCodexCommand(options: CodexCommandOptions): string {
     }
   }
 
-  const extraArgs = options.extraArgs.trim();
-  if (extraArgs) {
-    parts.push(extraArgs);
+  parts.push(...parseCliArgs(options.extraArgs));
+
+  return parts;
+}
+
+export function buildCodexCommand(options: CodexCommandOptions): string {
+  const commandBase = options.commandBase.trim() || "codex";
+  const args = buildCodexArgs(options);
+  const parts: string[] = [formatPreviewToken(commandBase)];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    const previous = index > 0 ? args[index - 1] : "";
+    const forceQuote = previous === "resume" && options.launchMode.trim() === "resume_selected";
+    parts.push(formatPreviewToken(value, forceQuote));
   }
 
   return parts.join(" ");
