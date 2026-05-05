@@ -36,6 +36,10 @@ describe("record search helpers", () => {
 
   it("matches only user tags in search", () => {
     const record = createRecord({
+      displayName: "Academic Writer",
+      directoryName: "academic-writer",
+      summary: "用于学术论文写作与研究辅助",
+      sourcePath: "C:/skills/academic-writer",
       tags: ["builtin"],
       userTags: ["科研写作"],
       hasUserTags: true,
@@ -44,6 +48,36 @@ describe("record search helpers", () => {
     expect(matchesSkillSearch(record, "科研")).toBe(true);
     expect(matchesSkillSearch(record, "builtin")).toBe(false);
     expect(matchesSkillSearch(record, "missing")).toBe(false);
+  });
+
+  it("requires every positive keyword to match somewhere in the searchable fields", () => {
+    const record = createRecord({
+      displayName: "Academic Writer",
+      directoryName: "academic-writer",
+      summary: "用于学术论文写作与研究辅助",
+      sourcePath: "C:/skills/research/academic-writer",
+      userTags: ["科研写作"],
+      hasUserTags: true,
+    });
+
+    expect(matchesSkillSearch(record, "academic 科研")).toBe(true);
+    expect(matchesSkillSearch(record, "academic writer")).toBe(true);
+    expect(matchesSkillSearch(record, "academic missing")).toBe(false);
+  });
+
+  it("excludes records that match any minus-prefixed keyword", () => {
+    const record = createRecord({
+      displayName: "Academic Writer",
+      directoryName: "academic-writer",
+      summary: "用于学术论文写作与研究辅助",
+      sourcePath: "C:/skills/research/academic-writer",
+      userTags: ["科研写作"],
+      hasUserTags: true,
+    });
+
+    expect(matchesSkillSearch(record, "academic -音视频")).toBe(true);
+    expect(matchesSkillSearch(record, "academic -research")).toBe(false);
+    expect(matchesSkillSearch(record, "-academic")).toBe(false);
   });
 
   it("sorts tagged skills ahead of untagged skills while keeping group order stable", () => {

@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   encodeClaudeProjectPath,
+  type ListSessionsRequest,
   listClaudeSessions,
   listCodexSessions,
   listSessionsForProvider,
@@ -52,10 +53,15 @@ describe("session-service", () => {
     ]);
     await setFileTime(filePath, "2026-05-04T10:00:00.000Z");
 
-    const sessions = await listClaudeSessions(cwd, claudeRoot);
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "project",
+      cwd,
+    }, claudeRoot);
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
+      provider: "claude",
       session_id: "session-a",
       cwd,
       preview: "修复 Profiles 启动逻辑",
@@ -76,7 +82,11 @@ describe("session-service", () => {
       },
     ]);
 
-    const sessions = await listClaudeSessions(cwd, claudeRoot);
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "project",
+      cwd,
+    }, claudeRoot);
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.session_id).toBe("legacy-session");
@@ -99,12 +109,16 @@ describe("session-service", () => {
       },
     ]);
 
-    const sessions = await listClaudeSessions("C:/workspace/project-b", claudeRoot);
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/project-b",
+    }, claudeRoot);
 
     expect(sessions).toEqual([]);
   });
 
-  it("returns recent Claude sessions when cwd is empty", async () => {
+  it("returns recent Claude sessions in global_recent scope", async () => {
     const claudeRoot = await createTempDir("skills-manager-claude-recent-");
     tempDirs.push(claudeRoot);
     const olderFile = path.join(
@@ -124,9 +138,13 @@ describe("session-service", () => {
     await setFileTime(olderFile, "2026-05-04T09:00:00.000Z");
     await setFileTime(newerFile, "2026-05-04T10:00:00.000Z");
 
-    const sessions = await listClaudeSessions("", claudeRoot);
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "global_recent",
+    }, claudeRoot);
 
     expect(sessions.map((session) => session.session_id)).toEqual(["newer", "older"]);
+    expect(sessions.every((session) => session.provider === "claude")).toBe(true);
   });
 
   it("reads Codex sessions from session_index.jsonl and filters by cwd using session headers when needed", async () => {
@@ -176,10 +194,15 @@ describe("session-service", () => {
       ],
     );
 
-    const sessions = await listCodexSessions("C:/workspace/current-project", codexRoot);
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "project",
+      cwd: "C:/workspace/current-project",
+    }, codexRoot);
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({
+      provider: "codex",
       session_id: "019df0ff-0001",
       cwd: "C:/workspace/current-project",
       preview: "当前项目会话",
@@ -211,9 +234,47 @@ describe("session-service", () => {
       ],
     );
 
-    const sessions = await listCodexSessions("C:/workspace/current-project", codexRoot);
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "project",
+      cwd: "C:/workspace/current-project",
+    }, codexRoot);
 
     expect(sessions).toEqual([]);
+  });
+
+  it("returns recent Codex sessions in global_recent scope", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-recent-");
+    tempDirs.push(codexRoot);
+    await writeFile(
+      path.join(codexRoot, "session_index.jsonl"),
+      [
+        JSON.stringify({
+          id: "019df0ff-1001",
+          thread_name: "较新会话",
+          updated_at: "2026-05-04T10:30:00.000Z",
+          cwd: "C:/workspace/newer",
+        }),
+        JSON.stringify({
+          id: "019df0ff-1000",
+          thread_name: "较旧会话",
+          updated_at: "2026-05-04T10:20:00.000Z",
+          cwd: "C:/workspace/older",
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, codexRoot);
+
+    expect(sessions.map((session) => session.session_id)).toEqual([
+      "019df0ff-1001",
+      "019df0ff-1000",
+    ]);
+    expect(sessions.every((session) => session.provider === "codex")).toBe(true);
   });
 
   it("skips a bad JSONL file without affecting other sessions", async () => {
@@ -227,15 +288,29 @@ describe("session-service", () => {
     await mkdir(path.dirname(badPath), { recursive: true });
     await writeFile(badPath, "{not-json}\n", "utf-8");
 
-    const sessions = await listClaudeSessions(cwd, claudeRoot);
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "project",
+      cwd,
+    }, claudeRoot);
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.session_id).toBe("good");
   });
 
+  it("requires cwd in project scope", async () => {
+    const request: ListSessionsRequest = {
+      provider: "claude",
+      scope: "project",
+    };
+
+    await expect(listSessionsForProvider(request)).rejects.toThrow("cwd");
+  });
+
   it("delegates to the correct provider-specific session loader", async () => {
     const listClaude = vi.fn().mockResolvedValue([
       {
+        provider: "claude",
         session_id: "claude-1",
         cwd: "C:/repo",
         updated_at: "2026-05-04T10:00:00.000Z",
@@ -244,12 +319,18 @@ describe("session-service", () => {
     ]);
     const listCodex = vi.fn().mockResolvedValue([]);
 
-    const result = await listSessionsForProvider("claude", "C:/repo", {
+    const request: ListSessionsRequest = {
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/repo",
+    };
+
+    const result = await listSessionsForProvider(request, {
       listClaudeSessions: listClaude,
       listCodexSessions: listCodex,
     });
 
-    expect(listClaude).toHaveBeenCalledWith("C:/repo");
+    expect(listClaude).toHaveBeenCalledWith(request);
     expect(listCodex).not.toHaveBeenCalled();
     expect(result[0]?.session_id).toBe("claude-1");
   });

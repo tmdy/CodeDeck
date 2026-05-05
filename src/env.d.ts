@@ -16,9 +16,16 @@ import type {
 import type { Profile, ProfileKey, RuntimeSettings, GlobalSettings } from "./shared/profile/types.js";
 import type { CommandPreview, LaunchRequest } from "./shared/launcher/types.js";
 import type { ConnectivityTestState } from "./shared/connectivity/types.js";
+import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ModelMappingsState } from "./shared/model-mapping/config-types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
 import type { LocalState } from "./shared/state/local-state.js";
+import type { ListSessionsRequest, SessionListScope } from "./shared/services/session-service.js";
+import type {
+  SiteBalanceSession,
+  SiteBalanceSessionDraft,
+  SiteBalanceSessionsByBaseUrl,
+} from "./shared/balance/site-balance-sessions.js";
 
 declare global {
   interface Window {
@@ -51,14 +58,21 @@ declare global {
       initializeEncryption: (passphrase: string) => Promise<{ success: boolean }>;
 
       // Profile CRUD
-      listProfiles: () => Promise<{ profiles: Profile[]; state: LocalState }>;
+      listProfiles: () => Promise<{
+        profiles: Profile[];
+        state: LocalState;
+        siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+      }>;
       saveProfile: (targetKey: ProfileKey, draft: Profile, runtime: RuntimeSettings) => Promise<Profile>;
       deleteProfile: (key: ProfileKey) => Promise<void>;
       cloneProfile: (sourceKey: ProfileKey, targetProvider: string) => Promise<Profile>;
       selectProfile: (provider: string, key: ProfileKey) => Promise<void>;
       reorderProfiles: (provider: string, orderedKeys: ProfileKey[]) => Promise<void>;
       activateProvider: (provider: string) => Promise<void>;
+      saveSiteBalanceSession: (baseUrl: string, draft: SiteBalanceSessionDraft) => Promise<SiteBalanceSession>;
+      deleteSiteBalanceSession: (baseUrl: string, sessionId: string) => Promise<void>;
       pickWorkingDirectory: () => Promise<string | undefined>;
+      openBaseUrl: (baseUrl: string) => Promise<void>;
 
       // Launcher
       previewForDraft: (
@@ -71,12 +85,18 @@ declare global {
       launch: (request: LaunchRequest) => Promise<void>;
 
       // Sessions
-      listSessions: (provider: string, cwd: string) => Promise<unknown[]>;
+      listSessions: (request: ListSessionsRequest) => Promise<unknown[]>;
       refreshSessions: (provider: string) => Promise<void>;
+      updateSessionsTabState: (
+        provider: string,
+        patch: { scope?: SessionListScope; restore_profile_key?: ProfileKey },
+      ) => Promise<void>;
 
       // Connectivity
       testConnection: (profileKey: ProfileKey) => Promise<void>;
       getConnectivityState: (profileKey: ProfileKey) => Promise<ConnectivityTestState>;
+      testBalance: (profileKey: ProfileKey) => Promise<void>;
+      getBalanceState: (profileKey: ProfileKey) => Promise<BalanceCheckState>;
 
       // Model Mappings
       getModelMappings: () => Promise<ModelMappingsState>;
@@ -94,6 +114,7 @@ declare global {
       // Events
       onStateChanged: (callback: (state: LocalState) => void) => () => void;
       onConnectivityProgress: (callback: (key: ProfileKey, state: ConnectivityTestState) => void) => () => void;
+      onBalanceProgress: (callback: (key: ProfileKey, state: BalanceCheckState) => void) => () => void;
       onUnlockError: (callback: (message: string) => void) => () => void;
     };
   }

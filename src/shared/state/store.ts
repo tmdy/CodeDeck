@@ -16,10 +16,12 @@ import {
   normalizeKeyWithFallback,
 } from "../profile/keys-internal.js";
 import type { ConnectivityTestState } from "../connectivity/types.js";
+import type { BalanceCheckItem, BalanceCheckState } from "../balance/types.js";
 import type { ParameterSettings } from "../parameter/types.js";
 import { normalizeParameterSettings } from "../parameter/types.js";
 import type { LocalState } from "./local-state.js";
 import { defaultLocalState, ensureInitialized } from "./local-state.js";
+import { isSessionListScope, type SessionListScope } from "../services/session-service.js";
 
 interface RawState {
   selected_provider: string;
@@ -29,9 +31,12 @@ interface RawState {
   profile_order_by_provider: Record<string, string[]>;
   runtime_by_profile: Record<string, RuntimeSettings>;
   connectivity_tests_by_profile: Record<string, ConnectivityTestState>;
+  balance_checks_by_profile: Record<string, BalanceCheckState>;
   global_settings: GlobalSettings;
   model_mappings?: unknown[];
   parameter_settings?: ParameterSettings;
+  sessions_tab_scope_by_provider: Record<string, SessionListScope>;
+  sessions_tab_restore_profile_key_by_provider: Record<string, string>;
 }
 
 export class LocalStateStore {
@@ -75,8 +80,11 @@ export class LocalStateStore {
       profile_order_by_provider: {},
       runtime_by_profile: {},
       connectivity_tests_by_profile: {},
+      balance_checks_by_profile: {},
       global_settings: normalizeGlobalSettings(normalized.global_settings),
       parameter_settings: normalizeParameterSettings(normalized.parameter_settings),
+      sessions_tab_scope_by_provider: {},
+      sessions_tab_restore_profile_key_by_provider: {},
     };
 
     // 序列化 selected keys by provider
@@ -116,6 +124,31 @@ export class LocalStateStore {
       payload.connectivity_tests_by_profile[nKey] = ts;
     }
 
+    for (const [key, balanceState] of Object.entries(normalized.balance_checks_by_profile)) {
+      const [prov, name] = splitKey(key);
+      const nKey = normalizeKeyWithFallback(key, prov);
+      if (!nKey) continue;
+
+      const ts = cloneBalanceCheckState(balanceState);
+      ts.provider = ts.provider ? normalizeProvider(ts.provider) : prov;
+      ts.profile_name = ts.profile_name || name;
+      payload.balance_checks_by_profile[nKey] = ts;
+    }
+
+    for (const [providerID, scope] of Object.entries(normalized.sessions_tab_scope_by_provider)) {
+      if (isSessionListScope(scope)) {
+        payload.sessions_tab_scope_by_provider[normalizeProvider(providerID)] = scope;
+      }
+    }
+
+    for (const [providerID, key] of Object.entries(normalized.sessions_tab_restore_profile_key_by_provider)) {
+      const nProv = normalizeProvider(providerID);
+      const nKey = normalizeKeyWithFallback(key, nProv);
+      if (nKey) {
+        payload.sessions_tab_restore_profile_key_by_provider[nProv] = nKey;
+      }
+    }
+
     const dir = path.dirname(this.filePath);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(this.filePath, JSON.stringify(payload, null, 2), "utf-8");
@@ -134,6 +167,8 @@ function normalizeState(raw: RawState): LocalState {
   state.global_settings = normalizeGlobalSettings(raw.global_settings ?? state.global_settings);
   state.model_mappings = raw.model_mappings ?? [];
   state.parameter_settings = normalizeParameterSettings(raw.parameter_settings);
+  state.sessions_tab_scope_by_provider = {};
+  state.sessions_tab_restore_profile_key_by_provider = {};
 
   // selected_profile_key 处理
   state.selected_profile_key = normalizeKeyWithFallback(
@@ -193,6 +228,30 @@ function normalizeState(raw: RawState): LocalState {
     state.connectivity_tests_by_profile[nKey] = ts;
   }
 
+  for (const [rawKey, balanceState] of Object.entries(raw.balance_checks_by_profile ?? {})) {
+    const nKey = normalizeKeyWithFallback(rawKey, legacyProviderID);
+    if (!nKey) continue;
+    const [prov, name] = splitKey(nKey);
+    const ts = cloneBalanceCheckState(balanceState);
+    ts.provider = ts.provider ? normalizeProvider(ts.provider) : prov;
+    ts.profile_name = ts.profile_name || name;
+    state.balance_checks_by_profile[nKey] = ts;
+  }
+
+  for (const [providerID, scope] of Object.entries(raw.sessions_tab_scope_by_provider ?? {})) {
+    if (isSessionListScope(scope)) {
+      state.sessions_tab_scope_by_provider[normalizeProvider(providerID)] = scope;
+    }
+  }
+
+  for (const [providerID, key] of Object.entries(raw.sessions_tab_restore_profile_key_by_provider ?? {})) {
+    const nProv = normalizeProvider(providerID);
+    const nKey = normalizeKeyWithFallback(key, nProv);
+    if (nKey) {
+      state.sessions_tab_restore_profile_key_by_provider[nProv] = nKey;
+    }
+  }
+
   return ensureInitialized(state);
 }
 
@@ -216,8 +275,38 @@ export function cloneLocalState(state: LocalState): LocalState {
     connectivity_tests_by_profile: Object.fromEntries(
       Object.entries(state.connectivity_tests_by_profile).map(([k, v]) => [k, { ...v }]),
     ),
+    balance_checks_by_profile: Object.fromEntries(
+      Object.entries(state.balance_checks_by_profile).map(([k, v]) => [k, cloneBalanceCheckState(v)]),
+    ),
     global_settings: { ...state.global_settings },
     model_mappings: state.model_mappings ? [...state.model_mappings] : undefined,
     parameter_settings: { ...state.parameter_settings },
+    sessions_tab_scope_by_provider: { ...state.sessions_tab_scope_by_provider },
+    sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
+  };
+}
+
+function cloneBalanceCheckItem(item: BalanceCheckItem): BalanceCheckItem {
+  return {
+    label: item.label,
+    remaining: typeof item.remaining === "number" ? item.remaining : null,
+    total: typeof item.total === "number" ? item.total : null,
+    used: typeof item.used === "number" ? item.used : null,
+    unit: item.unit,
+  };
+}
+
+function cloneBalanceCheckState(state: BalanceCheckState): BalanceCheckState {
+  return {
+    provider: state.provider,
+    profile_name: state.profile_name,
+    base_url: state.base_url,
+    running: state.running,
+    supported: state.supported,
+    success: state.success,
+    message: state.message,
+    items: Array.isArray(state.items) ? state.items.map(cloneBalanceCheckItem) : [],
+    endpoint: state.endpoint ?? "",
+    finished_at_display: state.finished_at_display,
   };
 }

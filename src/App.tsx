@@ -3,15 +3,26 @@ import type { Profile, ProfileKey, GlobalSettings, LaunchMode } from "./shared/p
 import type { LocalState } from "./shared/state/local-state.js";
 import type { CommandPreview } from "./shared/launcher/types.js";
 import type { ConnectivityTestState } from "./shared/connectivity/types.js";
+import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
-import type { SessionSummary } from "./shared/services/session-service.js";
+import type {
+  ListSessionsRequest,
+  SessionListScope,
+  SessionSummary,
+} from "./shared/services/session-service.js";
 import { itemKey } from "./shared/profile/keys-internal.js";
 import { PROVIDER_CLAUDE, PROVIDER_CODEX, defaultRuntimeSettings } from "./shared/profile/types.js";
+import {
+  listProfilesForProvider,
+  resolveHistoryRestoreProfileKey,
+  resolveHistoryScope,
+} from "./shared/session-history-state.js";
 import {
   buildNewProfileDraft,
   buildRuntimeSettingsFromDraft,
   buildSelectedProfileDraft,
   hasProfileDraftChanges,
+  hasOnlyProfileDraftBalanceSessionChange,
   hasOnlyProfileDraftCwdChange,
   hasOnlyProfileDraftSelectedModelIdChange,
   type ProfileEditorDraft,
@@ -23,14 +34,41 @@ import { ProfileListPanel } from "./components/profiles/ProfileListPanel.jsx";
 import { ProfileEditForm } from "./components/profiles/ProfileEditForm.jsx";
 import { SessionList } from "./components/launcher/SessionList.jsx";
 import { ConnectivityTestButton } from "./components/connectivity/ConnectivityTestButton.jsx";
+import { BalanceTestButton } from "./components/balance/BalanceTestButton.jsx";
 import { GlobalSettingsPanel } from "./components/settings/GlobalSettingsPanel.jsx";
 import { ParameterSettingsPanel } from "./components/settings/ParameterSettingsPanel.jsx";
 import { ProfilesLaunchPanel } from "./components/profiles/ProfilesLaunchPanel.jsx";
 import { SkillsPanel } from "./components/skills/SkillsPanel.jsx";
+import {
+  buildBalanceListEntry,
+  getBalanceStateForProfile,
+} from "./shared/balance/presentation.js";
+import {
+  describeBalanceSessionHint,
+  getSiteBalanceSessionsForBaseUrl,
+  type SiteBalanceSessionsByBaseUrl,
+} from "./shared/balance/site-balance-sessions.js";
 
 type TabId = "skills" | "profiles" | "sessions" | "settings";
 type SettingsSubTab = "global" | "parameters";
-type ListProfilesResult = { profiles: Profile[]; state: LocalState };
+type BalanceSessionDraftState = {
+  label: string;
+  access_token: string;
+  user_id: string;
+};
+type ListProfilesResult = {
+  profiles: Profile[];
+  state: LocalState;
+  siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+};
+
+function emptyBalanceSessionDraft(): BalanceSessionDraftState {
+  return {
+    label: "",
+    access_token: "",
+    user_id: "",
+  };
+}
 
 function emptyPreview(): CommandPreview {
   return {
@@ -50,6 +88,7 @@ function App() {
   // ---- Profile 状态 ----
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [state, setState] = useState<LocalState | null>(null);
+  const [siteBalanceSessionsByBaseUrl, setSiteBalanceSessionsByBaseUrl] = useState<SiteBalanceSessionsByBaseUrl>({});
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
@@ -63,6 +102,8 @@ function App() {
   const [draftKey, setDraftKey] = useState("");
   const [draftModel, setDraftModel] = useState("");
   const [draftAdvancedModelMapping, setDraftAdvancedModelMapping] = useState(buildNewProfileDraft(PROVIDER_CLAUDE).advancedModelMapping);
+  const [draftBalanceSessionSelection, setDraftBalanceSessionSelection] = useState("auto");
+  const [draftBalanceSession, setDraftBalanceSession] = useState<BalanceSessionDraftState>(emptyBalanceSessionDraft());
   const [draftCwd, setDraftCwd] = useState("");
   const [draftCommandBase, setDraftCommandBase] = useState("");
   const [draftSettingsFile, setDraftSettingsFile] = useState("");
@@ -80,16 +121,66 @@ function App() {
   const [preview, setPreview] = useState<CommandPreview>(emptyPreview());
   const [connectivityState, setConnectivityState] = useState<ConnectivityTestState | null>(null);
   const [connectivityKey, setConnectivityKey] = useState<ProfileKey>("");
+  const [balanceState, setBalanceState] = useState<BalanceCheckState | null>(null);
+  const [balanceKey, setBalanceKey] = useState<ProfileKey>("");
 
   // 会话
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [profilesSessions, setProfilesSessions] = useState<SessionSummary[]>([]);
+  const [profilesSelectedSessionId, setProfilesSelectedSessionId] = useState<string>("");
+  const [historySessions, setHistorySessions] = useState<SessionSummary[]>([]);
+  const [historySelectedSessionId, setHistorySelectedSessionId] = useState<string>("");
+  const [historyPreview, setHistoryPreview] = useState<CommandPreview>(emptyPreview());
 
   // 设置
   const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>("global");
   const [isBusy, setIsBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const activeProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
+  const activeProfileRuntime = state?.selected_profile_key
+    ? state.runtime_by_profile[state.selected_profile_key]
+    : undefined;
+  const historyProjectCwd = activeProfileRuntime?.cwd ?? "";
+  const historyScope = resolveHistoryScope(state, activeProvider, historyProjectCwd);
+  const historyRestoreProfileKey = resolveHistoryRestoreProfileKey(state, profiles, activeProvider);
+  const historyRestoreProfiles = useMemo(
+    () =>
+      listProfilesForProvider(profiles, activeProvider).map((profile) => {
+        const key = itemKey(profile);
+        return {
+          key,
+          label: profile.name,
+          cwd: state?.runtime_by_profile[key]?.cwd ?? "",
+        };
+      }),
+    [activeProvider, profiles, state?.runtime_by_profile],
+  );
+  const selectedHistorySession = historySessions.find((session) => session.session_id === historySelectedSessionId);
+  const selectedHistoryRestoreProfile = historyRestoreProfiles.find((profile) => profile.key === historyRestoreProfileKey);
+  const historyRestoreDisabled = !selectedHistorySession
+    || !historyRestoreProfileKey
+    || !selectedHistoryRestoreProfile
+    || !selectedHistoryRestoreProfile.cwd.trim();
+  const historyRestoreHint = historyRestoreProfiles.length === 0
+    ? "当前 provider 尚未配置可用 profile，无法恢复该会话。"
+    : !historyRestoreProfileKey
+      ? "请先为该 provider 选择用于恢复的 profile。"
+      : !selectedHistoryRestoreProfile?.cwd.trim()
+        ? "所选 Profile 当前未设置工作目录，请先设置后再恢复。"
+        : "恢复时将使用所选 Profile 当前保存的工作目录，不会自动改写历史会话记录中的 cwd。";
+  const draftSiteBalanceSessions = useMemo(
+    () => getSiteBalanceSessionsForBaseUrl(siteBalanceSessionsByBaseUrl, draftUrl),
+    [siteBalanceSessionsByBaseUrl, draftUrl],
+  );
+  const savedBalanceSessionHint = useMemo(() => {
+    const selectedKey = state?.selected_profile_key ?? "";
+    const selectedProfile = profiles.find((profile) => itemKey(profile) === selectedKey);
+    if (!selectedProfile) {
+      return "";
+    }
+    return describeBalanceSessionHint(selectedProfile, siteBalanceSessionsByBaseUrl);
+  }, [profiles, siteBalanceSessionsByBaseUrl, state?.selected_profile_key]);
 
   // ---- 初始化 ----
   useEffect(() => {
@@ -160,9 +251,14 @@ function App() {
       throw new Error("Profile API 不可用");
     }
     const result = await window.profileManager.listProfiles();
-    const data = result as { profiles: Profile[]; state: LocalState };
+    const data = result as {
+      profiles: Profile[];
+      state: LocalState;
+      siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+    };
     setProfiles(data.profiles);
     setState(data.state);
+    setSiteBalanceSessionsByBaseUrl(data.siteBalanceSessionsByBaseUrl);
     return data;
   }
 
@@ -181,6 +277,8 @@ function App() {
       key: draftKey,
       selectedModelId: draftModel,
       advancedModelMapping: draftAdvancedModelMapping,
+      balanceSessionSelection: draftBalanceSessionSelection,
+      balanceSessionDraft: { ...draftBalanceSession },
       cwd: draftCwd,
       command_base: draftCommandBase,
       settings_file: draftSettingsFile,
@@ -196,6 +294,8 @@ function App() {
     setDraftKey(draft.key);
     setDraftModel(draft.selectedModelId);
     setDraftAdvancedModelMapping(draft.advancedModelMapping);
+    setDraftBalanceSessionSelection(draft.balanceSessionSelection);
+    setDraftBalanceSession({ ...draft.balanceSessionDraft });
     setDraftCwd(draft.cwd);
     setDraftCommandBase(draft.command_base);
     setDraftSettingsFile(draft.settings_file);
@@ -207,11 +307,16 @@ function App() {
   function syncEditorFromData(data: ListProfilesResult) {
     const selectedKey = data.state.selected_profile_key;
     const selectedProfile = data.profiles.find((profile) => itemKey(profile) === selectedKey);
+    const selectedSession = selectedProfile?.balance_session_id
+      ? getSiteBalanceSessionsForBaseUrl(data.siteBalanceSessionsByBaseUrl, selectedProfile.url)
+        .find((session) => session.id === selectedProfile.balance_session_id)
+      : undefined;
     const snapshot = selectedProfile
       ? buildSelectedProfileDraft(
           selectedProfile,
           data.state.runtime_by_profile[selectedKey],
           data.state.selected_provider,
+          selectedSession,
         )
       : buildNewProfileDraft(data.state.selected_provider);
 
@@ -219,6 +324,42 @@ function App() {
     applyDraftSnapshot(snapshot);
     setEditorBaseline(snapshot);
   }
+
+  useEffect(() => {
+    if (draftBalanceSessionSelection === "new") {
+      return;
+    }
+    if (draftBalanceSessionSelection === "auto") {
+      if (
+        draftBalanceSession.label
+        || draftBalanceSession.access_token
+        || draftBalanceSession.user_id
+      ) {
+        setDraftBalanceSession(emptyBalanceSessionDraft());
+      }
+      return;
+    }
+
+    const matched = draftSiteBalanceSessions.find((session) => session.id === draftBalanceSessionSelection);
+    if (!matched) {
+      setDraftBalanceSessionSelection("auto");
+      setDraftBalanceSession(emptyBalanceSessionDraft());
+      return;
+    }
+
+    const nextDraft = {
+      label: matched.label,
+      access_token: matched.access_token,
+      user_id: matched.user_id,
+    };
+    if (JSON.stringify(nextDraft) !== JSON.stringify(draftBalanceSession)) {
+      setDraftBalanceSession(nextDraft);
+    }
+  }, [
+    draftBalanceSession,
+    draftBalanceSessionSelection,
+    draftSiteBalanceSessions,
+  ]);
 
   async function refreshPreviewForDraft() {
     if (!window.profileManager || !state) {
@@ -239,7 +380,7 @@ function App() {
         },
         buildRuntimeSettingsFromDraft(draft),
         undefined,
-        draft.launch_mode === "resume_selected" ? selectedSessionId : undefined,
+        draft.launch_mode === "resume_selected" ? profilesSelectedSessionId : undefined,
       )) as CommandPreview;
       setPreview(nextPreview);
     } catch {
@@ -262,7 +403,7 @@ function App() {
     draftArgs,
     draftMode,
     draftExcludeUser,
-    selectedSessionId,
+    profilesSelectedSessionId,
   ]);
 
   async function saveCurrentProfile(options: {
@@ -274,6 +415,32 @@ function App() {
     setErrorMessage(null);
     try {
       const snapshot = options.snapshot ?? currentDraftSnapshot();
+      const siteSessions = getSiteBalanceSessionsForBaseUrl(siteBalanceSessionsByBaseUrl, snapshot.url);
+      let balanceSessionId: string | undefined;
+
+      if (snapshot.balanceSessionSelection === "new") {
+        const created = await window.profileManager.saveSiteBalanceSession(snapshot.url, snapshot.balanceSessionDraft);
+        balanceSessionId = created.id;
+      } else if (snapshot.balanceSessionSelection !== "auto") {
+        const existingSession = siteSessions.find((session) => session.id === snapshot.balanceSessionSelection);
+        if (!existingSession) {
+          throw new Error("所绑定的后台会话已被删除，请重新选择");
+        }
+        if (
+          existingSession.label !== snapshot.balanceSessionDraft.label
+          || existingSession.access_token !== snapshot.balanceSessionDraft.access_token
+          || existingSession.user_id !== snapshot.balanceSessionDraft.user_id
+        ) {
+          const updated = await window.profileManager.saveSiteBalanceSession(snapshot.url, {
+            id: existingSession.id,
+            ...snapshot.balanceSessionDraft,
+          });
+          balanceSessionId = updated.id;
+        } else {
+          balanceSessionId = existingSession.id;
+        }
+      }
+
       const draft: Profile = {
         provider: (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex",
         name: snapshot.name,
@@ -281,6 +448,7 @@ function App() {
         key: snapshot.key,
         selectedModelId: snapshot.selectedModelId,
         advancedModelMapping: snapshot.advancedModelMapping,
+        balance_session_id: balanceSessionId,
       };
       await window.profileManager.saveProfile(
         editingKey,
@@ -320,6 +488,16 @@ function App() {
     return saveCurrentProfile({ snapshot, showSuccess: false });
   }
 
+  async function persistBalanceSessionOnlyChange(snapshot = currentDraftSnapshot()): Promise<boolean> {
+    if (!window.profileManager || !state?.selected_profile_key || !editingKey) {
+      return false;
+    }
+    if (!hasOnlyProfileDraftBalanceSessionChange(snapshot, editorBaseline)) {
+      return false;
+    }
+    return saveCurrentProfile({ snapshot, showSuccess: false });
+  }
+
   async function resolveUnsavedProfileChanges(): Promise<boolean> {
     if (!window.profileManager) return false;
     const snapshot = currentDraftSnapshot();
@@ -331,6 +509,9 @@ function App() {
     }
     if (hasOnlyProfileDraftSelectedModelIdChange(snapshot, editorBaseline)) {
       return persistSelectedModelOnlyChange(snapshot);
+    }
+    if (hasOnlyProfileDraftBalanceSessionChange(snapshot, editorBaseline)) {
+      return persistBalanceSessionOnlyChange(snapshot);
     }
 
     const action = await window.profileManager.promptUnsavedProfileAction();
@@ -348,6 +529,13 @@ function App() {
     await saveCurrentProfile();
   }
 
+  async function handleSaveBalanceSession() {
+    const saved = await saveCurrentProfile({ showSuccess: false });
+    if (saved) {
+      setSuccessMessage("后台会话已保存");
+    }
+  }
+
   async function handleSelectProfile(key: ProfileKey) {
     if (!window.profileManager || !state) return;
     if (!(await resolveUnsavedProfileChanges())) {
@@ -356,7 +544,7 @@ function App() {
     await window.profileManager.selectProfile(state.selected_provider, key);
     const data = await refreshAll(true);
     if (data && activeTab === "sessions") {
-      await handleLoadSessions(data.state);
+      await handleLoadHistorySessions(data.state);
     }
   }
 
@@ -406,6 +594,32 @@ function App() {
     }
   }
 
+  async function handleDeleteSiteBalanceSession() {
+    if (
+      !window.profileManager
+      || draftBalanceSessionSelection === "auto"
+      || draftBalanceSessionSelection === "new"
+    ) {
+      return;
+    }
+    if (!confirm("确定要删除当前后台会话？")) {
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      await window.profileManager.deleteSiteBalanceSession(draftUrl, draftBalanceSessionSelection);
+      const data = await refreshAll(true);
+      if (data) {
+        setSuccessMessage("后台会话已删除");
+      }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "删除后台会话失败");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleProviderSwitch(provider: string) {
     if (!window.profileManager) return;
     if (!(await resolveUnsavedProfileChanges())) {
@@ -414,7 +628,7 @@ function App() {
     await window.profileManager.activateProvider(provider);
     const data = await refreshAll(true);
     if (data && activeTab === "sessions") {
-      await handleLoadSessions(data.state);
+      await handleLoadHistorySessions(data.state);
     }
   }
 
@@ -476,7 +690,7 @@ function App() {
 
     try {
       await window.profileManager.launch(request);
-      await handleLoadSessions(launchState, runtime.cwd);
+      await handleLoadProfilesSessions(launchState, runtime.cwd);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "启动失败");
     }
@@ -494,6 +708,24 @@ function App() {
     }
   }
 
+  async function handleTestBalance() {
+    if (!window.profileManager || !state?.selected_profile_key) return;
+    if (!(await resolveUnsavedProfileChanges())) {
+      return;
+    }
+    const latest = await loadData();
+    const key = latest.state.selected_profile_key;
+    if (!key) {
+      return;
+    }
+    setBalanceKey(key);
+    try {
+      await window.profileManager.testBalance(key);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "余额检测失败");
+    }
+  }
+
   useEffect(() => {
     if (!window.profileManager) return;
     const unsub = window.profileManager.onConnectivityProgress((key, st) => {
@@ -504,39 +736,214 @@ function App() {
     return unsub;
   }, [connectivityKey]);
 
+  useEffect(() => {
+    const selectedKey = state?.selected_profile_key ?? "";
+    setBalanceKey(selectedKey);
+    setBalanceState(getBalanceStateForProfile(state?.balance_checks_by_profile, selectedKey));
+  }, [state?.selected_profile_key, state?.balance_checks_by_profile]);
+
+  useEffect(() => {
+    if (!window.profileManager) return;
+    const unsub = window.profileManager.onBalanceProgress((key, st) => {
+      if (key === balanceKey) {
+        setBalanceState(st as BalanceCheckState);
+      }
+    });
+    return unsub;
+  }, [balanceKey]);
+
   // ---- 会话 ----
-  async function handleLoadSessions(nextState: LocalState | null = state, cwdOverride?: string) {
+  async function handleLoadProfilesSessions(nextState: LocalState | null = state, cwdOverride?: string) {
     if (!window.profileManager || !nextState?.selected_profile_key) {
-      setSessions([]);
-      setSelectedSessionId("");
+      setProfilesSessions([]);
+      setProfilesSelectedSessionId("");
       return;
     }
     const runtime = nextState.runtime_by_profile[nextState.selected_profile_key];
     const cwd = cwdOverride ?? draftCwd ?? runtime?.cwd ?? "";
     if (!cwd.trim()) {
-      setSessions([]);
-      setSelectedSessionId("");
+      setProfilesSessions([]);
+      setProfilesSelectedSessionId("");
       return;
     }
+
+    const request: ListSessionsRequest = {
+      provider: nextState.selected_provider,
+      scope: "project",
+      cwd,
+    };
+
     try {
-      const result = await window.profileManager.listSessions(nextState.selected_provider, cwd);
+      const result = await window.profileManager.listSessions(request);
       const nextSessions = result as SessionSummary[];
-      setSessions(nextSessions);
-      if (selectedSessionId && !nextSessions.some((session) => session.session_id === selectedSessionId)) {
-        setSelectedSessionId("");
-      }
+      setProfilesSessions(nextSessions);
+      setProfilesSelectedSessionId((current) => (
+        current && !nextSessions.some((session) => session.session_id === current) ? "" : current
+      ));
     } catch (err) {
-      setSessions([]);
-      setSelectedSessionId("");
+      setProfilesSessions([]);
+      setProfilesSelectedSessionId("");
       setErrorMessage(err instanceof Error ? err.message : "加载会话失败");
     }
   }
 
+  async function handleLoadHistorySessions(
+    nextState: LocalState | null = state,
+    scopeOverride?: SessionListScope,
+  ) {
+    if (!window.profileManager || !nextState) {
+      setHistorySessions([]);
+      setHistorySelectedSessionId("");
+      return;
+    }
+
+    const provider = nextState.selected_provider;
+    const projectCwd = nextState.selected_profile_key
+      ? nextState.runtime_by_profile[nextState.selected_profile_key]?.cwd ?? ""
+      : "";
+    const scope = scopeOverride ?? resolveHistoryScope(nextState, provider, projectCwd);
+    const request: ListSessionsRequest = {
+      provider,
+      scope,
+      cwd: scope === "project" ? projectCwd : undefined,
+    };
+
+    if (request.scope === "project" && !(request.cwd ?? "").trim()) {
+      setHistorySessions([]);
+      setHistorySelectedSessionId("");
+      return;
+    }
+
+    try {
+      const result = await window.profileManager.listSessions(request);
+      const nextSessions = result as SessionSummary[];
+      setHistorySessions(nextSessions);
+      setHistorySelectedSessionId((current) => (
+        current && !nextSessions.some((session) => session.session_id === current) ? "" : current
+      ));
+    } catch (err) {
+      setHistorySessions([]);
+      setHistorySelectedSessionId("");
+      setErrorMessage(err instanceof Error ? err.message : "加载会话失败");
+    }
+  }
+
+  async function handleHistoryScopeChange(scope: SessionListScope) {
+    if (!window.profileManager) {
+      return;
+    }
+    await window.profileManager.updateSessionsTabState(activeProvider, { scope });
+    await handleLoadHistorySessions(state, scope);
+  }
+
+  async function handleHistoryRestoreProfileChange(profileKey: ProfileKey) {
+    if (!window.profileManager) {
+      return;
+    }
+    await window.profileManager.updateSessionsTabState(activeProvider, {
+      restore_profile_key: profileKey,
+    });
+  }
+
+  async function refreshHistoryPreview() {
+    if (!window.profileManager || !state || !selectedHistorySession || !historyRestoreProfileKey) {
+      setHistoryPreview(emptyPreview());
+      return;
+    }
+
+    const selectedProfile = profiles.find((profile) => itemKey(profile) === historyRestoreProfileKey);
+    if (!selectedProfile) {
+      setHistoryPreview(emptyPreview());
+      return;
+    }
+
+    try {
+      const runtime = state.runtime_by_profile[historyRestoreProfileKey]
+        ?? defaultRuntimeSettings(selectedProfile.provider);
+      const nextPreview = (await window.profileManager.previewForDraft(
+        selectedProfile,
+        {
+          ...runtime,
+          launch_mode: "resume_selected",
+        },
+        undefined,
+        selectedHistorySession.session_id,
+      )) as CommandPreview;
+      setHistoryPreview(nextPreview);
+    } catch {
+      setHistoryPreview(emptyPreview());
+    }
+  }
+
+  async function handleHistoryRestoreLaunch() {
+    if (!window.profileManager || !state || !selectedHistorySession) {
+      return;
+    }
+    if (!historyRestoreProfileKey) {
+      setErrorMessage("请先为该 Provider 选择用于恢复的 Profile。");
+      return;
+    }
+
+    const selectedProfile = profiles.find((profile) => itemKey(profile) === historyRestoreProfileKey);
+    if (!selectedProfile || selectedProfile.provider !== selectedHistorySession.provider) {
+      setErrorMessage("恢复 Profile 与所选会话的 provider 不匹配。");
+      return;
+    }
+
+    const runtime = state.runtime_by_profile[historyRestoreProfileKey]
+      ?? defaultRuntimeSettings(selectedProfile.provider);
+    if (!runtime.cwd.trim()) {
+      setErrorMessage("所选 Profile 当前未设置工作目录，请先设置后再恢复。");
+      return;
+    }
+
+    const request = {
+      profile_key: historyRestoreProfileKey,
+      provider: selectedHistorySession.provider,
+      runtime_settings: {
+        ...runtime,
+        launch_mode: "resume_selected" as const,
+      },
+      session_id: selectedHistorySession.session_id,
+    };
+
+    try {
+      await window.profileManager.launch(request);
+      await handleLoadHistorySessions(state);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "恢复会话失败");
+    }
+  }
+
   useEffect(() => {
-    if (activeTab === "profiles" || activeTab === "sessions") {
-      void handleLoadSessions();
+    if (activeTab === "profiles") {
+      void handleLoadProfilesSessions();
     }
   }, [activeTab, state?.selected_provider, state?.selected_profile_key, draftCwd]);
+
+  useEffect(() => {
+    if (activeTab === "sessions") {
+      void handleLoadHistorySessions();
+    }
+  }, [
+    activeTab,
+    state?.selected_provider,
+    state?.selected_profile_key,
+    historyProjectCwd,
+    historyScope,
+  ]);
+
+  useEffect(() => {
+    if (activeTab === "sessions") {
+      void refreshHistoryPreview();
+    }
+  }, [
+    activeTab,
+    state?.selected_provider,
+    historySelectedSessionId,
+    historyRestoreProfileKey,
+    historySessions,
+  ]);
 
   async function handlePickWorkingDirectory() {
     if (!window.profileManager) return;
@@ -549,6 +956,15 @@ function App() {
       }
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "选择工作目录失败");
+    }
+  }
+
+  async function handleOpenBaseUrl() {
+    if (!window.profileManager) return;
+    try {
+      await window.profileManager.openBaseUrl(draftUrl);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "打开 Base URL 失败");
     }
   }
 
@@ -635,6 +1051,15 @@ function App() {
     return result;
   }, [state?.connectivity_tests_by_profile]);
 
+  const balanceEntries = useMemo(() => {
+    const result: Record<ProfileKey, ReturnType<typeof buildBalanceListEntry>> = {};
+    if (!state?.balance_checks_by_profile) return result;
+    for (const [key, balance] of Object.entries(state.balance_checks_by_profile)) {
+      result[key] = buildBalanceListEntry(balance);
+    }
+    return result;
+  }, [state?.balance_checks_by_profile]);
+
   // ---- 解锁界面 ----
   if (showUnlockInput) {
     return (
@@ -694,7 +1119,7 @@ function App() {
             className={`tab-btn ${activeTab === "sessions" ? "active" : ""}`}
             onClick={() => {
               setActiveTab("sessions");
-              handleLoadSessions();
+              void handleLoadHistorySessions();
             }}
           >
             会话
@@ -735,6 +1160,7 @@ function App() {
               selectedKey={state?.selected_profile_key ?? ""}
               orderedKeys={orderedKeys}
               connectivityStates={connectivityStates}
+              balanceEntries={balanceEntries}
               onSelect={handleSelectProfile}
               onReorder={handleReorder}
               onCreate={handleNewProfile}
@@ -749,6 +1175,12 @@ function App() {
               onTest={handleTestConnection}
               disabled={isBusy}
             />
+            <BalanceTestButton
+              state={balanceState}
+              onTest={handleTestBalance}
+              disabled={isBusy || !state?.selected_profile_key}
+              sessionHint={savedBalanceSessionHint}
+            />
           </div>
 
           <div className="profiles-center">
@@ -760,6 +1192,9 @@ function App() {
                 selectedModelId: draftModel,
                 advancedModelMapping: draftAdvancedModelMapping,
               }}
+              siteBalanceSessions={draftSiteBalanceSessions}
+              balanceSessionSelection={draftBalanceSessionSelection}
+              balanceSessionDraft={draftBalanceSession}
               runtime={{
                 cwd: draftCwd,
                 command_base: draftCommandBase,
@@ -782,6 +1217,31 @@ function App() {
                   case "selectedModelId": setDraftModel(val as string); break;
                 }
               }}
+              onBalanceSessionSelectionChange={(value) => {
+                setDraftBalanceSessionSelection(value);
+                if (value === "auto") {
+                  setDraftBalanceSession(emptyBalanceSessionDraft());
+                  return;
+                }
+                if (value === "new") {
+                  setDraftBalanceSession(emptyBalanceSessionDraft());
+                  return;
+                }
+                const matched = draftSiteBalanceSessions.find((session) => session.id === value);
+                setDraftBalanceSession(matched ? {
+                  label: matched.label,
+                  access_token: matched.access_token,
+                  user_id: matched.user_id,
+                } : emptyBalanceSessionDraft());
+              }}
+              onBalanceSessionDraftChange={(field, value) => {
+                setDraftBalanceSession((current) => ({
+                  ...current,
+                  [field]: value,
+                }));
+              }}
+              onSaveBalanceSession={() => void handleSaveBalanceSession()}
+              onDeleteSiteBalanceSession={() => void handleDeleteSiteBalanceSession()}
               onAdvancedModelMappingChange={setDraftAdvancedModelMapping}
               onDraftCommit={(field, value) => void handleDraftCommit(field, value)}
               onRuntimeChange={(field, val) => {
@@ -796,6 +1256,7 @@ function App() {
               }}
               onRuntimeCommit={(field) => void handleRuntimeCommit(field)}
               onFetchModels={() => void handleFetchSiteModels()}
+              onOpenBaseUrl={() => void handleOpenBaseUrl()}
               onSave={() => void handleSaveProfile()}
               onCancel={() => void handleNewProfile()}
               onPickCwd={() => void handlePickWorkingDirectory()}
@@ -807,14 +1268,14 @@ function App() {
             <ProfilesLaunchPanel
               preview={preview}
               disabled={isBusy || !state?.selected_profile_key}
-              resumeDisabled={!selectedSessionId}
-              sessions={sessions}
-              selectedSessionId={selectedSessionId}
-              onSelectSession={setSelectedSessionId}
-              onRefreshSessions={() => void handleLoadSessions()}
+              resumeDisabled={!profilesSelectedSessionId}
+              sessions={profilesSessions}
+              selectedSessionId={profilesSelectedSessionId}
+              onSelectSession={setProfilesSelectedSessionId}
+              onRefreshSessions={() => void handleLoadProfilesSessions()}
               onDirectLaunch={() => void handleLaunch("new")}
               onContinueLaunch={() => void handleLaunch("continue_last")}
-              onResumeLaunch={() => void handleLaunch("resume_selected", selectedSessionId)}
+              onResumeLaunch={() => void handleLaunch("resume_selected", profilesSelectedSessionId)}
             />
           </div>
         </div>
@@ -831,11 +1292,26 @@ function App() {
       {/* ===== SESSIONS Tab ===== */}
       {activeTab === "sessions" && (
         <div className="sessions-layout">
+          <ProviderSwitch
+            activeProvider={activeProvider}
+            onSwitch={handleProviderSwitch}
+            disabled={isBusy}
+          />
           <SessionList
-            sessions={sessions}
-            selectedId={selectedSessionId}
-            onSelect={setSelectedSessionId}
-            onRefresh={handleLoadSessions}
+            provider={activeProvider}
+            scope={historyScope}
+            sessions={historySessions}
+            selectedId={historySelectedSessionId}
+            restoreProfiles={historyRestoreProfiles}
+            selectedRestoreProfileKey={historyRestoreProfileKey}
+            restoreHint={historyRestoreHint}
+            restoreDisabled={historyRestoreDisabled}
+            preview={historyPreview}
+            onSelect={setHistorySelectedSessionId}
+            onRefresh={() => void handleLoadHistorySessions()}
+            onScopeChange={(scope) => void handleHistoryScopeChange(scope)}
+            onSelectRestoreProfile={(profileKey) => void handleHistoryRestoreProfileChange(profileKey)}
+            onRestore={() => void handleHistoryRestoreLaunch()}
             disabled={isBusy}
           />
         </div>

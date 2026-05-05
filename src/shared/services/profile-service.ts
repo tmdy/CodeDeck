@@ -10,6 +10,16 @@ import {
   defaultRuntimeSettings,
 } from "../profile/types.js";
 import {
+  cloneSiteBalanceSessionsByBaseUrl,
+  normalizeBalanceBaseUrl,
+  normalizeSiteBalanceSessionDraft,
+  normalizeSiteBalanceSessionsByBaseUrl,
+  type EncryptedProfileConfig,
+  type SiteBalanceSession,
+  type SiteBalanceSessionDraft,
+  type SiteBalanceSessionsByBaseUrl,
+} from "../balance/site-balance-sessions.js";
+import {
   splitKey,
   normalizeKeyWithFallback,
   itemKey,
@@ -26,13 +36,14 @@ export interface LocalStateAccessor {
 }
 
 export interface SyncProfileStore {
-  saveProfiles(profiles: Profile[]): Promise<void>;
+  saveConfig(config: EncryptedProfileConfig): Promise<void>;
 }
 
 // ---- ProfileUseCase ----
 
 export class ProfileService {
   private profiles: Profile[];
+  private siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
   private stateAccessor: LocalStateAccessor;
   private syncStore: SyncProfileStore | null;
 
@@ -40,8 +51,12 @@ export class ProfileService {
     profiles: Profile[],
     stateAccessor: LocalStateAccessor,
     syncStore: SyncProfileStore | null = null,
+    siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl = {},
   ) {
     this.profiles = profiles.map((p) => normalizeProfile(p));
+    this.siteBalanceSessionsByBaseUrl = normalizeSiteBalanceSessionsByBaseUrl(
+      siteBalanceSessionsByBaseUrl,
+    );
     this.stateAccessor = stateAccessor;
     this.syncStore = syncStore;
   }
@@ -49,6 +64,10 @@ export class ProfileService {
   /** 获取所有 profiles 的副本 */
   getProfiles(): Profile[] {
     return [...this.profiles];
+  }
+
+  getSiteBalanceSessionsByBaseUrl(): SiteBalanceSessionsByBaseUrl {
+    return cloneSiteBalanceSessionsByBaseUrl(this.siteBalanceSessionsByBaseUrl);
   }
 
   /** 获取当前状态 */
@@ -150,6 +169,12 @@ export class ProfileService {
       if (index < 0) throw new Error(`profile not found: ${nTargetKey}`);
     }
 
+    const previousBaseUrl = previous ? normalizeBalanceBaseUrl(previous.url) : "";
+    const nextBaseUrl = normalizeBalanceBaseUrl(nd.url);
+    if (previous && previousBaseUrl !== nextBaseUrl) {
+      nd = { ...nd, balance_session_id: undefined };
+    }
+
     const nextProfiles = this.profiles.map((p) => ({ ...p }));
     if (index >= 0) {
       nextProfiles[index] = nd;
@@ -190,7 +215,7 @@ export class ProfileService {
     st.selected_profile_key = newKey;
     st.selected_profile_key_by_provider[nProv] = newKey;
 
-    await this.saveProfiles(nextProfiles);
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl);
     this.profiles = nextProfiles;
     await this.stateAccessor.save(st);
 
@@ -214,6 +239,7 @@ export class ProfileService {
       name: this.allocateCloneName(targetProv, source.name),
       url: source.url,
       key: source.key,
+      balance_session_id: source.balance_session_id,
     };
     cloned = adapter.normalizeProfile(cloned);
 
@@ -229,7 +255,7 @@ export class ProfileService {
       clonedKey,
     ];
 
-    await this.saveProfiles(nextProfiles);
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl);
     this.profiles = nextProfiles;
     await this.stateAccessor.save(st);
 
@@ -254,6 +280,7 @@ export class ProfileService {
 
     delete st.runtime_by_profile[nKey];
     delete st.connectivity_tests_by_profile[nKey];
+    delete st.balance_checks_by_profile[nKey];
     st.profile_order_by_provider[provID] = removeProfileKey(
       st.profile_order_by_provider[provID] ?? [],
       nKey,
@@ -270,6 +297,16 @@ export class ProfileService {
       delete st.selected_profile_key_by_provider[provID];
       selectedForProvider = "";
     }
+    const restoreProfileKey = normalizeKeyWithFallback(
+      st.sessions_tab_restore_profile_key_by_provider[provID] ?? "",
+      provID,
+    );
+    if (
+      restoreProfileKey === nKey ||
+      (restoreProfileKey && !profileExists(nextProfiles, restoreProfileKey))
+    ) {
+      delete st.sessions_tab_restore_profile_key_by_provider[provID];
+    }
 
     if (normalizeProvider(st.selected_provider) === provID) {
       const currentSelected = normalizeKeyWithFallback(st.selected_profile_key, provID);
@@ -280,9 +317,89 @@ export class ProfileService {
       }
     }
 
-    await this.saveProfiles(nextProfiles);
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl);
     this.profiles = nextProfiles;
     await this.stateAccessor.save(st);
+  }
+
+  async saveSiteBalanceSession(
+    rawBaseUrl: string,
+    draft: SiteBalanceSessionDraft,
+  ): Promise<SiteBalanceSession> {
+    const baseUrl = normalizeBalanceBaseUrl(rawBaseUrl);
+    if (!baseUrl) {
+      throw new Error("Base URL 不能为空");
+    }
+    if (!validateHttpUrl(baseUrl)) {
+      throw new Error("Base URL 必须以 http:// 或 https:// 开头");
+    }
+
+    const normalizedDraft = normalizeSiteBalanceSessionDraft(draft);
+    if (!normalizedDraft.label) {
+      throw new Error("备注名不能为空");
+    }
+    if (!normalizedDraft.access_token) {
+      throw new Error("Access Token 不能为空");
+    }
+    if (!normalizedDraft.user_id) {
+      throw new Error("User ID 不能为空");
+    }
+
+    const nextSessionsByBaseUrl = this.getSiteBalanceSessionsByBaseUrl();
+    const currentSessions = nextSessionsByBaseUrl[baseUrl] ?? [];
+    const sessionId = normalizedDraft.id ?? allocateSessionId();
+    const nextSession: SiteBalanceSession = {
+      id: sessionId,
+      label: normalizedDraft.label,
+      base_url: baseUrl,
+      access_token: normalizedDraft.access_token,
+      user_id: normalizedDraft.user_id,
+      updated_at: new Date().toISOString(),
+    };
+
+    const index = currentSessions.findIndex((session) => session.id === sessionId);
+    const nextSessions = currentSessions.map((session) => ({ ...session }));
+    if (index >= 0) {
+      nextSessions[index] = nextSession;
+    } else {
+      nextSessions.push(nextSession);
+    }
+    nextSessionsByBaseUrl[baseUrl] = nextSessions;
+
+    await this.saveConfig(this.profiles, nextSessionsByBaseUrl);
+    this.siteBalanceSessionsByBaseUrl = nextSessionsByBaseUrl;
+
+    return { ...nextSession };
+  }
+
+  async deleteSiteBalanceSession(rawBaseUrl: string, sessionId: string): Promise<void> {
+    const baseUrl = normalizeBalanceBaseUrl(rawBaseUrl);
+    const nextSessionsByBaseUrl = this.getSiteBalanceSessionsByBaseUrl();
+    const currentSessions = nextSessionsByBaseUrl[baseUrl] ?? [];
+    const nextSessions = currentSessions.filter((session) => session.id !== sessionId);
+
+    if (nextSessions.length > 0) {
+      nextSessionsByBaseUrl[baseUrl] = nextSessions;
+    } else {
+      delete nextSessionsByBaseUrl[baseUrl];
+    }
+
+    const nextProfiles = this.profiles.map((profile) => {
+      if (
+        normalizeBalanceBaseUrl(profile.url) === baseUrl
+        && profile.balance_session_id === sessionId
+      ) {
+        return {
+          ...profile,
+          balance_session_id: undefined,
+        };
+      }
+      return { ...profile };
+    });
+
+    await this.saveConfig(nextProfiles, nextSessionsByBaseUrl);
+    this.profiles = nextProfiles;
+    this.siteBalanceSessionsByBaseUrl = nextSessionsByBaseUrl;
   }
 
   // ---- 内部方法 ----
@@ -312,10 +429,17 @@ export class ProfileService {
     );
   }
 
-  private async saveProfiles(profiles: Profile[]): Promise<void> {
+  private async saveConfig(
+    profiles: Profile[],
+    siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl,
+  ): Promise<void> {
     if (!this.syncStore) return;
-    const synced = profiles.map(extractSyncedProfile);
-    await this.syncStore.saveProfiles(synced);
+    await this.syncStore.saveConfig({
+      profiles: profiles.map(extractSyncedProfile),
+      site_balance_sessions_by_base_url: cloneSiteBalanceSessionsByBaseUrl(
+        siteBalanceSessionsByBaseUrl,
+      ),
+    });
   }
 }
 
@@ -393,6 +517,15 @@ function sanitizeProviderSelectionState(profiles: Profile[], state: LocalState):
     }
   }
 
+  for (const [providerID, rememberedKey] of Object.entries(next.sessions_tab_restore_profile_key_by_provider)) {
+    const resolved = resolveRememberedSelection(profiles, rememberedKey, providerID);
+    if (resolved) {
+      next.sessions_tab_restore_profile_key_by_provider[normalizeProvider(providerID)] = resolved;
+    } else {
+      delete next.sessions_tab_restore_profile_key_by_provider[normalizeProvider(providerID)];
+    }
+  }
+
   const activeProvider = normalizeProvider(next.selected_provider);
   next.selected_provider = activeProvider;
 
@@ -433,6 +566,15 @@ function migrateProfileStateKey(
     };
     delete st.connectivity_tests_by_profile[previousKey];
   }
+  if (st.balance_checks_by_profile[previousKey] !== undefined) {
+    st.balance_checks_by_profile[nextKey] = {
+      ...st.balance_checks_by_profile[previousKey],
+      provider: saved.provider,
+      profile_name: saved.name,
+      items: st.balance_checks_by_profile[previousKey].items.map((item) => ({ ...item })),
+    };
+    delete st.balance_checks_by_profile[previousKey];
+  }
   for (const [pID, selKey] of Object.entries(st.selected_profile_key_by_provider)) {
     if (selKey === previousKey) {
       st.selected_profile_key_by_provider[pID] = nextKey;
@@ -440,6 +582,11 @@ function migrateProfileStateKey(
   }
   if (st.selected_profile_key === previousKey) {
     st.selected_profile_key = nextKey;
+  }
+  for (const [providerID, restoreProfileKey] of Object.entries(st.sessions_tab_restore_profile_key_by_provider)) {
+    if (restoreProfileKey === previousKey) {
+      st.sessions_tab_restore_profile_key_by_provider[providerID] = nextKey;
+    }
   }
 }
 
@@ -452,4 +599,8 @@ export function validateHttpUrl(rawUrl: string): boolean {
 export function profileExists(profiles: Profile[], target: ProfileKey): boolean {
   if (!target) return false;
   return profiles.some((p) => itemKey(p) === target);
+}
+
+function allocateSessionId(): string {
+  return `session-${Math.random().toString(36).slice(2, 10)}`;
 }

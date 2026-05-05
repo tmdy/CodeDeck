@@ -4,6 +4,7 @@ import {
   buildRuntimeSettingsFromDraft,
   buildSelectedProfileDraft,
   hasProfileDraftChanges,
+  hasOnlyProfileDraftBalanceSessionChange,
   hasOnlyProfileDraftCwdChange,
   hasOnlyProfileDraftSelectedModelIdChange,
   type ProfileEditorDraft,
@@ -16,6 +17,7 @@ const claudeProfile: Profile = {
   url: "https://api.anthropic.com",
   key: "sk-ant",
   selectedModelId: "deepseek-v4-pro",
+  balance_session_id: "sess-a",
 };
 
 function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDraft {
@@ -36,6 +38,12 @@ function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDr
       codex: {
         commandLineModelOverride: "",
       },
+    },
+    balanceSessionSelection: "sess-a",
+    balanceSessionDraft: {
+      label: "后台 A",
+      access_token: "token-a",
+      user_id: "42",
     },
     cwd: "C:/workspace",
     command_base: "claude",
@@ -61,6 +69,11 @@ describe("profile-editor-state", () => {
         exclude_user_settings: false,
       },
       "claude",
+      {
+        label: "后台 A",
+        access_token: "token-a",
+        user_id: "42",
+      },
     );
 
     expect(draft).toEqual({
@@ -81,6 +94,12 @@ describe("profile-editor-state", () => {
           commandLineModelOverride: "",
         },
       },
+      balanceSessionSelection: "sess-a",
+      balanceSessionDraft: {
+        label: "后台 A",
+        access_token: "token-a",
+        user_id: "42",
+      },
       cwd: "C:/repo",
       command_base: "claude-dev",
       settings_file: "C:/Users/test/.claude/settings.local.json",
@@ -98,12 +117,17 @@ describe("profile-editor-state", () => {
     expect(draft.key).toBe("");
     expect(draft.command_base).toBe("codex");
     expect(draft.selectedModelId).toBe("");
+    expect(draft.balanceSessionSelection).toBe("auto");
     expect(draft.exclude_user_settings).toBe(true);
   });
 
-  it("should detect unsaved changes including selectedModelId and command_base", () => {
+  it("should detect unsaved changes including selectedModelId, command_base, and session binding", () => {
     const baseline = makeDraft();
-    const changed = makeDraft({ command_base: "claude-alt", selectedModelId: "glm-4.6" });
+    const changed = makeDraft({
+      command_base: "claude-alt",
+      selectedModelId: "glm-4.6",
+      balanceSessionSelection: "sess-b",
+    });
 
     expect(hasProfileDraftChanges(changed, baseline)).toBe(true);
     expect(hasProfileDraftChanges(baseline, baseline)).toBe(false);
@@ -128,6 +152,39 @@ describe("profile-editor-state", () => {
       ),
     ).toBe(false);
     expect(hasOnlyProfileDraftSelectedModelIdChange(baseline, baseline)).toBe(false);
+  });
+
+  it("should identify balance-session-only changes for silent autosave", () => {
+    const baseline = makeDraft();
+
+    expect(
+      hasOnlyProfileDraftBalanceSessionChange(
+        makeDraft({
+          balanceSessionSelection: "new",
+          balanceSessionDraft: {
+            label: "后台 B",
+            access_token: "token-b",
+            user_id: "84",
+          },
+        }),
+        baseline,
+      ),
+    ).toBe(true);
+    expect(
+      hasOnlyProfileDraftBalanceSessionChange(
+        makeDraft({
+          balanceSessionSelection: "new",
+          balanceSessionDraft: {
+            label: "后台 B",
+            access_token: "token-b",
+            user_id: "84",
+          },
+          name: "Changed Name",
+        }),
+        baseline,
+      ),
+    ).toBe(false);
+    expect(hasOnlyProfileDraftBalanceSessionChange(baseline, baseline)).toBe(false);
   });
 
   it("should convert draft back to runtime settings without proxy", () => {

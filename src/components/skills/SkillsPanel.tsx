@@ -407,7 +407,7 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
               type="text"
               value={filters.query}
               onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
-              placeholder="名称、摘要、路径、用户标签"
+              placeholder="空格支持多词，-词排除；匹配名称/摘要/路径/用户标签"
             />
           </label>
 

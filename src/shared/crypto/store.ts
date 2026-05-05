@@ -1,15 +1,19 @@
 // 加密配置存取 — 等价于 Go encryptedconfig.Store + Python load/save_profiles
 
 import { promises as fs } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import type { Profile } from "../profile/types.js";
-import { normalizeProfile } from "../profile/types.js";
 import {
   type Envelope,
-  encryptProfiles,
-  decryptProfiles,
+  decryptProfileConfig,
+  encryptProfileConfig,
   ConfigLoadError,
 } from "./envelope.js";
+import {
+  emptyEncryptedProfileConfig,
+  normalizeEncryptedProfileConfig,
+  type EncryptedProfileConfig,
+} from "../balance/site-balance-sessions.js";
 
 export class EncryptedConfigStore {
   private filePath: string;
@@ -22,18 +26,14 @@ export class EncryptedConfigStore {
 
   /** 检查加密配置文件是否存在 */
   exists(): boolean {
-    try {
-      return require("node:fs").existsSync(this.filePath);
-    } catch {
-      return false;
-    }
+    return existsSync(this.filePath);
   }
 
   /**
    * 加载 profiles
    * 优先读取加密文件，找不到时回退到明文遗留文件
    */
-  async load(passphrase: string): Promise<Profile[]> {
+  async load(passphrase: string): Promise<EncryptedProfileConfig> {
     // 尝试读取加密配置
     try {
       await fs.access(this.filePath);
@@ -44,7 +44,7 @@ export class EncryptedConfigStore {
       } catch {
         throw new ConfigLoadError("加密配置文件不是有效 JSON");
       }
-      return decryptProfiles(envelope, passphrase).map(normalizeProfile);
+      return decryptProfileConfig(envelope, passphrase);
     } catch (err) {
       if (err instanceof ConfigLoadError) throw err;
       if (err instanceof Error && err.message.includes("配置口令")) throw err;
@@ -56,23 +56,20 @@ export class EncryptedConfigStore {
       try {
         await fs.access(legacyPath);
         const raw = await fs.readFile(legacyPath, "utf-8");
-        const profiles: Profile[] = JSON.parse(raw);
-        if (Array.isArray(profiles)) {
-          return profiles.map(normalizeProfile);
-        }
+        return normalizeEncryptedProfileConfig(JSON.parse(raw));
       } catch {
         // 跳过无法读取的遗留文件
       }
     }
 
-    return [];
+    return emptyEncryptedProfileConfig();
   }
 
   /**
    * 保存 profiles 到加密文件
    */
-  async save(profiles: Profile[], passphrase: string): Promise<void> {
-    const envelope = encryptProfiles(profiles, passphrase);
+  async save(config: EncryptedProfileConfig, passphrase: string): Promise<void> {
+    const envelope = encryptProfileConfig(config, passphrase);
 
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     await fs.writeFile(

@@ -3,6 +3,7 @@
 import { useRef, useState, type DragEvent } from "react";
 import type { ProfileKey, ProviderID } from "../../shared/profile/types.js";
 import type { Profile } from "../../shared/profile/types.js";
+import type { BalanceListEntry } from "../../shared/balance/presentation.js";
 import { itemKey } from "../../shared/profile/keys-internal.js";
 import { ProfileItem } from "./ProfileItem.jsx";
 
@@ -12,6 +13,7 @@ interface ProfileListPanelProps {
   selectedKey: ProfileKey;
   orderedKeys: ProfileKey[];
   connectivityStates: Record<ProfileKey, string>;
+  balanceEntries: Record<ProfileKey, BalanceListEntry>;
   onSelect: (key: ProfileKey) => void;
   onReorder: (orderedKeys: ProfileKey[]) => void;
   onCreate: () => void;
@@ -26,6 +28,7 @@ export function ProfileListPanel({
   selectedKey,
   orderedKeys,
   connectivityStates,
+  balanceEntries,
   onSelect,
   onReorder,
   onCreate,
@@ -109,6 +112,8 @@ export function ProfileListPanel({
               name={item.name}
               provider={item.provider}
               isSelected={item.key === selectedKey}
+              balanceLabel={balanceEntries[item.key]?.label ?? ""}
+              balanceStatus={balanceEntries[item.key]?.status ?? ""}
               connectivity={connectivityStates[item.key] ?? ""}
               onSelect={() => onSelect(item.key)}
             />

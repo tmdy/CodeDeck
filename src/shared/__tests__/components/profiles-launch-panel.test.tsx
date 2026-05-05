@@ -19,6 +19,7 @@ describe("ProfilesLaunchPanel", () => {
         resumeDisabled={false}
         sessions={[
           {
+            provider: "codex",
             session_id: "session-1",
             cwd: "C:/repo",
             updated_at: "2026-05-04T10:00:00.000Z",

@@ -5,6 +5,14 @@ import {
 } from "../profile/types.js";
 import type { LocalStateAccessor } from "./profile-service.js";
 import { cloneLocalState } from "../state/store.js";
+import { type SessionListScope } from "./session-service.js";
+import { normalizeKeyWithFallback } from "../profile/keys-internal.js";
+import { normalizeProvider, type ProfileKey } from "../profile/types.js";
+
+export interface SessionsTabStatePatch {
+  scope?: SessionListScope;
+  restore_profile_key?: ProfileKey;
+}
 
 export class SettingsStateService {
   constructor(private stateAccessor: LocalStateAccessor) {}
@@ -35,5 +43,31 @@ export class SettingsStateService {
     });
     await this.stateAccessor.save(state);
     return state.global_settings;
+  }
+
+  async updateSessionsTabState(
+    providerID: string,
+    patch: SessionsTabStatePatch,
+  ): Promise<void> {
+    const state = cloneLocalState(this.stateAccessor.get());
+    const normalizedProvider = normalizeProvider(providerID);
+
+    if (patch.scope) {
+      state.sessions_tab_scope_by_provider[normalizedProvider] = patch.scope;
+    }
+
+    if (patch.restore_profile_key !== undefined) {
+      const normalizedKey = normalizeKeyWithFallback(
+        patch.restore_profile_key,
+        normalizedProvider,
+      );
+      if (normalizedKey) {
+        state.sessions_tab_restore_profile_key_by_provider[normalizedProvider] = normalizedKey;
+      } else {
+        delete state.sessions_tab_restore_profile_key_by_provider[normalizedProvider];
+      }
+    }
+
+    await this.stateAccessor.save(state);
   }
 }

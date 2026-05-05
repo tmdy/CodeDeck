@@ -1,8 +1,11 @@
-// 加密配置封包格式 — 等价于 Go Envelope 结构
-// 格式: { version: 1, salt: "base64url", token: "fernet_token" }
-
 import type { Profile } from "../profile/types.js";
 import { extractSyncedProfile } from "../profile/types.js";
+import {
+  emptyEncryptedProfileConfig,
+  normalizeEncryptedProfileConfig,
+  cloneSiteBalanceSessionsByBaseUrl,
+  type EncryptedProfileConfig,
+} from "../balance/site-balance-sessions.js";
 import { deriveKey, generateSalt } from "./pbkdf2.js";
 import { encryptFernet, decryptFernet, splitDerivedKey } from "./fernet.js";
 
@@ -29,11 +32,51 @@ export class ConfigLoadError extends Error {
   }
 }
 
-/**
- * 加密 profiles 列表
- * 等价于 Go encryptProfiles() + Python encrypt_profiles()
- */
 export function encryptProfiles(profiles: Profile[], passphrase: string): Envelope {
+  return encryptPayload(profiles.map(extractSyncedProfile), passphrase);
+}
+
+export function encryptProfileConfig(
+  config: EncryptedProfileConfig,
+  passphrase: string,
+): Envelope {
+  const normalized = normalizeEncryptedProfileConfig(config);
+  return encryptPayload({
+    profiles: normalized.profiles.map(extractSyncedProfile),
+    site_balance_sessions_by_base_url: cloneSiteBalanceSessionsByBaseUrl(
+      normalized.site_balance_sessions_by_base_url,
+    ),
+  }, passphrase);
+}
+
+export function decryptProfiles(envelope: Envelope, passphrase: string): Profile[] {
+  return decryptProfileConfig(envelope, passphrase).profiles;
+}
+
+export function decryptProfileConfig(
+  envelope: Envelope,
+  passphrase: string,
+): EncryptedProfileConfig {
+  const payload = decryptPayload(envelope, passphrase);
+  let value: unknown;
+  try {
+    value = JSON.parse(payload.toString("utf-8"));
+  } catch {
+    throw new ConfigLoadError("加密配置文件内容格式无效");
+  }
+
+  const normalized = normalizeEncryptedProfileConfig(value);
+  if (
+    !Array.isArray(value)
+    && (!value || typeof value !== "object" || !("profiles" in value))
+  ) {
+    throw new ConfigLoadError("加密配置文件内容不是有效的 profiles 配置");
+  }
+
+  return normalized ?? emptyEncryptedProfileConfig();
+}
+
+function encryptPayload(value: unknown, passphrase: string): Envelope {
   if (!passphrase) {
     throw new ConfigPasswordError("配置口令不能为空");
   }
@@ -41,10 +84,7 @@ export function encryptProfiles(profiles: Profile[], passphrase: string): Envelo
   const salt = generateSalt();
   const derived = deriveKey(passphrase, salt);
   const { signingKey, encryptionKey } = splitDerivedKey(derived);
-
-  // 只加密可同步字段
-  const synced = profiles.map(extractSyncedProfile);
-  const payload = Buffer.from(JSON.stringify(synced, null, 2), "utf-8");
+  const payload = Buffer.from(JSON.stringify(value, null, 2), "utf-8");
   const token = encryptFernet(payload, signingKey, encryptionKey);
 
   return {
@@ -54,11 +94,7 @@ export function encryptProfiles(profiles: Profile[], passphrase: string): Envelo
   };
 }
 
-/**
- * 解密 profiles 列表
- * 等价于 Go decryptProfiles() + Python decrypt_profiles()
- */
-export function decryptProfiles(envelope: Envelope, passphrase: string): Profile[] {
+function decryptPayload(envelope: Envelope, passphrase: string): Buffer {
   if (!passphrase) {
     throw new ConfigPasswordError("配置口令不能为空");
   }
@@ -66,33 +102,15 @@ export function decryptProfiles(envelope: Envelope, passphrase: string): Profile
   let salt: Buffer;
   try {
     salt = Buffer.from(envelope.salt, "base64url");
-  } catch (err) {
+  } catch {
     throw new ConfigLoadError("加密配置文件盐值格式无效");
   }
 
   const derived = deriveKey(passphrase, salt);
   const { signingKey, encryptionKey } = splitDerivedKey(derived);
-
   const payload = decryptFernet(envelope.token, signingKey, encryptionKey);
   if (payload === null) {
     throw new ConfigPasswordError("配置口令不正确，或配置文件已损坏");
   }
-
-  let profiles: Profile[];
-  try {
-    profiles = JSON.parse(payload.toString("utf-8"));
-  } catch (err) {
-    throw new ConfigLoadError("加密配置文件内容格式无效");
-  }
-
-  if (!Array.isArray(profiles)) {
-    throw new ConfigLoadError("加密配置文件内容不是有效的 profiles 列表");
-  }
-
-  return profiles.map((p) => ({
-    provider: p.provider ?? "claude",
-    name: p.name?.trim() ?? "",
-    url: p.url?.trim() ?? "",
-    key: p.key?.trim() ?? "",
-  }));
+  return payload;
 }

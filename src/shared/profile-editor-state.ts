@@ -12,6 +12,12 @@ export interface ProfileEditorDraft {
   key: string;
   selectedModelId: string;
   advancedModelMapping: AdvancedModelMapping;
+  balanceSessionSelection: string;
+  balanceSessionDraft: {
+    label: string;
+    access_token: string;
+    user_id: string;
+  };
   cwd: string;
   command_base: string;
   settings_file: string;
@@ -24,6 +30,11 @@ export function buildSelectedProfileDraft(
   profile: Profile,
   runtime: RuntimeSettings | undefined,
   provider: string,
+  balanceSessionDraft?: {
+    label?: string;
+    access_token?: string;
+    user_id?: string;
+  },
 ): ProfileEditorDraft {
   const baseRuntime = runtime ?? defaultRuntimeSettings(provider);
   return {
@@ -32,6 +43,12 @@ export function buildSelectedProfileDraft(
     key: profile.key,
     selectedModelId: profile.selectedModelId ?? baseRuntime.model ?? "",
     advancedModelMapping: cloneAdvancedModelMapping(profile.advancedModelMapping),
+    balanceSessionSelection: profile.balance_session_id ?? "auto",
+    balanceSessionDraft: {
+      label: balanceSessionDraft?.label ?? "",
+      access_token: balanceSessionDraft?.access_token ?? "",
+      user_id: balanceSessionDraft?.user_id ?? "",
+    },
     cwd: baseRuntime.cwd,
     command_base: baseRuntime.command_base,
     settings_file: baseRuntime.settings_file ?? "",
@@ -49,6 +66,12 @@ export function buildNewProfileDraft(provider: string): ProfileEditorDraft {
     key: "",
     selectedModelId: "",
     advancedModelMapping: cloneAdvancedModelMapping(undefined),
+    balanceSessionSelection: "auto",
+    balanceSessionDraft: {
+      label: "",
+      access_token: "",
+      user_id: "",
+    },
     cwd: runtime.cwd,
     command_base: runtime.command_base,
     settings_file: runtime.settings_file ?? "",
@@ -81,6 +104,10 @@ export function hasProfileDraftChanges(
       current.key ||
       current.selectedModelId ||
       current.advancedModelMapping.enabled ||
+      current.balanceSessionSelection !== "auto" ||
+      current.balanceSessionDraft.label ||
+      current.balanceSessionDraft.access_token ||
+      current.balanceSessionDraft.user_id ||
       current.advancedModelMapping.claude?.defaultTarget ||
       current.advancedModelMapping.claude?.opusTarget ||
       current.advancedModelMapping.claude?.sonnetTarget ||
@@ -102,6 +129,8 @@ export function hasProfileDraftChanges(
     current.key !== baseline.key ||
     current.selectedModelId !== baseline.selectedModelId ||
     JSON.stringify(current.advancedModelMapping) !== JSON.stringify(baseline.advancedModelMapping) ||
+    current.balanceSessionSelection !== baseline.balanceSessionSelection ||
+    JSON.stringify(current.balanceSessionDraft) !== JSON.stringify(baseline.balanceSessionDraft) ||
     current.cwd !== baseline.cwd ||
     current.command_base !== baseline.command_base ||
     current.settings_file !== baseline.settings_file ||
@@ -132,6 +161,30 @@ export function hasOnlyProfileDraftSelectedModelIdChange(
 
   return !hasProfileDraftChanges(
     { ...current, selectedModelId: baseline.selectedModelId },
+    baseline,
+  );
+}
+
+export function hasOnlyProfileDraftBalanceSessionChange(
+  current: ProfileEditorDraft,
+  baseline: ProfileEditorDraft | null,
+): boolean {
+  if (
+    !baseline
+    || (
+      current.balanceSessionSelection === baseline.balanceSessionSelection
+      && JSON.stringify(current.balanceSessionDraft) === JSON.stringify(baseline.balanceSessionDraft)
+    )
+  ) {
+    return false;
+  }
+
+  return !hasProfileDraftChanges(
+    {
+      ...current,
+      balanceSessionSelection: baseline.balanceSessionSelection,
+      balanceSessionDraft: { ...baseline.balanceSessionDraft },
+    },
     baseline,
   );
 }

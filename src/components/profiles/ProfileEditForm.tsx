@@ -5,6 +5,7 @@ import type {
   LaunchMode,
   ProviderID,
 } from "../../shared/profile/types.js";
+import type { SiteBalanceSession } from "../../shared/balance/site-balance-sessions.js";
 import { GlassCard } from "../common/GlassCard.jsx";
 
 interface ProfileEditFormProps {
@@ -14,6 +15,13 @@ interface ProfileEditFormProps {
     key: string;
     selectedModelId: string;
     advancedModelMapping: AdvancedModelMapping;
+  };
+  siteBalanceSessions: SiteBalanceSession[];
+  balanceSessionSelection: string;
+  balanceSessionDraft: {
+    label: string;
+    access_token: string;
+    user_id: string;
   };
   runtime: {
     cwd: string;
@@ -30,11 +38,19 @@ interface ProfileEditFormProps {
   modelFetchError?: string | null;
   modelFetchSuccess?: string | null;
   onChange: (field: string, value: string | boolean) => void;
+  onBalanceSessionSelectionChange: (value: string) => void;
+  onBalanceSessionDraftChange: (
+    field: "label" | "access_token" | "user_id",
+    value: string,
+  ) => void;
+  onSaveBalanceSession?: () => void;
+  onDeleteSiteBalanceSession: () => void;
   onDraftCommit?: (field: string, value?: string | boolean) => void;
   onAdvancedModelMappingChange: (next: AdvancedModelMapping) => void;
   onRuntimeChange: (field: string, value: string | boolean) => void;
   onRuntimeCommit?: (field: string) => void;
   onFetchModels: () => void;
+  onOpenBaseUrl?: () => void;
   onPickCwd: () => void;
   onSave: () => void;
   onCancel: () => void;
@@ -43,6 +59,9 @@ interface ProfileEditFormProps {
 
 export function ProfileEditForm({
   draft,
+  siteBalanceSessions,
+  balanceSessionSelection,
+  balanceSessionDraft,
   runtime,
   provider,
   modelOptions,
@@ -51,17 +70,28 @@ export function ProfileEditForm({
   modelFetchError,
   modelFetchSuccess,
   onChange,
+  onBalanceSessionSelectionChange,
+  onBalanceSessionDraftChange,
+  onSaveBalanceSession,
+  onDeleteSiteBalanceSession,
   onDraftCommit,
   onAdvancedModelMappingChange,
   onRuntimeChange,
   onRuntimeCommit,
   onFetchModels,
+  onOpenBaseUrl = () => {},
   onPickCwd,
   onSave,
   onCancel,
   disabled,
 }: ProfileEditFormProps) {
   const advancedMapping = draft.advancedModelMapping;
+  const editingExistingBalanceSession = Boolean(
+    balanceSessionSelection
+    && balanceSessionSelection !== "auto"
+    && balanceSessionSelection !== "new",
+  );
+  const editingBalanceSession = editingExistingBalanceSession || balanceSessionSelection === "new";
   const modelFetchStatus = [
     modelFetchedAt ? `最近获取：${modelFetchedAt}` : "",
     modelFetchSuccess ?? "",
@@ -96,12 +126,22 @@ export function ProfileEditForm({
         </label>
         <label>
           Base URL
-          <input
-            value={draft.url}
-            onChange={(e) => onChange("url", e.target.value)}
-            placeholder="https://api.example.com"
-            disabled={disabled}
-          />
+          <div className="path-field">
+            <input
+              value={draft.url}
+              onChange={(e) => onChange("url", e.target.value)}
+              placeholder="https://api.example.com"
+              disabled={disabled}
+            />
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onOpenBaseUrl}
+              disabled={disabled || !draft.url.trim()}
+            >
+              打开
+            </button>
+          </div>
         </label>
         <label>
           API Key / Token
@@ -113,6 +153,99 @@ export function ProfileEditForm({
             disabled={disabled}
           />
         </label>
+      </GlassCard>
+
+      <GlassCard title="站点后台会话" subtitle="仅用于管理面板类站点的余额检测">
+        <label>
+          后台会话
+          <div className="inline-actions">
+            <select
+              value={balanceSessionSelection}
+              onChange={(e) => onBalanceSessionSelectionChange(e.target.value)}
+              disabled={disabled}
+            >
+              <option value="auto">自动</option>
+              {siteBalanceSessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {session.label}
+                </option>
+              ))}
+              <option value="new">新建会话</option>
+            </select>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => onBalanceSessionSelectionChange("new")}
+              disabled={disabled}
+            >
+              新建会话
+            </button>
+          </div>
+        </label>
+        {siteBalanceSessions.length === 0 && balanceSessionSelection === "auto" && (
+          <p className="muted">
+            当前站点还没有后台会话。点击“新建会话”后填写备注名、Access Token / Session 和 User ID。
+          </p>
+        )}
+        <p className="muted">
+          自动模式下：当前站点只有 1 套后台会话时会自动复用；存在多套会话时需要手动选择。
+        </p>
+        {editingBalanceSession && (
+          <>
+            <div className="mapping-grid">
+              <label>
+                备注名
+                <input
+                  value={balanceSessionDraft.label}
+                  onChange={(e) => onBalanceSessionDraftChange("label", e.target.value)}
+                  placeholder="例如 主账号 / 运营后台"
+                  disabled={disabled}
+                />
+              </label>
+              <label>
+                Access Token / Session
+                <input
+                  type="password"
+                  value={balanceSessionDraft.access_token}
+                  onChange={(e) => onBalanceSessionDraftChange("access_token", e.target.value)}
+                  placeholder="输入后台 Access Token 或 Session"
+                  disabled={disabled}
+                />
+              </label>
+              <label>
+                User ID
+                <input
+                  value={balanceSessionDraft.user_id}
+                  onChange={(e) => onBalanceSessionDraftChange("user_id", e.target.value)}
+                  placeholder="输入后台 User ID"
+                  disabled={disabled}
+                />
+              </label>
+            </div>
+            <div className="inline-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => onSaveBalanceSession?.()}
+                disabled={disabled || !onSaveBalanceSession}
+              >
+                保存会话
+              </button>
+            </div>
+          </>
+        )}
+        {editingExistingBalanceSession && (
+          <div className="inline-actions">
+            <button
+              type="button"
+              className="secondary-button danger"
+              onClick={onDeleteSiteBalanceSession}
+              disabled={disabled}
+            >
+              删除当前会话
+            </button>
+          </div>
+        )}
       </GlassCard>
 
       <GlassCard title="模型配置">

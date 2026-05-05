@@ -1,6 +1,17 @@
 // 会话服务 — 会话扫描和解析
 
+import { normalizeProvider, PROVIDER_CODEX } from "../profile/types.js";
+
+export type SessionListScope = "project" | "global_recent";
+
+export interface ListSessionsRequest {
+  provider: string;
+  scope: SessionListScope;
+  cwd?: string;
+}
+
 export interface SessionSummary {
+  provider: "claude" | "codex";
   session_id: string;
   cwd: string;
   updated_at: string;
@@ -8,8 +19,8 @@ export interface SessionSummary {
 }
 
 interface SessionListLoaders {
-  listClaudeSessions: (cwd: string) => Promise<SessionSummary[]>;
-  listCodexSessions: (cwd: string) => Promise<SessionSummary[]>;
+  listClaudeSessions: (request: ListSessionsRequest) => Promise<SessionSummary[]>;
+  listCodexSessions: (request: ListSessionsRequest) => Promise<SessionSummary[]>;
 }
 
 interface SessionFileSummary extends SessionSummary {
@@ -25,8 +36,20 @@ interface CodexIndexEntry {
 
 const MAX_PREVIEW_LENGTH = 120;
 
+export function isSessionListScope(value: unknown): value is SessionListScope {
+  return value === "project" || value === "global_recent";
+}
+
 function normalizeComparablePath(value: string): string {
   return value.trim().replace(/\\/g, "/").toLowerCase();
+}
+
+function requireProjectCwd(request: ListSessionsRequest): string {
+  const cwd = request.cwd?.trim() ?? "";
+  if (!cwd) {
+    throw new Error("project scope requires cwd");
+  }
+  return cwd;
 }
 
 function trimPreview(value: string): string {
@@ -185,6 +208,7 @@ async function summarizeClaudeSessionFile(filePath: string, fallbackCwd: string)
 
   const sessionId = path.basename(filePath, ".jsonl");
   return {
+    provider: "claude",
     session_id: sessionId,
     cwd,
     updated_at: stat.mtime.toISOString(),
@@ -255,6 +279,7 @@ async function summarizeCodexSessionFile(filePath: string): Promise<SessionFileS
   }
 
   return {
+    provider: "codex",
     session_id: sessionId,
     cwd,
     updated_at: updatedAt,
@@ -289,7 +314,7 @@ async function readCodexIndex(indexPath: string): Promise<CodexIndexEntry[]> {
 }
 
 export async function listClaudeSessions(
-  cwd: string,
+  request: ListSessionsRequest,
   claudeHome?: string,
 ): Promise<SessionSummary[]> {
   const path = await import("node:path");
@@ -300,10 +325,11 @@ export async function listClaudeSessions(
     ? (path.basename(claudeHome) === "projects" ? path.dirname(claudeHome) : claudeHome)
     : (process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(os.homedir(), ".claude"));
   const projectsRoot = path.join(configRoot, "projects");
-  const normalizedCwd = normalizeComparablePath(cwd);
   const sessions: SessionFileSummary[] = [];
 
-  if (normalizedCwd) {
+  if (request.scope === "project") {
+    const cwd = requireProjectCwd(request);
+    const normalizedCwd = normalizeComparablePath(cwd);
     const projectDir = path.join(projectsRoot, encodeClaudeProjectPath(cwd));
     const candidateFiles = await collectClaudeCandidateFiles(projectDir);
     for (const filePath of candidateFiles) {
@@ -345,7 +371,8 @@ export async function listClaudeSessions(
       new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
   );
 
-  return sessions.map(({ session_id, cwd: sessionCwd, updated_at, preview }) => ({
+  return sessions.map(({ provider, session_id, cwd: sessionCwd, updated_at, preview }) => ({
+    provider,
     session_id,
     cwd: sessionCwd,
     updated_at,
@@ -354,14 +381,16 @@ export async function listClaudeSessions(
 }
 
 export async function listCodexSessions(
-  cwd: string,
+  request: ListSessionsRequest,
   codexHome?: string,
 ): Promise<SessionSummary[]> {
   const path = await import("node:path");
   const os = await import("node:os");
 
   const root = codexHome || path.join(os.homedir(), ".codex");
-  const normalizedCwd = normalizeComparablePath(cwd);
+  const normalizedCwd = request.scope === "project"
+    ? normalizeComparablePath(requireProjectCwd(request))
+    : "";
   const indexEntries = await readCodexIndex(path.join(root, "session_index.jsonl"));
   const needsFallback = normalizedCwd.length > 0 || indexEntries.some((entry) => !entry.cwd || !entry.preview);
   const fallbackMap = needsFallback ? await buildCodexFallbackMap(path.join(root, "sessions")) : new Map();
@@ -369,6 +398,7 @@ export async function listCodexSessions(
   const mergedFromIndex = indexEntries.map((entry) => {
     const fallback = fallbackMap.get(entry.session_id);
     return {
+      provider: "codex",
       session_id: entry.session_id,
       cwd: firstString(entry.cwd, fallback?.cwd),
       updated_at: firstString(entry.updated_at, fallback?.updated_at),
@@ -378,7 +408,8 @@ export async function listCodexSessions(
 
   const baseSessions = mergedFromIndex.length > 0
     ? mergedFromIndex
-    : Array.from(fallbackMap.values()).map(({ session_id, cwd: sessionCwd, updated_at, preview }) => ({
+    : Array.from(fallbackMap.values()).map(({ provider, session_id, cwd: sessionCwd, updated_at, preview }) => ({
+      provider,
       session_id,
       cwd: sessionCwd,
       updated_at,
@@ -398,17 +429,22 @@ export async function listCodexSessions(
 }
 
 export async function listSessionsForProvider(
-  provider: string,
-  cwd: string,
+  request: ListSessionsRequest,
   loaders: SessionListLoaders = {
     listClaudeSessions,
     listCodexSessions,
   },
 ): Promise<SessionSummary[]> {
-  if (provider === "codex") {
-    return loaders.listCodexSessions(cwd);
+  if (!isSessionListScope(request.scope)) {
+    throw new Error("invalid session list scope");
   }
-  return loaders.listClaudeSessions(cwd);
+  if (request.scope === "project") {
+    requireProjectCwd(request);
+  }
+  if (normalizeProvider(request.provider) === PROVIDER_CODEX) {
+    return loaders.listCodexSessions(request);
+  }
+  return loaders.listClaudeSessions(request);
 }
 
 export { encodeClaudeProjectPath };

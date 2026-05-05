@@ -23,6 +23,7 @@ describe("SessionPicker", () => {
       <SessionPicker
         sessions={[
           {
+            provider: "claude",
             session_id: "session-1",
             cwd: "C:/repo",
             updated_at: "2026-05-04T10:00:00.000Z",
@@ -45,12 +46,14 @@ describe("SessionPicker", () => {
       <SessionPicker
         sessions={[
           {
+            provider: "claude",
             session_id: "session-1",
             cwd: "C:/repo",
             updated_at: "2026-05-04T10:00:00.000Z",
             preview: "修复 Profiles 布局",
           },
           {
+            provider: "claude",
             session_id: "session-2",
             cwd: "C:/repo-2",
             updated_at: "2026-05-04T11:00:00.000Z",

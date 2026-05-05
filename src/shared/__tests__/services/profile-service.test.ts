@@ -6,6 +6,7 @@ import { defaultLocalState, type LocalState } from "../../state/local-state.js";
 import { cloneLocalState } from "../../state/store.js";
 import { normalizeProfile, type Profile, type RuntimeSettings } from "../../profile/types.js";
 import { itemKey } from "../../profile/keys-internal.js";
+import type { SiteBalanceSession } from "../../balance/site-balance-sessions.js";
 
 // 内存状态存储（测试用）
 class MemoryStateAccessor implements LocalStateAccessor {
@@ -30,6 +31,17 @@ function makeProfiles(): Profile[] {
     { provider: "codex", name: "OpenAI", url: "https://api.openai.com/v1", key: "sk-openai-1" },
     { provider: "claude", name: "Custom", url: "https://custom.api.com", key: "sk-custom" },
   ];
+}
+
+function makeSiteSession(id: string, label: string, baseUrl: string = "https://new-api.example.com"): SiteBalanceSession {
+  return {
+    id,
+    label,
+    base_url: baseUrl,
+    access_token: `token-${id}`,
+    user_id: `${id.length * 100}`,
+    updated_at: "2026-05-05T09:00:00.000Z",
+  };
 }
 
 function makeRuntime(): RuntimeSettings {
@@ -114,6 +126,21 @@ describe("ProfileService", () => {
       await localAccessor.save({
         ...defaultLocalState(),
         runtime_by_profile: { [oldKey]: makeRuntime() },
+        balance_checks_by_profile: {
+          [oldKey]: {
+            provider: "claude",
+            profile_name: "Official",
+            base_url: "https://api.anthropic.com",
+            running: false,
+            supported: true,
+            success: true,
+            message: "",
+            items: [{ label: "USD", remaining: 5, total: 10, used: 5, unit: "$" }],
+            endpoint: "https://api.anthropic.com/api/user/self",
+            finished_at_display: "2026/05/05 12:00:00",
+          },
+        },
+        sessions_tab_restore_profile_key_by_provider: { claude: oldKey },
       });
 
       // 重命名
@@ -124,6 +151,12 @@ describe("ProfileService", () => {
       const newKey = itemKey(renamed);
       expect(state.runtime_by_profile[oldKey]).toBeUndefined();
       expect(state.runtime_by_profile[newKey]).toBeDefined();
+      expect(state.balance_checks_by_profile[oldKey]).toBeUndefined();
+      expect(state.balance_checks_by_profile[newKey]).toMatchObject({
+        provider: "claude",
+        profile_name: "Renamed",
+      });
+      expect(state.sessions_tab_restore_profile_key_by_provider.claude).toBe(newKey);
     });
 
     it("should validate required fields", async () => {
@@ -134,6 +167,31 @@ describe("ProfileService", () => {
     it("should validate URL format", async () => {
       const bad: Profile = { provider: "claude", name: "Test", url: "ftp://bad.com", key: "key" };
       await expect(service.saveProfile("", bad, makeRuntime())).rejects.toThrow("http:// 或 https://");
+    });
+
+    it("should keep balance_session_id on rename but clear it when the profile moves to another site", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+        balance_session_id: "sess-a",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), null, {
+        "https://new-api.example.com": [makeSiteSession("sess-a", "后台 A")],
+      });
+
+      const renamed = await localService.saveProfile(itemKey(profile), {
+        ...profile,
+        name: "Relay Renamed",
+      }, makeRuntime());
+      expect(renamed.balance_session_id).toBe("sess-a");
+
+      const moved = await localService.saveProfile(itemKey(renamed), {
+        ...renamed,
+        url: "https://other-new-api.example.com/v1",
+      }, makeRuntime());
+      expect(moved.balance_session_id).toBeUndefined();
     });
   });
 
@@ -152,8 +210,23 @@ describe("ProfileService", () => {
       const key = itemKey(makeProfiles()[0]);
       const localAccessor = new MemoryStateAccessor({
         runtime_by_profile: { [key]: makeRuntime() },
+        balance_checks_by_profile: {
+          [key]: {
+            provider: "claude",
+            profile_name: "Official",
+            base_url: "https://api.anthropic.com",
+            running: false,
+            supported: true,
+            success: true,
+            message: "",
+            items: [{ label: "USD", remaining: 5, total: 10, used: 5, unit: "$" }],
+            endpoint: "https://api.anthropic.com/api/user/self",
+            finished_at_display: "2026/05/05 12:00:00",
+          },
+        },
         selected_profile_key: key,
         selected_profile_key_by_provider: { claude: key },
+        sessions_tab_restore_profile_key_by_provider: { claude: key },
       });
 
       const localService = new ProfileService(makeProfiles(), localAccessor);
@@ -161,7 +234,9 @@ describe("ProfileService", () => {
 
       const state = localAccessor.get();
       expect(state.runtime_by_profile[key]).toBeUndefined();
+      expect(state.balance_checks_by_profile[key]).toBeUndefined();
       expect(state.selected_profile_key).toBe("");
+      expect(state.sessions_tab_restore_profile_key_by_provider.claude).toBeUndefined();
     });
   });
 
@@ -191,6 +266,51 @@ describe("ProfileService", () => {
       await expect(
         service.cloneProfileToProvider("claude::nonexistent", "codex"),
       ).rejects.toThrow("source profile not found");
+    });
+
+    it("should preserve explicit balance session binding when cloning", async () => {
+      const profile: Profile = {
+        provider: "claude",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+        balance_session_id: "sess-a",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), null, {
+        "https://new-api.example.com": [makeSiteSession("sess-a", "后台 A")],
+      });
+
+      const cloned = await localService.cloneProfileToProvider(itemKey(profile), "codex");
+
+      expect(cloned.balance_session_id).toBe("sess-a");
+    });
+  });
+
+  describe("site balance sessions", () => {
+    it("should save sessions under the normalized base url and update explicit bindings on delete", async () => {
+      const boundProfile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+        balance_session_id: "sess-a",
+      };
+      const localService = new ProfileService([boundProfile], new MemoryStateAccessor(), null, {
+        "https://new-api.example.com": [makeSiteSession("sess-a", "后台 A")],
+      });
+
+      await localService.saveSiteBalanceSession("https://new-api.example.com/v1/chat/completions", {
+        id: "sess-b",
+        label: "后台 B",
+        access_token: "token-b",
+        user_id: "2002",
+      });
+
+      expect(localService.getSiteBalanceSessionsByBaseUrl()["https://new-api.example.com"]).toHaveLength(2);
+
+      await localService.deleteSiteBalanceSession("https://new-api.example.com/v1", "sess-a");
+
+      expect(localService.getProfiles()[0].balance_session_id).toBeUndefined();
     });
   });
 
@@ -242,6 +362,25 @@ describe("ProfileService", () => {
       expect(state.selected_provider).toBe("codex");
       expect(state.selected_profile_key).toBe(itemKey(makeProfiles().find((p) => p.provider === "codex")!));
       expect(state.selected_profile_key_by_provider.codex).toBe(itemKey(makeProfiles().find((p) => p.provider === "codex")!));
+    });
+
+    it("should drop invalid remembered session restore profile keys during state sanitization", () => {
+      const codexKey = itemKey(makeProfiles().find((p) => p.provider === "codex")!);
+      const localAccessor = new MemoryStateAccessor({
+        selected_provider: "codex",
+        selected_profile_key: codexKey,
+        selected_profile_key_by_provider: { codex: codexKey },
+        sessions_tab_restore_profile_key_by_provider: {
+          codex: "claude::Official",
+          claude: "claude::Missing",
+        },
+      });
+      const localService = new ProfileService(makeProfiles(), localAccessor);
+
+      const state = localService.getState();
+
+      expect(state.sessions_tab_restore_profile_key_by_provider.codex).toBeUndefined();
+      expect(state.sessions_tab_restore_profile_key_by_provider.claude).toBeUndefined();
     });
   });
 });

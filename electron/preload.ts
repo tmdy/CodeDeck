@@ -90,8 +90,14 @@ const profileApi = {
     ipcRenderer.invoke("profile:reorder", provider, orderedKeys),
   activateProvider: (provider: string): Promise<void> =>
     ipcRenderer.invoke("profile:activate-provider", provider),
+  saveSiteBalanceSession: (baseUrl: string, draft: unknown): Promise<unknown> =>
+    ipcRenderer.invoke("profile:save-site-balance-session", baseUrl, draft),
+  deleteSiteBalanceSession: (baseUrl: string, sessionId: string): Promise<void> =>
+    ipcRenderer.invoke("profile:delete-site-balance-session", baseUrl, sessionId),
   pickWorkingDirectory: (): Promise<string | undefined> =>
     ipcRenderer.invoke("profile:pick-working-directory"),
+  openBaseUrl: (baseUrl: string): Promise<void> =>
+    ipcRenderer.invoke("profile:open-base-url", baseUrl),
 
   // Launcher
   previewForDraft: (
@@ -107,16 +113,22 @@ const profileApi = {
     ipcRenderer.invoke("launcher:launch", request),
 
   // Sessions
-  listSessions: (provider: string, cwd: string): Promise<unknown[]> =>
-    ipcRenderer.invoke("session:list", provider, cwd),
+  listSessions: (request: unknown): Promise<unknown[]> =>
+    ipcRenderer.invoke("session:list", request),
   refreshSessions: (provider: string): Promise<void> =>
     ipcRenderer.invoke("session:refresh", provider),
+  updateSessionsTabState: (provider: string, patch: unknown): Promise<void> =>
+    ipcRenderer.invoke("session:update-tab-state", provider, patch),
 
   // Connectivity
   testConnection: (profileKey: string): Promise<void> =>
     ipcRenderer.invoke("connectivity:test", profileKey),
   getConnectivityState: (profileKey: string): Promise<unknown> =>
     ipcRenderer.invoke("connectivity:get-state", profileKey),
+  testBalance: (profileKey: string): Promise<void> =>
+    ipcRenderer.invoke("balance:test", profileKey),
+  getBalanceState: (profileKey: string): Promise<unknown> =>
+    ipcRenderer.invoke("balance:get-state", profileKey),
 
   // Model Mappings
   getModelMappings: (): Promise<unknown> =>
@@ -156,6 +168,16 @@ const profileApi = {
     ipcRenderer.on("connectivity:test-progress", handler);
     return () => {
       ipcRenderer.removeListener("connectivity:test-progress", handler);
+    };
+  },
+  onBalanceProgress: (
+    callback: (key: string, state: unknown) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, key: string, state: unknown) =>
+      callback(key, state);
+    ipcRenderer.on("balance:test-progress", handler);
+    return () => {
+      ipcRenderer.removeListener("balance:test-progress", handler);
     };
   },
   onUnlockError: (callback: (message: string) => void): (() => void) => {

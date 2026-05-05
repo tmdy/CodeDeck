@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -18,12 +18,19 @@ import { EncryptedConfigStore } from "../src/shared/crypto/store.js";
 import { LocalStateStore } from "../src/shared/state/store.js";
 import { ProfileService } from "../src/shared/services/profile-service.js";
 import { LaunchService } from "../src/shared/services/launch-service.js";
-import { SettingsStateService } from "../src/shared/services/settings-state-service.js";
+import { SettingsStateService, type SessionsTabStatePatch } from "../src/shared/services/settings-state-service.js";
 import { ModelMappingConfigService } from "../src/shared/services/model-mapping-config-service.js";
 import { ModelCatalogService } from "../src/shared/services/model-catalog-service.js";
+import { BalanceService, normalizeBalanceBaseUrl } from "../src/shared/services/balance-service.js";
+import {
+  resolveBalanceAuth,
+  type SiteBalanceSessionDraft,
+  type SiteBalanceSessionsByBaseUrl,
+} from "../src/shared/balance/site-balance-sessions.js";
 import { pickDirectoryPath } from "../src/shared/electron/dialog-helpers.js";
 import { executeLaunchPlan, type ExternalTerminalLaunchSpec } from "../src/shared/electron/launch-runtime.js";
-import { listSessionsForProvider } from "../src/shared/services/session-service.js";
+import { resolveBaseUrlExternalTarget } from "../src/shared/electron/open-url.js";
+import { listSessionsForProvider, type ListSessionsRequest } from "../src/shared/services/session-service.js";
 import {
   type LocalState,
 } from "../src/shared/state/local-state.js";
@@ -37,6 +44,10 @@ import {
 import { itemKey } from "../src/shared/profile/keys-internal.js";
 import type { LaunchRequest, CommandPreview } from "../src/shared/launcher/types.js";
 import type { ConnectivityTestState } from "../src/shared/connectivity/types.js";
+import {
+  defaultBalanceCheckState,
+  type BalanceCheckState,
+} from "../src/shared/balance/types.js";
 import type { ParameterSettings } from "../src/shared/parameter/types.js";
 import type { ModelMappingsState } from "../src/shared/model-mapping/config-types.js";
 
@@ -59,9 +70,11 @@ let launchService: LaunchService | null = null;
 let settingsStateService: SettingsStateService | null = null;
 let modelMappingConfigService: ModelMappingConfigService | null = null;
 let modelCatalogService: ModelCatalogService | null = null;
+let balanceService: BalanceService | null = null;
 let modelMappingsStateCache: ModelMappingsState | null = null;
 let encryptedStore: EncryptedConfigStore | null = null;
 let localStateStore: LocalStateStore | null = null;
+let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
 let mainWindow: BrowserWindow | null = null;
 let isTransitioningFromUnlock = false;
@@ -127,6 +140,16 @@ function getModelMappingConfigService(): ModelMappingConfigService {
 function getModelCatalogService(): ModelCatalogService {
   if (!modelCatalogService) throw new Error("Model Catalog 服务尚未初始化。");
   return modelCatalogService;
+}
+
+function getBalanceService(): BalanceService {
+  if (!balanceService) throw new Error("Balance 服务尚未初始化。");
+  return balanceService;
+}
+
+function getProfileStateAccessor(): StateAccessor {
+  if (!profileStateAccessor) throw new Error("Profile 状态访问器尚未初始化。");
+  return profileStateAccessor;
 }
 
 function getPassphrase(): string {
@@ -224,20 +247,127 @@ async function initProfileServices(): Promise<void> {
   localStateStore = new LocalStateStore(statePath);
   modelMappingConfigService = new ModelMappingConfigService({ appDataRoot: appDataDir });
   modelCatalogService = new ModelCatalogService();
+  balanceService = new BalanceService();
   modelMappingsStateCache = await modelMappingConfigService.load();
 }
 
 async function loadProfilesAndState(
   passphrase: string,
-): Promise<{ profiles: Profile[]; state: LocalState }> {
+): Promise<{
+  profiles: Profile[];
+  state: LocalState;
+  siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+}> {
   if (!encryptedStore || !localStateStore) {
     throw new Error("存储未初始化");
   }
 
-  const profiles = await encryptedStore.load(passphrase);
+  const config = await encryptedStore.load(passphrase);
   const state = await localStateStore.load();
 
-  return { profiles, state };
+  return {
+    profiles: config.profiles,
+    state,
+    siteBalanceSessionsByBaseUrl: config.site_balance_sessions_by_base_url,
+  };
+}
+
+async function persistBalanceState(profileKey: ProfileKey, nextState: BalanceCheckState): Promise<void> {
+  const state = getProfileService().getState();
+  state.balance_checks_by_profile[profileKey] = {
+    ...nextState,
+    items: nextState.items.map((item) => ({ ...item })),
+  };
+  await getProfileStateAccessor().save(state);
+}
+
+function emitBalanceProgress(profileKey: ProfileKey, nextState: BalanceCheckState): void {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    win.webContents.send("balance:test-progress", profileKey, nextState);
+  });
+}
+
+async function saveAndEmitBalanceState(profileKey: ProfileKey, nextState: BalanceCheckState): Promise<void> {
+  await persistBalanceState(profileKey, nextState);
+  emitBalanceProgress(profileKey, nextState);
+}
+
+async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
+  const profile = getProfileService()
+    .getProfiles()
+    .find((item) => itemKey(item) === profileKey);
+  if (!profile) {
+    throw new Error("Profile 不存在");
+  }
+
+  const runningState: BalanceCheckState = {
+    ...defaultBalanceCheckState(),
+    provider: profile.provider,
+    profile_name: profile.name,
+    base_url: normalizeBalanceBaseUrl(profile.url),
+    running: true,
+    supported: true,
+    message: "正在检测余额...",
+  };
+
+  await saveAndEmitBalanceState(profileKey, runningState);
+
+  try {
+    const timeoutMs = getSettingsStateService().getParameterSettings().connectivity_test_timeout_ms;
+    const resolvedAuth = resolveBalanceAuth(
+      profile,
+      getProfileService().getSiteBalanceSessionsByBaseUrl(),
+    );
+    let finalState: BalanceCheckState;
+
+    if (resolvedAuth.kind === "ambiguous_multiple_sessions") {
+      finalState = {
+        ...defaultBalanceCheckState(),
+        provider: profile.provider,
+        profile_name: profile.name,
+        base_url: normalizeBalanceBaseUrl(profile.url),
+        supported: true,
+        success: false,
+        message: "同站点存在多套后台会话，请先选择要使用的会话",
+        endpoint: `${resolvedAuth.base_url}/api/user/self`,
+      };
+    } else if (resolvedAuth.kind === "none" && resolvedAuth.reason === "missing_bound_session") {
+      finalState = {
+        ...defaultBalanceCheckState(),
+        provider: profile.provider,
+        profile_name: profile.name,
+        base_url: normalizeBalanceBaseUrl(profile.url),
+        supported: true,
+        success: false,
+        message: "所绑定的后台会话已被删除，请重新选择",
+        endpoint: `${resolvedAuth.base_url}/api/user/self`,
+      };
+    } else {
+      finalState = await getBalanceService().query(
+        profile,
+        timeoutMs,
+        resolvedAuth.kind === "explicit_session" || resolvedAuth.kind === "implicit_single_session"
+          ? resolvedAuth.session
+          : null,
+      );
+    }
+    await saveAndEmitBalanceState(profileKey, {
+      ...finalState,
+      running: false,
+      finished_at_display: new Date().toLocaleString(),
+    });
+  } catch (error) {
+    await saveAndEmitBalanceState(profileKey, {
+      ...defaultBalanceCheckState(),
+      provider: profile.provider,
+      profile_name: profile.name,
+      base_url: normalizeBalanceBaseUrl(profile.url),
+      supported: true,
+      success: false,
+      message: error instanceof Error ? error.message : "网络错误 / 超时",
+      finished_at_display: new Date().toLocaleString(),
+    });
+  }
 }
 
 class StateAccessor {
@@ -263,10 +393,13 @@ class SyncStoreAdapter {
     private getPassphrase: () => string,
   ) {}
 
-  async saveProfiles(profiles: Profile[]): Promise<void> {
+  async saveConfig(config: {
+    profiles: Profile[];
+    site_balance_sessions_by_base_url: SiteBalanceSessionsByBaseUrl;
+  }): Promise<void> {
     const pw = this.getPassphrase();
     if (pw && this.store) {
-      await this.store.save(profiles, pw);
+      await this.store.save(config, pw);
     }
   }
 }
@@ -332,14 +465,20 @@ async function createUnlockWindow(): Promise<string> {
           await initProfileServices();
           writeDebugLog("profile:unlock initProfileServices completed");
         }
-        const { profiles, state } = await loadProfilesAndState(passphrase!);
+        const { profiles, state, siteBalanceSessionsByBaseUrl } = await loadProfilesAndState(passphrase!);
         writeDebugLog(`profile:unlock loaded profiles=${profiles.length}`);
         currentPassphrase = passphrase!;
 
         // 创建 Profile 服务
         const stateAccessor = new StateAccessor(localStateStore!, state);
+        profileStateAccessor = stateAccessor;
         const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase());
-        profileService = new ProfileService(profiles, stateAccessor, syncStore);
+        profileService = new ProfileService(
+          profiles,
+          stateAccessor,
+          syncStore,
+          siteBalanceSessionsByBaseUrl,
+        );
         launchService = new LaunchService(profileService, {
           getModelMappingsState: () => currentModelMappingsState(),
           codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
@@ -482,8 +621,9 @@ function registerAllIpcHandlers(): void {
       currentPassphrase = passphrase;
       const state = await localStateStore!.load();
       const stateAccessor = new StateAccessor(localStateStore!, state);
+      profileStateAccessor = stateAccessor;
       const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase());
-      profileService = new ProfileService([], stateAccessor, syncStore);
+      profileService = new ProfileService([], stateAccessor, syncStore, {});
       launchService = new LaunchService(profileService, {
         getModelMappingsState: () => currentModelMappingsState(),
         codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
@@ -499,6 +639,7 @@ function registerAllIpcHandlers(): void {
     return {
       profiles: svc.getProfiles(),
       state: svc.getState(),
+      siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
     };
   });
 
@@ -545,6 +686,18 @@ function registerAllIpcHandlers(): void {
       await getProfileService().activateProvider(provider);
     },
   );
+  ipcMain.handle(
+    "profile:save-site-balance-session",
+    async (_event, baseUrl: string, draft: SiteBalanceSessionDraft) => {
+      return getProfileService().saveSiteBalanceSession(baseUrl, draft);
+    },
+  );
+  ipcMain.handle(
+    "profile:delete-site-balance-session",
+    async (_event, baseUrl: string, sessionId: string) => {
+      await getProfileService().deleteSiteBalanceSession(baseUrl, sessionId);
+    },
+  );
   ipcMain.handle("profile:pick-working-directory", async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
     return browserWindow
@@ -556,6 +709,9 @@ function registerAllIpcHandlers(): void {
           (options) => dialog.showOpenDialog(options),
           "选择工作目录",
         );
+  });
+  ipcMain.handle("profile:open-base-url", async (_event, baseUrl: string) => {
+    await shell.openExternal(resolveBaseUrlExternalTarget(baseUrl));
   });
 
   // Launcher
@@ -621,14 +777,21 @@ function registerAllIpcHandlers(): void {
   // Sessions
   ipcMain.handle(
     "session:list",
-    async (_event, provider: string, cwd: string) => {
-      return listSessionsForProvider(provider, cwd);
+    async (_event, request: ListSessionsRequest) => {
+      return listSessionsForProvider(request);
     },
   );
 
   ipcMain.handle("session:refresh", async (_event, _provider: string) => {
     // 异步刷新会话索引
   });
+
+  ipcMain.handle(
+    "session:update-tab-state",
+    async (_event, provider: string, patch: SessionsTabStatePatch) => {
+      await getSettingsStateService().updateSessionsTabState(provider, patch);
+    },
+  );
 
   // Connectivity
   ipcMain.handle(
@@ -688,6 +851,18 @@ function registerAllIpcHandlers(): void {
           finished_at_display: "",
         }
       );
+    },
+  );
+
+  ipcMain.handle("balance:test", async (_event, profileKey: ProfileKey) => {
+    void runBalanceCheck(profileKey);
+  });
+
+  ipcMain.handle(
+    "balance:get-state",
+    (_event, profileKey: ProfileKey): BalanceCheckState => {
+      const state = getProfileService().getState();
+      return state.balance_checks_by_profile[profileKey] ?? defaultBalanceCheckState();
     },
   );
 

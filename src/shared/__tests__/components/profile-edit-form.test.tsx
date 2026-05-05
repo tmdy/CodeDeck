@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProfileEditForm } from "../../../components/profiles/ProfileEditForm.jsx";
 import type { AdvancedModelMapping } from "../../profile/types.js";
+import type { SiteBalanceSession } from "../../balance/site-balance-sessions.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -26,6 +27,17 @@ describe("ProfileEditForm", () => {
     };
   }
 
+  function makeSiteSession(id: string, label: string): SiteBalanceSession {
+    return {
+      id,
+      label,
+      base_url: "https://new-api.example.com",
+      access_token: `token-${id}`,
+      user_id: "42",
+      updated_at: "2026-05-05T09:00:00.000Z",
+    };
+  }
+
   it("should render direct model-id controls instead of the old global mapping panel", () => {
     const html = renderToStaticMarkup(
       <ProfileEditForm
@@ -40,7 +52,13 @@ describe("ProfileEditForm", () => {
         }}
         provider="claude"
         modelOptions={[]}
+        siteBalanceSessions={[]}
+        balanceSessionSelection="auto"
+        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         onChange={vi.fn()}
+        onBalanceSessionSelectionChange={vi.fn()}
+        onBalanceSessionDraftChange={vi.fn()}
+        onDeleteSiteBalanceSession={vi.fn()}
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
@@ -73,9 +91,15 @@ describe("ProfileEditForm", () => {
         }}
         provider="claude"
         modelOptions={[]}
+        siteBalanceSessions={[]}
+        balanceSessionSelection="auto"
+        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         modelFetchedAt="2026/5/5 14:55:20"
         modelFetchSuccess="已更新当前站点模型列表"
         onChange={vi.fn()}
+        onBalanceSessionSelectionChange={vi.fn()}
+        onBalanceSessionDraftChange={vi.fn()}
+        onDeleteSiteBalanceSession={vi.fn()}
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
@@ -110,7 +134,13 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={[]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="auto"
+          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onFetchModels={vi.fn()}
@@ -139,6 +169,105 @@ describe("ProfileEditForm", () => {
     container.remove();
   });
 
+  it("should render a Base URL open button and invoke onOpenBaseUrl", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onOpenBaseUrl = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{
+            name: "",
+            url: "https://ai.centos.hk/v1",
+            key: "",
+            selectedModelId: "",
+            advancedModelMapping: makeAdvancedMapping(),
+          }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="auto"
+          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+          onChange={vi.fn()}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onOpenBaseUrl={onOpenBaseUrl}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const openButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "打开",
+    );
+
+    expect(openButton).toBeDefined();
+    expect(openButton).toBeInstanceOf(HTMLButtonElement);
+    expect((openButton as HTMLButtonElement | undefined)?.disabled).toBe(false);
+
+    await act(async () => {
+      openButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onOpenBaseUrl).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("should disable the Base URL open button when the URL is blank", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "", url: "  ", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        siteBalanceSessions={[]}
+        balanceSessionSelection="auto"
+        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+        onChange={vi.fn()}
+        onBalanceSessionSelectionChange={vi.fn()}
+        onBalanceSessionDraftChange={vi.fn()}
+        onDeleteSiteBalanceSession={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onOpenBaseUrl={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain(">打开</button>");
+    expect(html).toContain("disabled=\"\"");
+  });
+
   it("should commit cwd changes when the working directory input loses focus", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -159,7 +288,13 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={[]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="auto"
+          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onRuntimeCommit={onRuntimeCommit}
@@ -215,7 +350,13 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={["old-model", "new-model"]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="auto"
+          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onDraftCommit={onDraftCommit}
@@ -272,7 +413,13 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={["old-model", "new-model"]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="auto"
+          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={onChange}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onDraftCommit={onDraftCommit}
@@ -298,6 +445,136 @@ describe("ProfileEditForm", () => {
 
     expect(onChange).toHaveBeenCalledWith("selectedModelId", "new-model");
     expect(onDraftCommit).toHaveBeenCalledWith("selectedModelId", "new-model");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("should render site balance session options and current remark labels", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        siteBalanceSessions={[makeSiteSession("sess-a", "后台 A")]}
+        balanceSessionSelection="sess-a"
+        balanceSessionDraft={{ label: "后台 A", access_token: "token-a", user_id: "42" }}
+        onChange={vi.fn()}
+        onBalanceSessionSelectionChange={vi.fn()}
+        onBalanceSessionDraftChange={vi.fn()}
+        onDeleteSiteBalanceSession={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("站点后台会话");
+    expect(html).toContain("仅用于管理面板类站点的余额检测");
+    expect(html).toContain(">自动<");
+    expect(html).toContain("后台 A");
+    expect(html).toContain("新建会话");
+    expect(html).toContain("备注名");
+    expect(html).toContain("保存会话");
+  });
+
+  it("should expose a visible create-session affordance even when no sessions exist yet", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        siteBalanceSessions={[]}
+        balanceSessionSelection="auto"
+        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+        onChange={vi.fn()}
+        onBalanceSessionSelectionChange={vi.fn()}
+        onBalanceSessionDraftChange={vi.fn()}
+        onDeleteSiteBalanceSession={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("当前站点还没有后台会话");
+    expect(html).toContain("点击“新建会话”后填写备注名、Access Token / Session 和 User ID");
+    expect(html).toContain(">新建会话<");
+  });
+
+  it("should invoke onSaveBalanceSession when saving a new site session", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onSaveBalanceSession = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="new"
+          balanceSessionDraft={{ label: "后台 A", access_token: "token-a", user_id: "42" }}
+          onChange={vi.fn()}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onSaveBalanceSession={onSaveBalanceSession}
+          onDeleteSiteBalanceSession={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const saveButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "保存会话",
+    );
+
+    expect(saveButton).toBeDefined();
+
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onSaveBalanceSession).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       root.unmount();

@@ -17,6 +17,7 @@ describe("ProfileListPanel", () => {
         selectedKey="codex::CodexOnly"
         orderedKeys={["codex::CodexOnly"]}
         connectivityStates={{}}
+        balanceEntries={{}}
         onSelect={vi.fn()}
         onReorder={vi.fn()}
         onCreate={vi.fn()}
@@ -27,5 +28,34 @@ describe("ProfileListPanel", () => {
 
     expect(html).toContain("CodexOnly");
     expect(html).not.toContain("ClaudeOnly");
+  });
+
+  it("renders balance summaries and unsupported markers for each profile row", () => {
+    const profiles: Profile[] = [
+      { provider: "codex", name: "Paid", url: "https://paid.example.com", key: "sk-paid" },
+      { provider: "codex", name: "Unsupported", url: "https://api.openai.com/v1", key: "sk-openai" },
+    ];
+
+    const html = renderToStaticMarkup(
+      <ProfileListPanel
+        profiles={profiles}
+        activeProvider="codex"
+        selectedKey="codex::Paid"
+        orderedKeys={["codex::Paid", "codex::Unsupported"]}
+        connectivityStates={{}}
+        balanceEntries={{
+          "codex::Paid": { status: "success", label: "余额 $12.34" },
+          "codex::Unsupported": { status: "unsupported", label: "N/A" },
+        }}
+        onSelect={vi.fn()}
+        onReorder={vi.fn()}
+        onCreate={vi.fn()}
+        onClone={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("余额 $12.34");
+    expect(html).toContain("N/A");
   });
 });

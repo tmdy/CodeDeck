@@ -30,6 +30,63 @@ describe("LocalStateStore", () => {
     expect(loaded.selected_profile_key).toBe("");
   });
 
+  it("should persist balance check snapshots by profile", async () => {
+    const store = await makeStore();
+    const state = defaultLocalState();
+    state.balance_checks_by_profile["codex::Relay"] = {
+      provider: "codex",
+      profile_name: "Relay",
+      base_url: "https://relay.example.com",
+      running: false,
+      supported: true,
+      success: true,
+      message: "",
+      items: [
+        {
+          label: "USD",
+          remaining: 12.34,
+          total: 20,
+          used: 7.66,
+          unit: "$",
+        },
+      ],
+      endpoint: "https://relay.example.com/api/user/self",
+      finished_at_display: "2026/05/05 12:00:00",
+    };
+
+    await store.save(state);
+    const loaded = await store.load();
+
+    expect(loaded.balance_checks_by_profile["codex::Relay"]).toEqual(
+      state.balance_checks_by_profile["codex::Relay"],
+    );
+  });
+
+  it("should persist sessions tab scope and restore profile selections by provider", async () => {
+    const store = await makeStore();
+    const state = defaultLocalState();
+    state.sessions_tab_scope_by_provider = {
+      claude: "global_recent",
+      codex: "project",
+    };
+    state.sessions_tab_restore_profile_key_by_provider = {
+      claude: "claude::Official",
+      codex: "codex::OpenAI",
+    };
+
+    await store.save(state);
+    const loaded = await store.load();
+
+    expect(loaded.sessions_tab_scope_by_provider).toEqual({
+      claude: "global_recent",
+      codex: "project",
+    });
+    expect(loaded.sessions_tab_restore_profile_key_by_provider).toEqual({
+      claude: "claude::Official",
+      codex: "codex::OpenAI",
+    });
+  });
+
   it("should normalize legacy quoted parameter settings strings", async () => {
     const store = await makeStore();
     const rawPath = (store as unknown as { filePath: string }).filePath;

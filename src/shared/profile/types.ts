@@ -43,6 +43,7 @@ export interface Profile {
   key: string;  // API Key / Token
   selectedModelId?: string;
   advancedModelMapping?: AdvancedModelMapping;
+  balance_session_id?: string;
 }
 export type { LaunchMode } from "./launch-mode.js";
 
@@ -82,6 +83,7 @@ export function normalizeProfile(profile: Profile): Profile {
     key: profile.key.trim(),
     selectedModelId,
     advancedModelMapping: normalizeAdvancedModelMapping(profile.advancedModelMapping),
+    balance_session_id: profile.balance_session_id?.trim() || undefined,
   };
 }
 
@@ -95,6 +97,7 @@ export function extractSyncedProfile(profile: Profile): Profile {
     key: n.key,
     selectedModelId: n.selectedModelId,
     advancedModelMapping: n.advancedModelMapping,
+    balance_session_id: n.balance_session_id,
   };
 }
 
