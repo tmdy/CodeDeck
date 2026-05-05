@@ -359,30 +359,8 @@ async function createUnlockWindow(): Promise<string> {
 
     ipcMain.handle("profile:unlock", unlockHandler);
 
-    // 没有加密配置时允许跳过
     ipcMain.handle("profile:check-encrypted-config", () => {
       return encryptedStore?.exists() ?? false;
-    });
-
-    ipcMain.handle("profile:skip-unlock", async () => {
-      writeDebugLog("profile:skip-unlock invoked");
-      // 跳过加密，使用空配置
-      if (!localStateStore) {
-        await initProfileServices();
-      }
-      const state = await localStateStore!.load();
-      const stateAccessor = new StateAccessor(localStateStore!, state);
-      profileService = new ProfileService([], stateAccessor, null);
-      launchService = new LaunchService(profileService, {
-        getModelMappingsState: () => currentModelMappingsState(),
-        codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
-      });
-      settingsStateService = new SettingsStateService(stateAccessor);
-
-      isTransitioningFromUnlock = true;
-      writeDebugLog("profile:skip-unlock success, closing unlock window");
-      unlockWin.close();
-      resolve("");
     });
 
     const devServerUrl = process.env.VITE_DEV_SERVER_URL;

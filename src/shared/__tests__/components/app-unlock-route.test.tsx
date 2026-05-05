@@ -16,6 +16,8 @@ describe("App unlock route", () => {
 
     expect(html).toContain('class="unlock-screen"');
     expect(html).toContain("Skills Manager");
+    expect(html).not.toContain("跳过");
+    expect(html).not.toContain("使用空配置");
     expect(html).not.toContain("AI CLI 工具统一管理");
   });
 

@@ -48,7 +48,6 @@ declare global {
       // Auth
       checkEncryptedConfig: () => Promise<boolean>;
       unlock: (passphrase: string) => Promise<{ success: boolean }>;
-      skipUnlock: () => Promise<void>;
       initializeEncryption: (passphrase: string) => Promise<{ success: boolean }>;
 
       // Profile CRUD

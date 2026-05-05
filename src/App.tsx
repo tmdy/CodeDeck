@@ -155,22 +155,6 @@ function App() {
     }
   }
 
-  async function handleSkipUnlock() {
-    setShowUnlockInput(false);
-    setIsUnlocked(true);
-    if (isUnlockWindow) {
-      await window.profileManager?.skipUnlock();
-      return;
-    }
-    // 尝试加载
-    try {
-      const data = await loadData();
-      syncEditorFromData(data);
-    } catch {
-      // 忽略
-    }
-  }
-
   async function loadData(): Promise<ListProfilesResult> {
     if (!window.profileManager) {
       throw new Error("Profile API 不可用");
@@ -675,9 +659,6 @@ function App() {
           />
           <button type="button" onClick={handleUnlock} disabled={isBusy || !passphrase}>
             {hasEncryptedConfig ? "解锁" : "创建并进入"}
-          </button>
-          <button type="button" className="secondary-button" onClick={handleSkipUnlock} disabled={isBusy}>
-            跳过（使用空配置）
           </button>
           {unlockError && <div className="banner error">{unlockError}</div>}
         </div>

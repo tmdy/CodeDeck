@@ -68,8 +68,6 @@ const profileApi = {
     passphrase: string,
   ): Promise<{ success: boolean; profiles?: unknown[]; state?: unknown }> =>
     ipcRenderer.invoke("profile:unlock", passphrase),
-  skipUnlock: (): Promise<void> =>
-    ipcRenderer.invoke("profile:skip-unlock"),
   initializeEncryption: (passphrase: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke("profile:initialize-encryption", passphrase),
 
