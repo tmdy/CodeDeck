@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SkillsManagerService, resolveDefaultPaths } from "../dist-electron/src/shared/skills-service.js";
@@ -6,7 +7,8 @@ import { buildAiResearchTagPlan } from "../dist-electron/src/shared/user-tag-bul
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
-const sourceListPath = "%USERPROFILE%/Downloads/新建 文本文档 (2).txt";
+const sourceListPath = process.env.SKILLS_MANAGER_AI_RESEARCH_LIST
+  ?? path.join(os.homedir(), "Downloads", "ai-research-skills.txt");
 
 async function readSkillList(filePath) {
   const content = await fs.readFile(filePath, "utf8");

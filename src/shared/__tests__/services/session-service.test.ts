@@ -34,8 +34,8 @@ describe("session-service", () => {
   });
 
   it("encodes Claude project directories from cwd", () => {
-    expect(encodeClaudeProjectPath("%USERPROFILE%/Sync/软件开发项目/skills管理"))
-      .toBe("C--Users-99395-Sync--------skills--");
+    expect(encodeClaudeProjectPath("C:/Users/example/Sync/projects/skills-manager"))
+      .toBe("C--Users-example-Sync-projects-skills-manager");
   });
 
   it("reads Claude sessions from ~/.claude/projects/<encoded-project>/*.jsonl", async () => {

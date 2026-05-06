@@ -13,6 +13,9 @@ dist
 dist-ssr
 dist-electron
 *.local
+.env
+.env.*
+!.env.example
 
 # Large external libraries (856MB - skill source files)
 library/
@@ -23,10 +26,25 @@ release/
 # Runtime data - user-specific
 app-data/local_state.json
 app-data/projects.json
+app-data/manifest.json
+app-data/model-mappings.json
+app-data/claude_profiles.encrypted.json
+app-data/codex-profiles/
 app-data/backups/
 app-data/operations/
 app-data/*.log
-app-data/codex-profiles/codex__999Code/.tmp/plugins/
+app-data/**/*.sqlite
+app-data/**/*.sqlite-*
+app-data/**/history.jsonl
+app-data/**/sessions/
+app-data/**/rules/
+app-data/**/.sandbox/
+app-data/**/.sandbox-secrets/
+app-data/**/.tmp/
+app-data/**/*.bak.*
+
+# Local AI assistant state
+.claude/
 
 # Workflow artifacts
 .playwright-mcp/
