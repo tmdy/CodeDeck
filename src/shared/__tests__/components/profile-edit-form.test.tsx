@@ -78,6 +78,123 @@ describe("ProfileEditForm", () => {
     expect(html).not.toContain(">代理<");
   });
 
+  it("should render model configuration before site balance sessions with model help under the field", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "", url: "", key: "", selectedModelId: "gpt-5.5", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={["gpt-5.5"]}
+        siteBalanceSessions={[]}
+        balanceSessionSelection="auto"
+        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+        onChange={vi.fn()}
+        onBalanceSessionSelectionChange={vi.fn()}
+        onBalanceSessionDraftChange={vi.fn()}
+        onDeleteSiteBalanceSession={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const modelCardIndex = html.indexOf("<h3>模型配置</h3>");
+    const balanceCardIndex = html.indexOf("<h3>站点后台会话</h3>");
+    const modelFieldIndex = html.indexOf("当前模型 ID");
+    const modelHelpIndex = html.indexOf("当前模型 ID 可选。填写后会按原始 model id 启动 CLI");
+    const fetchButtonIndex = html.indexOf("获取模型列表");
+
+    expect(modelCardIndex).toBeGreaterThan(-1);
+    expect(balanceCardIndex).toBeGreaterThan(-1);
+    expect(modelCardIndex).toBeLessThan(balanceCardIndex);
+    expect(modelHelpIndex).toBeGreaterThan(modelFieldIndex);
+    expect(modelHelpIndex).toBeLessThan(fetchButtonIndex);
+    expect(html).toContain("class=\"field-help\"");
+    expect(html).toContain("class=\"secondary-button small\">获取模型列表</button>");
+  });
+
+  it("should toggle API Key visibility without changing edit behavior", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "", key: "sk-test", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="auto"
+          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+          onChange={onChange}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const apiKeyInput = container.querySelector("input[placeholder='输入 API Key']") as HTMLInputElement | null;
+    expect(apiKeyInput?.type).toBe("password");
+
+    const showButton = container.querySelector("button[aria-label='显示 API Key']");
+    expect(showButton).toBeInstanceOf(HTMLButtonElement);
+
+    await act(async () => {
+      showButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(apiKeyInput?.type).toBe("text");
+
+    const hideButton = container.querySelector("button[aria-label='隐藏 API Key']");
+    expect(hideButton).toBeInstanceOf(HTMLButtonElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(apiKeyInput, "sk-next");
+      apiKeyInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith("key", "sk-next");
+
+    await act(async () => {
+      hideButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(apiKeyInput?.type).toBe("password");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("should render permission controls and switch from inherited global permissions to custom profile permissions", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

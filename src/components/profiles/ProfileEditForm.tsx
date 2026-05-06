@@ -1,5 +1,6 @@
 // ProfileEditForm 编辑表单
 
+import { useState } from "react";
 import type {
   AdvancedModelMapping,
   LaunchMode,
@@ -92,6 +93,7 @@ export function ProfileEditForm({
   onCancel,
   disabled,
 }: ProfileEditFormProps) {
+  const [showApiKey, setShowApiKey] = useState(false);
   const advancedMapping = draft.advancedModelMapping;
   const customPermissions = draft.permissions != null;
   const displayedPermissions = customPermissions
@@ -156,14 +158,62 @@ export function ProfileEditForm({
         </label>
         <label>
           API Key / Token
+          <div className="secret-field">
+            <input
+              type={showApiKey ? "text" : "password"}
+              value={draft.key}
+              onChange={(e) => onChange("key", e.target.value)}
+              placeholder="输入 API Key"
+              disabled={disabled}
+            />
+            <button
+              type="button"
+              className="secondary-button secret-toggle"
+              aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+              title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+              onClick={() => setShowApiKey((visible) => !visible)}
+              disabled={disabled}
+            >
+              {showApiKey ? "◉" : "◎"}
+            </button>
+          </div>
+        </label>
+      </GlassCard>
+
+      <GlassCard title="模型配置">
+        <label>
+          当前模型 ID
           <input
-            type="password"
-            value={draft.key}
-            onChange={(e) => onChange("key", e.target.value)}
-            placeholder="输入 API Key"
+            list={`profile-model-options-${provider}`}
+            value={draft.selectedModelId}
+            onChange={(e) => {
+              const nextValue = e.target.value;
+              onChange("selectedModelId", nextValue);
+              if (modelOptions.includes(nextValue)) {
+                onDraftCommit?.("selectedModelId", nextValue);
+              }
+            }}
+            onBlur={() => onDraftCommit?.("selectedModelId")}
+            placeholder="可选：站点返回什么 model id，这里就填什么 model id"
             disabled={disabled}
           />
+          <datalist id={`profile-model-options-${provider}`}>
+            {modelOptions.map((item) => (
+              <option key={`${provider}-${item}`} value={item} />
+            ))}
+          </datalist>
+          <span className="field-help">
+            当前模型 ID 可选。填写后会按原始 model id 启动 CLI；留空时不注入模型参数，交给 CLI 默认配置处理。
+            除非开启高级别名映射，否则不会自动转换成 default / sonnet / opus / haiku。
+          </span>
         </label>
+        <div className="inline-actions">
+          <button type="button" className="secondary-button small" onClick={onFetchModels} disabled={disabled || modelFetchBusy}>
+            {modelFetchBusy ? "获取中..." : "获取模型列表"}
+          </button>
+        </div>
+        {modelFetchStatus && <p className="muted">{modelFetchStatus}</p>}
+        {modelFetchError && <div className="banner error">{modelFetchError}</div>}
       </GlassCard>
 
       <GlassCard title="站点后台会话" subtitle="仅用于管理面板类站点的余额检测">
@@ -233,42 +283,6 @@ export function ProfileEditForm({
             </div>
           </>
         )}
-      </GlassCard>
-
-      <GlassCard title="模型配置">
-        <p className="muted">
-          当前模型 ID 可选。填写后会按原始 model id 启动 CLI；留空时不注入模型参数，交给 CLI 默认配置处理。
-          除非开启高级别名映射，否则不会自动转换成 default / sonnet / opus / haiku。
-        </p>
-        <label>
-          当前模型 ID
-          <input
-            list={`profile-model-options-${provider}`}
-            value={draft.selectedModelId}
-            onChange={(e) => {
-              const nextValue = e.target.value;
-              onChange("selectedModelId", nextValue);
-              if (modelOptions.includes(nextValue)) {
-                onDraftCommit?.("selectedModelId", nextValue);
-              }
-            }}
-            onBlur={() => onDraftCommit?.("selectedModelId")}
-            placeholder="可选：站点返回什么 model id，这里就填什么 model id"
-            disabled={disabled}
-          />
-          <datalist id={`profile-model-options-${provider}`}>
-            {modelOptions.map((item) => (
-              <option key={`${provider}-${item}`} value={item} />
-            ))}
-          </datalist>
-        </label>
-        <div className="inline-actions">
-          <button type="button" className="secondary-button" onClick={onFetchModels} disabled={disabled || modelFetchBusy}>
-            {modelFetchBusy ? "获取中..." : "获取模型列表"}
-          </button>
-        </div>
-        {modelFetchStatus && <p className="muted">{modelFetchStatus}</p>}
-        {modelFetchError && <div className="banner error">{modelFetchError}</div>}
       </GlassCard>
 
       <PermissionSettingsCard
