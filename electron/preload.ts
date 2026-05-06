@@ -5,6 +5,7 @@ import type {
   ProjectPreviewResult,
   ProjectScanResult,
   ScanResult,
+  SkillsSnapshotResult,
 } from "../src/shared/skills-service.js";
 import type {
   BatchExecutionResult,
@@ -17,6 +18,10 @@ import type {
 
 const skillsApi = {
   scan: (): Promise<ScanResult> => ipcRenderer.invoke("skills-manager:scan"),
+  loadCachedSnapshot: (): Promise<SkillsSnapshotResult | null> =>
+    ipcRenderer.invoke("skills-manager:load-cached-snapshot"),
+  refreshSnapshot: (): Promise<SkillsSnapshotResult> =>
+    ipcRenderer.invoke("skills-manager:refresh-snapshot"),
   updateSkillUserTags: (skillId: string, tags: string[]): Promise<void> =>
     ipcRenderer.invoke("skills-manager:update-skill-user-tags", skillId, tags),
   pickProjectDirectory: (): Promise<string | undefined> =>

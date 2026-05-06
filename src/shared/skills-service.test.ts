@@ -73,6 +73,62 @@ body`,
     expect(record?.hasUserTags).toBe(true);
   });
 
+  it("returns null for cached snapshot when manifest is missing", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-cache-missing-"));
+    tempRoots.push(root);
+    const service = new SkillsManagerService(buildTestPaths(root));
+
+    await expect(service.loadCachedSnapshot()).resolves.toBeNull();
+  });
+
+  it("loads cached snapshot without touching skill directories", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-cache-stale-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    const fresh = await service.scanEnvironment();
+
+    await removePath(path.join(paths.hosts.codex.activeRoot, "writer"));
+    const cached = await service.loadCachedSnapshot();
+
+    expect(cached?.source).toBe("cache");
+    expect(cached?.scan.scannedAt).toBe(fresh.scannedAt);
+    expect(cached?.scan.records.find((item) => item.skillId === "codex:writer")?.displayName).toBe("Writer Skill");
+  });
+
+  it("merges current user tags into cached snapshot records", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-cache-tags-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    await service.scanEnvironment();
+    await service.updateSkillUserTags("codex:writer", ["缓存标签"]);
+
+    const cached = await service.loadCachedSnapshot();
+    const record = cached?.scan.records.find((item) => item.skillId === "codex:writer");
+
+    expect(record?.userTags).toEqual(["缓存标签"]);
+    expect(record?.hasUserTags).toBe(true);
+  });
+
   it("ignores translated tags and keeps original parsed tags", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-ignore-translated-tags-"));
     tempRoots.push(root);
@@ -303,6 +359,41 @@ body`,
         targetPath: path.join(projectPath, ".agents", "skills", "writer"),
       }),
     ]);
+  });
+
+  it("refreshes snapshot with project state using one environment scan", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-refresh-snapshot-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    const projectPath = path.join(root, "demo-project");
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    await createSkill(
+      path.join(projectPath, ".agents", "skills", "writer"),
+      `---
+name: Writer Skill
+description: Project copy.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    await service.selectProject(projectPath);
+
+    const snapshot = await service.refreshSnapshot();
+    const projectRecord = snapshot.projectScan?.records.find((item) => item.skillId === "codex:writer");
+
+    expect(snapshot.source).toBe("fresh");
+    expect(snapshot.scan.records.find((item) => item.skillId === "codex:writer")?.displayName).toBe("Writer Skill");
+    expect(projectRecord?.projectStatus.isEnabledInProject).toBe(true);
+    expect(projectRecord?.projectStatus.projectTargetPath).toBe(path.join(projectPath, ".agents", "skills", "writer"));
   });
 
   it("does not allow conflict or readonly items to become environment or project preview items", async () => {

@@ -71,6 +71,12 @@ export interface ProjectScanResult {
   records: ProjectSkillRecord[];
 }
 
+export interface SkillsSnapshotResult {
+  scan: ScanResult;
+  projectScan: ProjectScanResult | null;
+  source: "cache" | "fresh";
+}
+
 export interface ProjectPreviewResult {
   action: ProjectBatchAction;
   host: SkillHost;
@@ -300,6 +306,35 @@ export class SkillsManagerService {
       overview,
       manifestPath: this.paths.manifestPath,
       projectRoot: this.paths.projectRoot,
+    };
+  }
+
+  async loadCachedSnapshot(): Promise<SkillsSnapshotResult | null> {
+    const manifest = await this.loadManifest();
+    if (!this.isUsableManifest(manifest)) {
+      return null;
+    }
+
+    const userTags = await this.loadUserTags();
+    const records = this.applyCurrentUserTags(manifest.records, userTags);
+    const scan = this.buildScanResult(records, manifest.lastScannedAt);
+    const projectScan = await this.buildCachedProjectScanFromRecords(records);
+
+    return {
+      scan,
+      projectScan,
+      source: "cache",
+    };
+  }
+
+  async refreshSnapshot(): Promise<SkillsSnapshotResult> {
+    const scan = await this.scanEnvironment();
+    const projectScan = await this.buildFreshProjectScanFromRecords(scan.records);
+
+    return {
+      scan,
+      projectScan,
+      source: "fresh",
     };
   }
 
@@ -901,6 +936,85 @@ export class SkillsManagerService {
   private async getCurrentProject(): Promise<ProjectRecord | undefined> {
     const projects = await this.loadProjectsState();
     return projects.records.find((item) => item.projectId === projects.currentProjectId);
+  }
+
+  private isUsableManifest(manifest: ScanManifest | undefined): manifest is ScanManifest {
+    return Boolean(
+      manifest &&
+      manifest.version === 1 &&
+      manifest.projectRoot === this.paths.projectRoot &&
+      Array.isArray(manifest.records),
+    );
+  }
+
+  private applyCurrentUserTags(
+    records: SkillRecord[],
+    userTags: SkillUserTagsFile | undefined,
+  ): SkillRecord[] {
+    return records.map((record) => {
+      const mergedUserTags = userTags?.entries[record.skillId] ?? [];
+      return {
+        ...record,
+        userTags: mergedUserTags,
+        hasUserTags: mergedUserTags.length > 0,
+      };
+    });
+  }
+
+  private buildScanResult(records: SkillRecord[], scannedAt: string): ScanResult {
+    const normalizedRecords = records.map((record) => ({
+      ...record,
+      lastScannedAt: scannedAt,
+    }));
+
+    return {
+      scannedAt,
+      records: normalizedRecords,
+      overview: this.buildOverview(normalizedRecords),
+      manifestPath: this.paths.manifestPath,
+      projectRoot: this.paths.projectRoot,
+    };
+  }
+
+  private buildProjectScanFromHostState(
+    project: ProjectRecord,
+    hostStates: ProjectHostState,
+    records: SkillRecord[],
+  ): ProjectScanResult {
+    return {
+      currentProject: project,
+      hostStates,
+      records: records.map((record) => ({
+        ...record,
+        projectStatus: this.buildProjectSkillStatus(record, project.projectPath, hostStates),
+      })),
+    };
+  }
+
+  private async buildCachedProjectScanFromRecords(records: SkillRecord[]): Promise<ProjectScanResult | null> {
+    const projectsState = await this.loadProjectsState();
+    const project = projectsState.records.find((item) => item.projectId === projectsState.currentProjectId);
+    if (!project) {
+      return null;
+    }
+
+    const hostStates = projectsState.hostStates[project.projectId] ?? {
+      codex: { skillIds: [], managedSkillIds: [] },
+      claude: { skillIds: [], managedSkillIds: [] },
+    };
+    return this.buildProjectScanFromHostState(project, hostStates, records);
+  }
+
+  private async buildFreshProjectScanFromRecords(records: SkillRecord[]): Promise<ProjectScanResult | null> {
+    const projectsState = await this.loadProjectsState();
+    const project = projectsState.records.find((item) => item.projectId === projectsState.currentProjectId);
+    if (!project) {
+      return null;
+    }
+
+    const hostStates = await this.buildProjectHostState(project.projectPath, projectsState.hostStates[project.projectId]);
+    await this.updateStoredProjectHostState(project.projectId, hostStates);
+    return this.buildProjectScanFromHostState(project, hostStates, records);
   }
 
   private async buildProjectHostState(projectPath: string, previousState?: ProjectHostState): Promise<ProjectHostState> {

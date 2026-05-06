@@ -1232,6 +1232,18 @@ button.small {
   min-height: 0;
 }
 
+.skills-refresh-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.skills-refresh-status p {
+  margin: 0;
+}
+
 .skills-overview {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

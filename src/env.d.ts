@@ -4,6 +4,7 @@ import type {
   ProjectPreviewResult,
   ProjectScanResult,
   ScanResult,
+  SkillsSnapshotResult,
 } from "./shared/skills-service.js";
 import type {
   BatchExecutionResult,
@@ -31,6 +32,8 @@ declare global {
   interface Window {
     skillsManager?: {
       scan: () => Promise<ScanResult>;
+      loadCachedSnapshot: () => Promise<SkillsSnapshotResult | null>;
+      refreshSnapshot: () => Promise<SkillsSnapshotResult>;
       updateSkillUserTags: (skillId: string, tags: string[]) => Promise<void>;
       pickProjectDirectory: () => Promise<string | undefined>;
       selectProject: (projectPath: string) => Promise<ProjectRecord>;

@@ -558,6 +558,12 @@ async function createMainWindow(): Promise<void> {
 function registerAllIpcHandlers(): void {
   // ============ Skills Manager IPC（保持不变） ============
   ipcMain.handle("skills-manager:scan", async () => getSkillsService().scanEnvironment());
+  ipcMain.handle("skills-manager:load-cached-snapshot", async () =>
+    getSkillsService().loadCachedSnapshot(),
+  );
+  ipcMain.handle("skills-manager:refresh-snapshot", async () =>
+    getSkillsService().refreshSnapshot(),
+  );
   ipcMain.handle(
     "skills-manager:update-skill-user-tags",
     async (_event, skillId: string, tags: string[]) =>

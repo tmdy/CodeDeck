@@ -4,6 +4,7 @@ import type {
   ProjectPreviewResult,
   ProjectScanResult,
   ScanResult,
+  SkillsSnapshotResult,
 } from "../../shared/skills-service.js";
 import type {
   BatchExecutionResult,
@@ -43,6 +44,12 @@ const INITIAL_FILTERS: SkillsViewFilters = {
   includeReadonlyOnly: false,
 };
 
+let lastSkillsSnapshot: SkillsSnapshotResult | null = null;
+
+export function resetSkillsPanelSnapshotCacheForTests() {
+  lastSkillsSnapshot = null;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
     return `${bytes} B`;
@@ -73,8 +80,8 @@ function uniqueHosts(hosts: SkillHost[]): SkillHost[] {
 }
 
 export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
-  const [scan, setScan] = useState<ScanResult | null>(null);
-  const [projectScan, setProjectScan] = useState<ProjectScanResult | null>(null);
+  const [scan, setScan] = useState<ScanResult | null>(lastSkillsSnapshot?.scan ?? null);
+  const [projectScan, setProjectScan] = useState<ProjectScanResult | null>(lastSkillsSnapshot?.projectScan ?? null);
   const [filters, setFilters] = useState<SkillsViewFilters>(INITIAL_FILTERS);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [detailSkillId, setDetailSkillId] = useState<string>("");
@@ -82,6 +89,8 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
   const [previewState, setPreviewState] = useState<PreviewState>(null);
   const [lastExecution, setLastExecution] = useState<BatchExecutionResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [snapshotSource, setSnapshotSource] = useState<SkillsSnapshotResult["source"] | null>(lastSkillsSnapshot?.source ?? null);
 
   const viewState = useMemo(() => {
     if (!scan) {
@@ -107,7 +116,11 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
   );
 
   useEffect(() => {
-    void reloadAll();
+    if (lastSkillsSnapshot) {
+      applySnapshot(lastSkillsSnapshot, { preserveExecution: true });
+      return;
+    }
+    void loadInitialSnapshot();
   }, []);
 
   useEffect(() => {
@@ -124,29 +137,53 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
     setTagDraft(detailRow.record.userTags.join(", "));
   }, [detailRow?.skillId]);
 
+  function applySnapshot(snapshot: SkillsSnapshotResult, options: { preserveExecution?: boolean } = {}) {
+    lastSkillsSnapshot = snapshot;
+    setScan(snapshot.scan);
+    setProjectScan(snapshot.projectScan);
+    setSnapshotSource(snapshot.source);
+    setSelectedSkillIds([]);
+    setPreviewState(null);
+    if (!options.preserveExecution) {
+      setLastExecution(null);
+    }
+  }
+
+  async function loadInitialSnapshot() {
+    if (!window.skillsManager) {
+      onError("当前环境未注入 Skills API，请通过 Electron 运行。");
+      return;
+    }
+
+    setRefreshing(true);
+    try {
+      const cached = await window.skillsManager.loadCachedSnapshot();
+      if (cached) {
+        applySnapshot(cached);
+      }
+      const fresh = await window.skillsManager.refreshSnapshot();
+      applySnapshot(fresh);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "扫描 Skills 失败。");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   async function reloadAll(options: { preserveExecution?: boolean } = {}) {
     if (!window.skillsManager) {
       onError("当前环境未注入 Skills API，请通过 Electron 运行。");
       return;
     }
 
-    setBusy(true);
+    setRefreshing(true);
     try {
-      const [nextScan, nextProjectScan] = await Promise.all([
-        window.skillsManager.scan(),
-        window.skillsManager.scanProject(),
-      ]);
-      setScan(nextScan);
-      setProjectScan(nextProjectScan);
-      setSelectedSkillIds([]);
-      setPreviewState(null);
-      if (!options.preserveExecution) {
-        setLastExecution(null);
-      }
+      const fresh = await window.skillsManager.refreshSnapshot();
+      applySnapshot(fresh, options);
     } catch (error) {
       onError(error instanceof Error ? error.message : "扫描 Skills 失败。");
     } finally {
-      setBusy(false);
+      setRefreshing(false);
     }
   }
 
@@ -370,6 +407,20 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
 
   return (
     <section className="skills-layout">
+      <div className="skills-refresh-status glass-card">
+        <div>
+          <p className="eyebrow">扫描状态</p>
+          <p className="muted">
+            上次扫描：{new Date(scan.scannedAt).toLocaleString()}
+          </p>
+        </div>
+        <span className="project-pill">
+          {refreshing
+            ? snapshotSource === "cache" ? "缓存数据，后台刷新中" : "正在扫描"
+            : snapshotSource === "cache" ? "缓存数据" : "已刷新"}
+        </span>
+      </div>
+
       <div className="skills-overview">
         {viewState.overview.map((item) => (
           <article key={item.host} className="glass-card skills-overview-card">
