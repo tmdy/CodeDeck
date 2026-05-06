@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent } from "react";
+import { observeElementRect, useVirtualizer } from "@tanstack/react-virtual";
+import type { Rect, Virtualizer } from "@tanstack/react-virtual";
 import type {
   PreviewResult,
   ProjectPreviewResult,
@@ -15,6 +18,7 @@ import type {
 import { formatSkillLocationLabel } from "../../shared/skill-location.js";
 import {
   buildSkillsViewState,
+  type SkillsRowView,
   type SkillsViewFilters,
 } from "../../shared/skills-ui-state.js";
 
@@ -43,6 +47,23 @@ const INITIAL_FILTERS: SkillsViewFilters = {
   onlyTagged: false,
   includeReadonlyOnly: false,
 };
+
+const SKILL_ROW_ESTIMATED_SIZE = 132;
+const SKILLS_LIST_FALLBACK_RECT: Rect = {
+  width: 800,
+  height: 720,
+};
+
+function observeSkillsListRect(
+  instance: Virtualizer<HTMLDivElement, Element>,
+  callback: (rect: Rect) => void,
+) {
+  const unsubscribe = observeElementRect(instance, (rect) => {
+    callback(rect.height > 0 ? rect : SKILLS_LIST_FALLBACK_RECT);
+  });
+  callback(SKILLS_LIST_FALLBACK_RECT);
+  return unsubscribe;
+}
 
 let lastSkillsSnapshot: SkillsSnapshotResult | null = null;
 
@@ -79,6 +100,71 @@ function uniqueHosts(hosts: SkillHost[]): SkillHost[] {
   return [...new Set(hosts)];
 }
 
+interface SkillListRowProps {
+  item: SkillsRowView;
+  active: boolean;
+  selected: boolean;
+  onSelect: (skillId: string) => void;
+  onToggleSelected: (skillId: string) => void;
+}
+
+const SkillListRow = memo(function SkillListRow({
+  item,
+  active,
+  selected,
+  onSelect,
+  onToggleSelected,
+}: SkillListRowProps) {
+  const handleSelect = useCallback(() => {
+    onSelect(item.skillId);
+  }, [item.skillId, onSelect]);
+
+  const handleToggleSelected = useCallback(() => {
+    onToggleSelected(item.skillId);
+  }, [item.skillId, onToggleSelected]);
+
+  const handleCheckboxClick = useCallback((event: MouseEvent<HTMLInputElement>) => {
+    event.stopPropagation();
+  }, []);
+
+  return (
+    <button
+      type="button"
+      className={`skills-row ${active ? "active" : ""}`}
+      onClick={handleSelect}
+    >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={handleToggleSelected}
+        onClick={handleCheckboxClick}
+      />
+      <div className="skills-row-main">
+        <div className="skills-row-title">
+          <strong>{item.record.displayName}</strong>
+          <span className={`status-pill ${item.status}`}>{formatSkillStatus(item.status)}</span>
+          <span className={`status-pill project ${item.projectStatusKey}`}>{item.projectStatusLabel}</span>
+        </div>
+        <div className="skills-row-meta">
+          <span>{item.host}</span>
+          <span>{item.record.directoryName}</span>
+          <span>{formatBytes(item.record.sizeTotalBytes)}</span>
+        </div>
+        <p>{item.record.summary || item.record.description || "暂无摘要。"}</p>
+        {item.tags.length > 0 && (
+          <div className="skills-tags">
+            {item.tags.map((tag) => (
+              <span key={`${item.skillId}-${tag}`} className="tag-chip">
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+});
+
 export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
   const [scan, setScan] = useState<ScanResult | null>(lastSkillsSnapshot?.scan ?? null);
   const [projectScan, setProjectScan] = useState<ProjectScanResult | null>(lastSkillsSnapshot?.projectScan ?? null);
@@ -91,6 +177,7 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [snapshotSource, setSnapshotSource] = useState<SkillsSnapshotResult["source"] | null>(lastSkillsSnapshot?.source ?? null);
+  const skillsListRef = useRef<HTMLDivElement | null>(null);
 
   const viewState = useMemo(() => {
     if (!scan) {
@@ -104,9 +191,10 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
   }, [filters, projectScan, scan]);
 
   const visibleRecords = viewState?.visibleRecords ?? [];
+  const selectedSkillIdSet = useMemo(() => new Set(selectedSkillIds), [selectedSkillIds]);
   const selectedRows = useMemo(
-    () => visibleRecords.filter((item) => selectedSkillIds.includes(item.skillId)),
-    [selectedSkillIds, visibleRecords],
+    () => visibleRecords.filter((item) => selectedSkillIdSet.has(item.skillId)),
+    [selectedSkillIdSet, visibleRecords],
   );
   const selectedHosts = uniqueHosts(selectedRows.map((item) => item.host));
   const selectedProjectHost = selectedHosts.length === 1 ? selectedHosts[0] : null;
@@ -114,6 +202,17 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
     () => visibleRecords.find((item) => item.skillId === detailSkillId) ?? visibleRecords[0] ?? null,
     [detailSkillId, visibleRecords],
   );
+  const rowVirtualizer = useVirtualizer({
+    count: visibleRecords.length,
+    getScrollElement: () => skillsListRef.current,
+    estimateSize: () => SKILL_ROW_ESTIMATED_SIZE,
+    getItemKey: (index) => visibleRecords[index]?.skillId ?? index,
+    overscan: 6,
+    initialRect: SKILLS_LIST_FALLBACK_RECT,
+    observeElementRect: observeSkillsListRect,
+    measureElement: (element) => element.getBoundingClientRect().height || SKILL_ROW_ESTIMATED_SIZE,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
 
   useEffect(() => {
     if (lastSkillsSnapshot) {
@@ -196,13 +295,25 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
     }));
   }
 
-  function toggleSelectedSkill(skillId: string) {
+  const handleSelectSkillDetail = useCallback((skillId: string) => {
+    setDetailSkillId(skillId);
+  }, []);
+
+  const toggleSelectedSkill = useCallback((skillId: string) => {
     setSelectedSkillIds((current) => (
       current.includes(skillId)
         ? current.filter((item) => item !== skillId)
         : [...current, skillId]
     ));
-  }
+  }, []);
+
+  const handleSelectAllVisible = useCallback(() => {
+    setSelectedSkillIds(visibleRecords.map((item) => item.skillId));
+  }, [visibleRecords]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedSkillIds([]);
+  }, []);
 
   async function handleSaveTags() {
     if (!window.skillsManager || !detailRow) {
@@ -557,7 +668,7 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
               <button
                 type="button"
                 className="secondary-button small"
-                onClick={() => setSelectedSkillIds(visibleRecords.map((item) => item.skillId))}
+                onClick={handleSelectAllVisible}
                 disabled={busy || visibleRecords.length === 0}
               >
                 全选当前列表
@@ -565,7 +676,7 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
               <button
                 type="button"
                 className="secondary-button small"
-                onClick={() => setSelectedSkillIds([])}
+                onClick={handleClearSelection}
                 disabled={busy || selectedSkillIds.length === 0}
               >
                 清空选择
@@ -573,45 +684,37 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
             </div>
           </div>
 
-          <div className="skills-list-body">
-            {visibleRecords.map((item) => (
-              <button
-                key={item.skillId}
-                type="button"
-                className={`skills-row ${detailRow?.skillId === item.skillId ? "active" : ""}`}
-                onClick={() => setDetailSkillId(item.skillId)}
+          <div className="skills-list-body" ref={skillsListRef}>
+            {visibleRecords.length > 0 && (
+              <div
+                className="skills-virtual-list"
+                style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
               >
-                <input
-                  type="checkbox"
-                  checked={selectedSkillIds.includes(item.skillId)}
-                  onChange={() => toggleSelectedSkill(item.skillId)}
-                  onClick={(event) => event.stopPropagation()}
-                />
-                <div className="skills-row-main">
-                  <div className="skills-row-title">
-                    <strong>{item.record.displayName}</strong>
-                    <span className={`status-pill ${item.status}`}>{formatSkillStatus(item.status)}</span>
-                    <span className={`status-pill project ${item.projectStatusKey}`}>{item.projectStatusLabel}</span>
-                  </div>
-                  <div className="skills-row-meta">
-                    <span>{item.host}</span>
-                    <span>{item.record.directoryName}</span>
-                    <span>{formatBytes(item.record.sizeTotalBytes)}</span>
-                  </div>
-                  <p>{item.record.summary || item.record.description || "暂无摘要。"}</p>
-                  {item.tags.length > 0 && (
-                    <div className="skills-tags">
-                      {item.tags.map((tag) => (
-                        <span key={`${item.skillId}-${tag}`} className="tag-chip">
-                          {tag}
-                        </span>
-                      ))}
+                {virtualRows.map((virtualRow) => {
+                  const item = visibleRecords[virtualRow.index];
+                  if (!item) {
+                    return null;
+                  }
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      className="skills-virtual-row"
+                      data-index={virtualRow.index}
+                      ref={rowVirtualizer.measureElement}
+                      style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    >
+                      <SkillListRow
+                        item={item}
+                        active={detailRow?.skillId === item.skillId}
+                        selected={selectedSkillIdSet.has(item.skillId)}
+                        onSelect={handleSelectSkillDetail}
+                        onToggleSelected={toggleSelectedSkill}
+                      />
                     </div>
-                  )}
-                </div>
-              </button>
-            ))}
-
+                  );
+                })}
+              </div>
+            )}
             {visibleRecords.length === 0 && (
               <div className="skills-empty-state">
                 <h3>没有匹配结果</h3>

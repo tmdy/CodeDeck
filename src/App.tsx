@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Profile, ProfileKey, GlobalSettings, LaunchMode } from "./shared/profile/types.js";
 import type { LocalState } from "./shared/state/local-state.js";
 import type { CommandPreview } from "./shared/launcher/types.js";
@@ -62,6 +62,17 @@ type ListProfilesResult = {
   state: LocalState;
   siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
 };
+
+const EMPTY_MODEL_OPTIONS: string[] = [];
+
+function useEventCallback<T extends (...args: never[]) => unknown>(callback: T): T {
+  const callbackRef = useRef(callback);
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  return useCallback(((...args: Parameters<T>) => callbackRef.current(...args)) as T, []);
+}
 
 function emptyBalanceSessionDraft(): BalanceSessionDraftState {
   return {
@@ -140,6 +151,7 @@ function App() {
   const [historyPreview, setHistoryPreview] = useState<CommandPreview>(emptyPreview());
   const latestHistoryRequestRef = useRef<ListSessionsRequest | null>(null);
   const historyRequestSeqRef = useRef(0);
+  const previewRequestSeqRef = useRef(0);
 
   // 设置
   const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>("global");
@@ -378,8 +390,11 @@ function App() {
   ]);
 
   async function refreshPreviewForDraft() {
+    const requestSeq = ++previewRequestSeqRef.current;
     if (!window.profileManager || !state) {
-      setPreview(emptyPreview());
+      if (requestSeq === previewRequestSeqRef.current) {
+        setPreview(emptyPreview());
+      }
       return;
     }
 
@@ -398,9 +413,13 @@ function App() {
         undefined,
         draft.launch_mode === "resume_selected" ? profilesSelectedSessionId : undefined,
       )) as CommandPreview;
-      setPreview(nextPreview);
+      if (requestSeq === previewRequestSeqRef.current) {
+        setPreview(nextPreview);
+      }
     } catch {
-      setPreview(emptyPreview());
+      if (requestSeq === previewRequestSeqRef.current) {
+        setPreview(emptyPreview());
+      }
     }
   }
 
@@ -1134,6 +1153,167 @@ function App() {
     return result;
   }, [state?.balance_checks_by_profile]);
 
+  const selectedProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
+  const profileDraft = useMemo(() => ({
+    name: draftName,
+    url: draftUrl,
+    key: draftKey,
+    selectedModelId: draftModel,
+    advancedModelMapping: draftAdvancedModelMapping,
+    permissions: draftPermissions,
+  }), [
+    draftAdvancedModelMapping,
+    draftKey,
+    draftModel,
+    draftName,
+    draftPermissions,
+    draftUrl,
+  ]);
+  const profileRuntime = useMemo(() => ({
+    cwd: draftCwd,
+    command_base: draftCommandBase,
+    settings_file: draftSettingsFile,
+    extra_args: draftArgs,
+    launch_mode: draftMode,
+    exclude_user_settings: draftExcludeUser,
+  }), [
+    draftArgs,
+    draftCommandBase,
+    draftCwd,
+    draftExcludeUser,
+    draftMode,
+    draftSettingsFile,
+  ]);
+  const globalPermissions = useMemo(
+    () => normalizeProfilePermissions(
+      state?.global_settings.permissions ?? defaultProfilePermissions(selectedProvider),
+      selectedProvider,
+    ),
+    [selectedProvider, state?.global_settings.permissions],
+  );
+  const modelOptions = fetchedModelsByProvider[selectedProvider] ?? EMPTY_MODEL_OPTIONS;
+  const modelFetchedAt = lastFetchedAtByProvider[selectedProvider];
+  const handleProfileDraftChange = useCallback((field: string, val: string | boolean) => {
+    switch (field) {
+      case "name": setDraftName(val as string); break;
+      case "url": setDraftUrl(val as string); break;
+      case "key": setDraftKey(val as string); break;
+      case "selectedModelId": setDraftModel(val as string); break;
+    }
+  }, []);
+  const handleBalanceSessionSelectionChange = useCallback((value: string) => {
+    setDraftBalanceSessionSelection(value);
+    if (value === "auto" || value === "new") {
+      setDraftBalanceSession(emptyBalanceSessionDraft());
+      return;
+    }
+    const matched = draftSiteBalanceSessions.find((session) => session.id === value);
+    setDraftBalanceSession(matched ? {
+      label: matched.label,
+      access_token: matched.access_token,
+      user_id: matched.user_id,
+    } : emptyBalanceSessionDraft());
+  }, [draftSiteBalanceSessions]);
+  const handleBalanceSessionDraftChange = useCallback((field: "label" | "access_token" | "user_id", value: string) => {
+    setDraftBalanceSession((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }, []);
+  const handleProfileRuntimeChange = useCallback((field: string, val: string | boolean) => {
+    switch (field) {
+      case "cwd": setDraftCwd(val as string); break;
+      case "command_base": setDraftCommandBase(val as string); break;
+      case "settings_file": setDraftSettingsFile(val as string); break;
+      case "extra_args": setDraftArgs(val as string); break;
+      case "launch_mode": setDraftMode(val as LaunchMode); break;
+      case "exclude_user_settings": setDraftExcludeUser(val as boolean); break;
+    }
+  }, []);
+  const stableSetActiveProfilesTab = useCallback(() => setActiveTab("profiles"), []);
+  const stableSetActiveSkillsTab = useCallback(() => setActiveTab("skills"), []);
+  const stableSetActiveSettingsTab = useCallback(() => setActiveTab("settings"), []);
+  const stableSetGlobalSettingsSubTab = useCallback(() => setSettingsSubTab("global"), []);
+  const stableSetParameterSettingsSubTab = useCallback(() => setSettingsSubTab("parameters"), []);
+  const stableClearErrorMessage = useCallback(() => setErrorMessage(null), []);
+  const stableClearSuccessMessage = useCallback(() => setSuccessMessage(null), []);
+  const stableHandleProviderSwitch = useEventCallback(handleProviderSwitch);
+  const stableHandleSelectProfile = useEventCallback(handleSelectProfile);
+  const stableHandleReorder = useEventCallback(handleReorder);
+  const stableHandleNewProfile = useEventCallback(handleNewProfile);
+  const stableHandleCloneProfile = useEventCallback(handleCloneProfile);
+  const stableHandleDeleteProfile = useEventCallback(handleDeleteProfile);
+  const stableHandleTestConnection = useEventCallback(handleTestConnection);
+  const stableHandleTestBalance = useEventCallback(handleTestBalance);
+  const stableHandleSaveBalanceSession = useEventCallback(handleSaveBalanceSession);
+  const stableHandleDeleteSiteBalanceSession = useEventCallback(handleDeleteSiteBalanceSession);
+  const stableHandleDraftCommit = useEventCallback(handleDraftCommit);
+  const stableHandleRuntimeCommit = useEventCallback(handleRuntimeCommit);
+  const stableHandleFetchSiteModels = useEventCallback(handleFetchSiteModels);
+  const stableHandleOpenBaseUrl = useEventCallback(handleOpenBaseUrl);
+  const stableHandleSaveProfile = useEventCallback(handleSaveProfile);
+  const stableHandlePickWorkingDirectory = useEventCallback(handlePickWorkingDirectory);
+  const stableHandleLoadProfilesSessions = useEventCallback(handleLoadProfilesSessions);
+  const stableHandleLaunch = useEventCallback(handleLaunch);
+  const stableHandleLoadHistorySessions = useEventCallback(handleLoadHistorySessions);
+  const stableHandleHistoryScopeChange = useEventCallback(handleHistoryScopeChange);
+  const stableHandleHistoryRestoreProfileChange = useEventCallback(handleHistoryRestoreProfileChange);
+  const stableHandleHistoryRestoreLaunch = useEventCallback(handleHistoryRestoreLaunch);
+  const stableHandleGlobalSettingsChange = useEventCallback(handleGlobalSettingsChange);
+  const stableHandleChangePassphrase = useEventCallback(handleChangePassphrase);
+  const stableHandleParameterSettingsChange = useEventCallback(handleParameterSettingsChange);
+  const stableSetErrorMessage = useCallback((message: string) => setErrorMessage(message), []);
+  const stableSetSuccessMessage = useCallback((message: string) => setSuccessMessage(message), []);
+  const stableOpenSessionsTab = useCallback(() => {
+    setActiveTab("sessions");
+    void stableHandleLoadHistorySessions();
+  }, [stableHandleLoadHistorySessions]);
+  const stableSaveBalanceSessionAction = useCallback(() => void stableHandleSaveBalanceSession(), [stableHandleSaveBalanceSession]);
+  const stableDeleteSiteBalanceSessionAction = useCallback(() => void stableHandleDeleteSiteBalanceSession(), [stableHandleDeleteSiteBalanceSession]);
+  const stableDraftCommitAction = useCallback(
+    (field: string, value?: string | boolean) => void stableHandleDraftCommit(field, value),
+    [stableHandleDraftCommit],
+  );
+  const stableRuntimeCommitAction = useCallback(
+    (field: string) => void stableHandleRuntimeCommit(field),
+    [stableHandleRuntimeCommit],
+  );
+  const stableFetchModelsAction = useCallback(() => void stableHandleFetchSiteModels(), [stableHandleFetchSiteModels]);
+  const stableOpenBaseUrlAction = useCallback(() => void stableHandleOpenBaseUrl(), [stableHandleOpenBaseUrl]);
+  const stableSaveProfileAction = useCallback(() => void stableHandleSaveProfile(), [stableHandleSaveProfile]);
+  const stableCancelProfileEditAction = useCallback(() => void stableHandleNewProfile(), [stableHandleNewProfile]);
+  const stablePickWorkingDirectoryAction = useCallback(() => void stableHandlePickWorkingDirectory(), [stableHandlePickWorkingDirectory]);
+  const stableRefreshProfilesSessionsAction = useCallback(() => void stableHandleLoadProfilesSessions(), [stableHandleLoadProfilesSessions]);
+  const stableDirectLaunchAction = useCallback(() => void stableHandleLaunch("new"), [stableHandleLaunch]);
+  const stableContinueLaunchAction = useCallback(() => void stableHandleLaunch("continue_last"), [stableHandleLaunch]);
+  const stableResumeLaunchAction = useCallback(
+    () => void stableHandleLaunch("resume_selected", profilesSelectedSessionId),
+    [profilesSelectedSessionId, stableHandleLaunch],
+  );
+  const stableTemporaryReadonlyLaunchAction = useCallback(
+    () => void stableHandleLaunch("new", undefined, "readonly"),
+    [stableHandleLaunch],
+  );
+  const stableTemporaryFullAccessLaunchAction = useCallback(() => {
+    if (window.confirm("确认以临时全权限模式启动？本次启动将跳过权限保护。")) {
+      void stableHandleLaunch("new", undefined, "full_access");
+    }
+  }, [stableHandleLaunch]);
+  const stableRefreshHistorySessionsAction = useCallback(() => void stableHandleLoadHistorySessions(), [stableHandleLoadHistorySessions]);
+  const stableHistoryScopeChangeAction = useCallback(
+    (scope: SessionListScope) => void stableHandleHistoryScopeChange(scope),
+    [stableHandleHistoryScopeChange],
+  );
+  const stableHistoryRestoreProfileChangeAction = useCallback(
+    (profileKey: ProfileKey) => void stableHandleHistoryRestoreProfileChange(profileKey),
+    [stableHandleHistoryRestoreProfileChange],
+  );
+  const stableHistoryRestoreLaunchAction = useCallback(() => void stableHandleHistoryRestoreLaunch(), [stableHandleHistoryRestoreLaunch]);
+  const stableChangePassphraseAction = useCallback(
+    (currentPassword: string, nextPassword: string) => void stableHandleChangePassphrase(currentPassword, nextPassword),
+    [stableHandleChangePassphrase],
+  );
+
   // ---- 解锁界面 ----
   if (showUnlockInput) {
     return (
@@ -1172,31 +1352,28 @@ function App() {
           <button
             type="button"
             className={`tab-btn ${activeTab === "profiles" ? "active" : ""}`}
-            onClick={() => setActiveTab("profiles")}
+            onClick={stableSetActiveProfilesTab}
           >
             Profiles
           </button>
           <button
             type="button"
             className={`tab-btn ${activeTab === "skills" ? "active" : ""}`}
-            onClick={() => setActiveTab("skills")}
+            onClick={stableSetActiveSkillsTab}
           >
             Skills
           </button>
           <button
             type="button"
             className={`tab-btn ${activeTab === "sessions" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("sessions");
-              void handleLoadHistorySessions();
-            }}
+            onClick={stableOpenSessionsTab}
           >
             会话
           </button>
           <button
             type="button"
             className={`tab-btn ${activeTab === "settings" ? "active" : ""}`}
-            onClick={() => setActiveTab("settings")}
+            onClick={stableSetActiveSettingsTab}
           >
             设置
           </button>
@@ -1204,12 +1381,12 @@ function App() {
       </header>
 
       {errorMessage && (
-        <div className="banner error" onClick={() => setErrorMessage(null)}>
+        <div className="banner error" onClick={stableClearErrorMessage}>
           {errorMessage}
         </div>
       )}
       {successMessage && (
-        <div className="banner success" onClick={() => setSuccessMessage(null)}>
+        <div className="banner success" onClick={stableClearSuccessMessage}>
           {successMessage}
         </div>
       )}
@@ -1220,33 +1397,33 @@ function App() {
           <div className="profiles-left">
             <ProviderSwitch
               activeProvider={state?.selected_provider ?? PROVIDER_CLAUDE}
-              onSwitch={handleProviderSwitch}
+              onSwitch={stableHandleProviderSwitch}
               disabled={isBusy}
             />
             <ProfileListPanel
               profiles={profiles}
-              activeProvider={(state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex"}
+              activeProvider={selectedProvider}
               selectedKey={state?.selected_profile_key ?? ""}
               orderedKeys={orderedKeys}
               connectivityStates={connectivityStates}
               balanceEntries={balanceEntries}
-              onSelect={handleSelectProfile}
-              onReorder={handleReorder}
-              onCreate={handleNewProfile}
-              onClone={handleCloneProfile}
-              onDelete={handleDeleteProfile}
+              onSelect={stableHandleSelectProfile}
+              onReorder={stableHandleReorder}
+              onCreate={stableHandleNewProfile}
+              onClone={stableHandleCloneProfile}
+              onDelete={stableHandleDeleteProfile}
               disabled={isBusy}
             />
             <ConnectivityTestButton
               isRunning={connectivityState?.running ?? false}
               success={connectivityState?.success ?? false}
               message={connectivityState?.message ?? ""}
-              onTest={handleTestConnection}
+              onTest={stableHandleTestConnection}
               disabled={isBusy}
             />
             <BalanceTestButton
               state={balanceState}
-              onTest={handleTestBalance}
+              onTest={stableHandleTestBalance}
               disabled={isBusy || !state?.selected_profile_key}
               sessionHint={savedBalanceSessionHint}
             />
@@ -1254,87 +1431,33 @@ function App() {
 
           <div className="profiles-center">
             <ProfileEditForm
-              draft={{
-                name: draftName,
-                url: draftUrl,
-                key: draftKey,
-                selectedModelId: draftModel,
-                advancedModelMapping: draftAdvancedModelMapping,
-                permissions: draftPermissions,
-              }}
-              globalPermissions={normalizeProfilePermissions(
-                state?.global_settings.permissions ?? defaultProfilePermissions((state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex"),
-                (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex",
-              )}
+              draft={profileDraft}
+              globalPermissions={globalPermissions}
               siteBalanceSessions={draftSiteBalanceSessions}
               balanceSessionSelection={draftBalanceSessionSelection}
               balanceSessionDraft={draftBalanceSession}
-              runtime={{
-                cwd: draftCwd,
-                command_base: draftCommandBase,
-                settings_file: draftSettingsFile,
-                extra_args: draftArgs,
-                launch_mode: draftMode,
-                exclude_user_settings: draftExcludeUser,
-              }}
-              provider={(state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex"}
-              modelOptions={fetchedModelsByProvider[(state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex"] ?? []}
-              modelFetchedAt={lastFetchedAtByProvider[(state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex"]}
+              runtime={profileRuntime}
+              provider={selectedProvider}
+              modelOptions={modelOptions}
+              modelFetchedAt={modelFetchedAt}
               modelFetchBusy={modelCatalogBusy}
               modelFetchError={modelCatalogError}
               modelFetchSuccess={modelCatalogSuccess}
-              onChange={(field, val) => {
-                switch (field) {
-                  case "name": setDraftName(val as string); break;
-                  case "url": setDraftUrl(val as string); break;
-                  case "key": setDraftKey(val as string); break;
-                  case "selectedModelId": setDraftModel(val as string); break;
-                }
-              }}
-              onBalanceSessionSelectionChange={(value) => {
-                setDraftBalanceSessionSelection(value);
-                if (value === "auto") {
-                  setDraftBalanceSession(emptyBalanceSessionDraft());
-                  return;
-                }
-                if (value === "new") {
-                  setDraftBalanceSession(emptyBalanceSessionDraft());
-                  return;
-                }
-                const matched = draftSiteBalanceSessions.find((session) => session.id === value);
-                setDraftBalanceSession(matched ? {
-                  label: matched.label,
-                  access_token: matched.access_token,
-                  user_id: matched.user_id,
-                } : emptyBalanceSessionDraft());
-              }}
-              onBalanceSessionDraftChange={(field, value) => {
-                setDraftBalanceSession((current) => ({
-                  ...current,
-                  [field]: value,
-                }));
-              }}
-              onSaveBalanceSession={() => void handleSaveBalanceSession()}
-              onDeleteSiteBalanceSession={() => void handleDeleteSiteBalanceSession()}
+              onChange={handleProfileDraftChange}
+              onBalanceSessionSelectionChange={handleBalanceSessionSelectionChange}
+              onBalanceSessionDraftChange={handleBalanceSessionDraftChange}
+              onSaveBalanceSession={stableSaveBalanceSessionAction}
+              onDeleteSiteBalanceSession={stableDeleteSiteBalanceSessionAction}
               onAdvancedModelMappingChange={setDraftAdvancedModelMapping}
               onPermissionsChange={setDraftPermissions}
-              onDraftCommit={(field, value) => void handleDraftCommit(field, value)}
-              onRuntimeChange={(field, val) => {
-                switch (field) {
-                  case "cwd": setDraftCwd(val as string); break;
-                  case "command_base": setDraftCommandBase(val as string); break;
-                  case "settings_file": setDraftSettingsFile(val as string); break;
-                  case "extra_args": setDraftArgs(val as string); break;
-                  case "launch_mode": setDraftMode(val as LaunchMode); break;
-                  case "exclude_user_settings": setDraftExcludeUser(val as boolean); break;
-                }
-              }}
-              onRuntimeCommit={(field) => void handleRuntimeCommit(field)}
-              onFetchModels={() => void handleFetchSiteModels()}
-              onOpenBaseUrl={() => void handleOpenBaseUrl()}
-              onSave={() => void handleSaveProfile()}
-              onCancel={() => void handleNewProfile()}
-              onPickCwd={() => void handlePickWorkingDirectory()}
+              onDraftCommit={stableDraftCommitAction}
+              onRuntimeChange={handleProfileRuntimeChange}
+              onRuntimeCommit={stableRuntimeCommitAction}
+              onFetchModels={stableFetchModelsAction}
+              onOpenBaseUrl={stableOpenBaseUrlAction}
+              onSave={stableSaveProfileAction}
+              onCancel={stableCancelProfileEditAction}
+              onPickCwd={stablePickWorkingDirectoryAction}
               disabled={isBusy}
             />
           </div>
@@ -1347,16 +1470,12 @@ function App() {
               sessions={profilesSessions}
               selectedSessionId={profilesSelectedSessionId}
               onSelectSession={setProfilesSelectedSessionId}
-              onRefreshSessions={() => void handleLoadProfilesSessions()}
-              onDirectLaunch={() => void handleLaunch("new")}
-              onContinueLaunch={() => void handleLaunch("continue_last")}
-              onResumeLaunch={() => void handleLaunch("resume_selected", profilesSelectedSessionId)}
-              onTemporaryReadonlyLaunch={() => void handleLaunch("new", undefined, "readonly")}
-              onTemporaryFullAccessLaunch={() => {
-                if (window.confirm("确认以临时全权限模式启动？本次启动将跳过权限保护。")) {
-                  void handleLaunch("new", undefined, "full_access");
-                }
-              }}
+              onRefreshSessions={stableRefreshProfilesSessionsAction}
+              onDirectLaunch={stableDirectLaunchAction}
+              onContinueLaunch={stableContinueLaunchAction}
+              onResumeLaunch={stableResumeLaunchAction}
+              onTemporaryReadonlyLaunch={stableTemporaryReadonlyLaunchAction}
+              onTemporaryFullAccessLaunch={stableTemporaryFullAccessLaunchAction}
             />
           </div>
         </div>
@@ -1365,8 +1484,8 @@ function App() {
       {/* ===== SKILLS Tab ===== */}
       {activeTab === "skills" && (
         <SkillsPanel
-          onError={setErrorMessage}
-          onSuccess={setSuccessMessage}
+          onError={stableSetErrorMessage}
+          onSuccess={stableSetSuccessMessage}
         />
       )}
 
@@ -1375,7 +1494,7 @@ function App() {
         <div className="sessions-layout">
           <ProviderSwitch
             activeProvider={activeProvider}
-            onSwitch={handleProviderSwitch}
+            onSwitch={stableHandleProviderSwitch}
             disabled={isBusy}
           />
           <SessionList
@@ -1389,10 +1508,10 @@ function App() {
             restoreDisabled={historyRestoreDisabled}
             preview={historyPreview}
             onSelect={setHistorySelectedSessionId}
-            onRefresh={() => void handleLoadHistorySessions()}
-            onScopeChange={(scope) => void handleHistoryScopeChange(scope)}
-            onSelectRestoreProfile={(profileKey) => void handleHistoryRestoreProfileChange(profileKey)}
-            onRestore={() => void handleHistoryRestoreLaunch()}
+            onRefresh={stableRefreshHistorySessionsAction}
+            onScopeChange={stableHistoryScopeChangeAction}
+            onSelectRestoreProfile={stableHistoryRestoreProfileChangeAction}
+            onRestore={stableHistoryRestoreLaunchAction}
             disabled={isBusy}
           />
         </div>
@@ -1405,14 +1524,14 @@ function App() {
             <button
               type="button"
               className={`tab-btn ${settingsSubTab === "global" ? "active" : ""}`}
-              onClick={() => setSettingsSubTab("global")}
+              onClick={stableSetGlobalSettingsSubTab}
             >
               全局设置
             </button>
             <button
               type="button"
               className={`tab-btn ${settingsSubTab === "parameters" ? "active" : ""}`}
-              onClick={() => setSettingsSubTab("parameters")}
+              onClick={stableSetParameterSettingsSubTab}
             >
               参数设置
             </button>
@@ -1421,8 +1540,8 @@ function App() {
           {settingsSubTab === "global" && (
             <GlobalSettingsPanel
               settings={state?.global_settings ?? {} as GlobalSettings}
-              onChange={handleGlobalSettingsChange}
-              onChangePassphrase={(currentPassword, nextPassword) => void handleChangePassphrase(currentPassword, nextPassword)}
+              onChange={stableHandleGlobalSettingsChange}
+              onChangePassphrase={stableChangePassphraseAction}
               disabled={isBusy}
             />
           )}
@@ -1430,7 +1549,7 @@ function App() {
           {settingsSubTab === "parameters" && (
             <ParameterSettingsPanel
               settings={state?.parameter_settings ?? {} as ParameterSettings}
-              onChange={handleParameterSettingsChange}
+              onChange={stableHandleParameterSettingsChange}
               disabled={isBusy}
             />
           )}

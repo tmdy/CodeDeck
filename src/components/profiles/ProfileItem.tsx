@@ -1,5 +1,7 @@
 // ProfileItem 列表项组件
 
+import { memo } from "react";
+
 interface ProfileItemProps {
   name: string;
   provider: string;
@@ -10,7 +12,7 @@ interface ProfileItemProps {
   onSelect: () => void;
 }
 
-export function ProfileItem({
+export const ProfileItem = memo(function ProfileItem({
   name,
   provider: _provider,
   isSelected,
@@ -37,4 +39,4 @@ export function ProfileItem({
       {connectivity === "pending" && <span className="profile-item-status pending">...</span>}
     </button>
   );
-}
+});

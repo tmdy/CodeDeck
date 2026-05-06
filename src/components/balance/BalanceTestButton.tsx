@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import type { BalanceCheckState } from "../../shared/balance/types.js";
 import {
   balanceStateVariant,
@@ -13,13 +14,13 @@ interface BalanceTestButtonProps {
   disabled?: boolean;
 }
 
-export function BalanceTestButton({
+export const BalanceTestButton = memo(function BalanceTestButton({
   state,
   onTest,
   sessionHint,
   disabled,
 }: BalanceTestButtonProps) {
-  const summary = summarizeBalanceState(state);
+  const summary = useMemo(() => summarizeBalanceState(state), [state]);
 
   return (
     <div className="balance-test">
@@ -54,4 +55,4 @@ export function BalanceTestButton({
       )}
     </div>
   );
-}
+});

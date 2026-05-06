@@ -1,5 +1,7 @@
 // LaunchControls 启动控制面板
 
+import { memo } from "react";
+
 interface LaunchControlsProps {
   onDirectLaunch: () => void;
   onContinueLaunch: () => void;
@@ -11,7 +13,7 @@ interface LaunchControlsProps {
   permissionSummary?: string;
 }
 
-export function LaunchControls({
+export const LaunchControls = memo(function LaunchControls({
   onDirectLaunch,
   onContinueLaunch,
   onResumeLaunch,
@@ -46,4 +48,4 @@ export function LaunchControls({
       </button>
     </div>
   );
-}
+});

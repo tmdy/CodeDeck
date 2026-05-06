@@ -1,5 +1,6 @@
 // ConnectivityTestButton 连接测试按钮
 
+import { memo } from "react";
 import { StatusBadge } from "../common/StatusBadge.jsx";
 
 interface ConnectivityTestButtonProps {
@@ -10,7 +11,7 @@ interface ConnectivityTestButtonProps {
   disabled?: boolean;
 }
 
-export function ConnectivityTestButton({
+export const ConnectivityTestButton = memo(function ConnectivityTestButton({
   isRunning,
   success,
   message,
@@ -30,4 +31,4 @@ export function ConnectivityTestButton({
       )}
     </div>
   );
-}
+});

@@ -1,6 +1,6 @@
 // ProfileEditForm 编辑表单
 
-import { useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import type {
   AdvancedModelMapping,
   LaunchMode,
@@ -63,7 +63,10 @@ interface ProfileEditFormProps {
   disabled?: boolean;
 }
 
-export function ProfileEditForm({
+const noopPermissionsChange = () => {};
+const noopOpenBaseUrl = () => {};
+
+export const ProfileEditForm = memo(function ProfileEditForm({
   draft,
   siteBalanceSessions,
   balanceSessionSelection,
@@ -77,7 +80,7 @@ export function ProfileEditForm({
   modelFetchError,
   modelFetchSuccess,
   onChange,
-  onPermissionsChange = () => {},
+  onPermissionsChange,
   onBalanceSessionSelectionChange,
   onBalanceSessionDraftChange,
   onSaveBalanceSession,
@@ -87,7 +90,7 @@ export function ProfileEditForm({
   onRuntimeChange,
   onRuntimeCommit,
   onFetchModels,
-  onOpenBaseUrl = () => {},
+  onOpenBaseUrl = noopOpenBaseUrl,
   onPickCwd,
   onSave,
   onCancel,
@@ -96,21 +99,31 @@ export function ProfileEditForm({
   const [showApiKey, setShowApiKey] = useState(false);
   const advancedMapping = draft.advancedModelMapping;
   const customPermissions = draft.permissions != null;
-  const displayedPermissions = customPermissions
-    ? normalizeProfilePermissions(draft.permissions ?? undefined, provider)
-    : normalizeProfilePermissions(globalPermissions, provider);
-  const editingExistingBalanceSession = Boolean(
-    balanceSessionSelection
-    && balanceSessionSelection !== "auto"
-    && balanceSessionSelection !== "new",
+  const effectiveOnPermissionsChange = onPermissionsChange ?? noopPermissionsChange;
+  const displayedPermissions = useMemo(
+    () => customPermissions
+      ? normalizeProfilePermissions(draft.permissions ?? undefined, provider)
+      : normalizeProfilePermissions(globalPermissions, provider),
+    [customPermissions, draft.permissions, globalPermissions, provider],
+  );
+  const editingExistingBalanceSession = useMemo(
+    () => Boolean(
+      balanceSessionSelection
+      && balanceSessionSelection !== "auto"
+      && balanceSessionSelection !== "new",
+    ),
+    [balanceSessionSelection],
   );
   const editingBalanceSession = editingExistingBalanceSession || balanceSessionSelection === "new";
-  const modelFetchStatus = [
-    modelFetchedAt ? `最近获取：${modelFetchedAt}` : "",
-    modelFetchSuccess ?? "",
-  ].filter(Boolean).join(" · ");
+  const modelFetchStatus = useMemo(
+    () => [
+      modelFetchedAt ? `最近获取：${modelFetchedAt}` : "",
+      modelFetchSuccess ?? "",
+    ].filter(Boolean).join(" · "),
+    [modelFetchedAt, modelFetchSuccess],
+  );
 
-  function updateAdvancedMapping(changes: Partial<AdvancedModelMapping>) {
+  const updateAdvancedMapping = useCallback((changes: Partial<AdvancedModelMapping>) => {
     onAdvancedModelMappingChange({
       ...advancedMapping,
       ...changes,
@@ -123,7 +136,22 @@ export function ProfileEditForm({
         ...(changes.codex ?? {}),
       },
     });
-  }
+  }, [advancedMapping, onAdvancedModelMappingChange]);
+
+  const handlePermissionsInheritChange = useCallback((inherit: boolean) => {
+    effectiveOnPermissionsChange(
+      inherit
+        ? null
+        : normalizeProfilePermissions(
+          draft.permissions ?? globalPermissions ?? defaultProfilePermissions(provider),
+          provider,
+        ),
+    );
+  }, [draft.permissions, effectiveOnPermissionsChange, globalPermissions, provider]);
+
+  const handlePermissionsChange = useCallback((permissions: ProfilePermissions) => {
+    effectiveOnPermissionsChange(permissions);
+  }, [effectiveOnPermissionsChange]);
 
   return (
     <div className="profile-edit-form">
@@ -292,10 +320,8 @@ export function ProfileEditForm({
         permissions={displayedPermissions}
         inheritedSummary={customPermissions ? "当前 Profile 使用自定义权限" : "当前 Profile 继承全局默认权限"}
         inherit={!customPermissions}
-        onInheritChange={(inherit) => {
-          onPermissionsChange(inherit ? null : normalizeProfilePermissions(draft.permissions ?? globalPermissions ?? defaultProfilePermissions(provider), provider));
-        }}
-        onChange={(permissions) => onPermissionsChange(permissions)}
+        onInheritChange={handlePermissionsInheritChange}
+        onChange={handlePermissionsChange}
         disabled={disabled}
       />
 
@@ -445,4 +471,4 @@ export function ProfileEditForm({
       </div>
     </div>
   );
-}
+});

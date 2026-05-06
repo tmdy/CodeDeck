@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import { GlassCard } from "../common/GlassCard.jsx";
 import type { SessionSummary } from "../../shared/services/session-service.js";
 
@@ -14,14 +15,17 @@ function formatSessionLabel(session: SessionSummary): string {
   return `${preview} · ${session.cwd} · ${new Date(session.updated_at).toLocaleString()}`;
 }
 
-export function SessionPicker({
+export const SessionPicker = memo(function SessionPicker({
   sessions,
   selectedId,
   onSelect,
   onRefresh,
   disabled,
 }: SessionPickerProps) {
-  const selectedSession = sessions.find((session) => session.session_id === selectedId);
+  const selectedSession = useMemo(
+    () => sessions.find((session) => session.session_id === selectedId),
+    [selectedId, sessions],
+  );
   const selectDisabled = disabled || sessions.length === 0;
 
   return (
@@ -68,4 +72,4 @@ export function SessionPicker({
       )}
     </GlassCard>
   );
-}
+});

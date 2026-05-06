@@ -1382,12 +1382,23 @@ button.small {
 }
 
 .skills-list-body {
-  display: grid;
-  gap: 10px;
   min-height: 0;
   height: 100%;
   overflow: auto;
   padding-right: 6px;
+}
+
+.skills-virtual-list {
+  position: relative;
+  width: 100%;
+}
+
+.skills-virtual-row {
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 100%;
+  padding-bottom: 10px;
 }
 
 .skills-row {

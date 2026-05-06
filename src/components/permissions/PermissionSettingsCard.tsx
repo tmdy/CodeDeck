@@ -1,3 +1,4 @@
+import { memo, useCallback, useMemo } from "react";
 import {
   PERMISSION_PRESETS,
   defaultProfilePermissions,
@@ -41,7 +42,7 @@ interface PermissionSettingsCardProps {
   onInheritChange?: (inherit: boolean) => void;
 }
 
-export function PermissionSettingsCard({
+export const PermissionSettingsCard = memo(function PermissionSettingsCard({
   title,
   provider,
   permissions,
@@ -51,25 +52,31 @@ export function PermissionSettingsCard({
   inherit,
   onInheritChange,
 }: PermissionSettingsCardProps) {
-  const normalized = normalizeProfilePermissions(permissions, provider);
+  const normalized = useMemo(
+    () => normalizeProfilePermissions(permissions, provider),
+    [permissions, provider],
+  );
   const controlsDisabled = disabled || inherit === true;
-  const codexConfig = toCodexPermissionConfig(normalized.preset);
-  const providerMapping = provider === "codex"
-    ? `Codex: ${codexConfig.sandboxMode} + ${codexConfig.approvalPolicy}`
-    : `Claude: ${toClaudePermissionMode(normalized.preset)}`;
+  const providerMapping = useMemo(() => {
+    if (provider !== "codex") {
+      return `Claude: ${toClaudePermissionMode(normalized.preset)}`;
+    }
+    const codexConfig = toCodexPermissionConfig(normalized.preset);
+    return `Codex: ${codexConfig.sandboxMode} + ${codexConfig.approvalPolicy}`;
+  }, [normalized.preset, provider]);
 
-  function update(next: Partial<ProfilePermissions>) {
+  const update = useCallback((next: Partial<ProfilePermissions>) => {
     onChange(normalizeProfilePermissions({ ...normalized, ...next }, provider));
-  }
+  }, [normalized, onChange, provider]);
 
-  function updateCommon(field: keyof ProfilePermissions["common"], value: boolean | string[]) {
+  const updateCommon = useCallback((field: keyof ProfilePermissions["common"], value: boolean | string[]) => {
     update({
       common: {
         ...normalized.common,
         [field]: value,
       },
     });
-  }
+  }, [normalized.common, update]);
 
   return (
     <GlassCard title={title} subtitle={inheritedSummary}>
@@ -180,7 +187,7 @@ export function PermissionSettingsCard({
       </label>
     </GlassCard>
   );
-}
+});
 
 export function emptyPermissionsForProvider(provider: ProviderID): ProfilePermissions {
   return defaultProfilePermissions(provider);

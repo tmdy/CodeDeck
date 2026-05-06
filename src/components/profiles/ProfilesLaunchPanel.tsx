@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { LaunchControls } from "../launcher/LaunchControls.jsx";
 import { SessionPicker } from "../launcher/SessionPicker.jsx";
 import { CmdPreview } from "../launcher/CommandPreview.jsx";
@@ -19,7 +20,7 @@ interface ProfilesLaunchPanelProps {
   onTemporaryFullAccessLaunch?: () => void;
 }
 
-export function ProfilesLaunchPanel({
+export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
   preview,
   disabled,
   resumeDisabled,
@@ -55,4 +56,4 @@ export function ProfilesLaunchPanel({
       <CmdPreview preview={preview} />
     </div>
   );
-}
+});

@@ -25,6 +25,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.24",
     "gray-matter": "^4.0.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

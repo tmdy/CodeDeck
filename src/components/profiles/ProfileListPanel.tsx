@@ -1,6 +1,6 @@
 // ProfileListPanel 列表组件 — 含拖拽排序
 
-import { useRef, useState, type DragEvent } from "react";
+import { memo, useMemo, useRef, useState, type DragEvent } from "react";
 import type { ProfileKey, ProviderID } from "../../shared/profile/types.js";
 import type { Profile } from "../../shared/profile/types.js";
 import type { BalanceListEntry } from "../../shared/balance/presentation.js";
@@ -22,7 +22,7 @@ interface ProfileListPanelProps {
   disabled?: boolean;
 }
 
-export function ProfileListPanel({
+export const ProfileListPanel = memo(function ProfileListPanel({
   profiles,
   activeProvider,
   selectedKey,
@@ -64,24 +64,27 @@ export function ProfileListPanel({
     setDragIndex(null);
   }
 
-  const visible: { key: ProfileKey; name: string; provider: string }[] = [];
-  const providerProfiles = profiles.filter((profile) => profile.provider === activeProvider);
-  const orderedSet = new Set(orderedKeys);
-  for (const k of orderedKeys) {
-    const profile = providerProfiles.find((p) => itemKey(p) === k);
-    if (profile) {
-      visible.push({ key: k, name: profile.name, provider: profile.provider });
+  const visible = useMemo(() => {
+    const result: { key: ProfileKey; name: string; provider: string }[] = [];
+    const providerProfiles = profiles.filter((profile) => profile.provider === activeProvider);
+    const orderedSet = new Set(orderedKeys);
+    for (const k of orderedKeys) {
+      const profile = providerProfiles.find((p) => itemKey(p) === k);
+      if (profile) {
+        result.push({ key: k, name: profile.name, provider: profile.provider });
+      }
     }
-  }
-  for (const profile of providerProfiles) {
-    if (!orderedSet.has(itemKey(profile))) {
-      visible.push({
-        key: itemKey(profile),
-        name: profile.name,
-        provider: profile.provider,
-      });
+    for (const profile of providerProfiles) {
+      if (!orderedSet.has(itemKey(profile))) {
+        result.push({
+          key: itemKey(profile),
+          name: profile.name,
+          provider: profile.provider,
+        });
+      }
     }
-  }
+    return result;
+  }, [activeProvider, orderedKeys, profiles]);
 
   return (
     <div className="profile-list-panel glass-card" ref={listRef}>
@@ -125,4 +128,4 @@ export function ProfileListPanel({
       </div>
     </div>
   );
-}
+});
