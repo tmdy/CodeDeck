@@ -823,6 +823,13 @@ ul {
   line-height: 1.45;
 }
 
+.field-title-with-help {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .segmented-control {
   display: flex;
   align-items: center;

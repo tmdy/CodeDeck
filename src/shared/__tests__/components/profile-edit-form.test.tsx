@@ -78,7 +78,7 @@ describe("ProfileEditForm", () => {
     expect(html).not.toContain(">代理<");
   });
 
-  it("should render model configuration before site balance sessions with model help under the field", () => {
+  it("should render model configuration before site balance sessions with model help beside the field title", () => {
     const html = renderToStaticMarkup(
       <ProfileEditForm
         draft={{ name: "", url: "", key: "", selectedModelId: "gpt-5.5", advancedModelMapping: makeAdvancedMapping() }}
@@ -112,14 +112,18 @@ describe("ProfileEditForm", () => {
     const balanceCardIndex = html.indexOf("<h3>站点后台会话</h3>");
     const modelFieldIndex = html.indexOf("当前模型 ID");
     const modelHelpIndex = html.indexOf("当前模型 ID 可选。填写后会按原始 model id 启动 CLI");
+    const inputIndex = html.indexOf("placeholder=\"可选：站点返回什么 model id，这里就填什么 model id\"");
     const fetchButtonIndex = html.indexOf("获取模型列表");
 
     expect(modelCardIndex).toBeGreaterThan(-1);
     expect(balanceCardIndex).toBeGreaterThan(-1);
     expect(modelCardIndex).toBeLessThan(balanceCardIndex);
     expect(modelHelpIndex).toBeGreaterThan(modelFieldIndex);
+    expect(modelHelpIndex).toBeLessThan(inputIndex);
     expect(modelHelpIndex).toBeLessThan(fetchButtonIndex);
     expect(html).toContain("class=\"field-help\"");
+    expect(html).toContain("class=\"field-title-with-help\"");
+    expect(html).not.toContain("除非开启高级别名映射，否则不会自动转换成 default / sonnet / opus / haiku");
     expect(html).toContain("class=\"secondary-button small\">获取模型列表</button>");
   });
 

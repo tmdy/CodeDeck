@@ -182,7 +182,12 @@ export function ProfileEditForm({
 
       <GlassCard title="模型配置">
         <label>
-          当前模型 ID
+          <span className="field-title-with-help">
+            <span>当前模型 ID</span>
+            <span className="field-help">
+              当前模型 ID 可选。填写后会按原始 model id 启动 CLI；留空时不注入模型参数，交给 CLI 默认配置处理。
+            </span>
+          </span>
           <input
             list={`profile-model-options-${provider}`}
             value={draft.selectedModelId}
@@ -202,17 +207,13 @@ export function ProfileEditForm({
               <option key={`${provider}-${item}`} value={item} />
             ))}
           </datalist>
-          <span className="field-help">
-            当前模型 ID 可选。填写后会按原始 model id 启动 CLI；留空时不注入模型参数，交给 CLI 默认配置处理。
-            除非开启高级别名映射，否则不会自动转换成 default / sonnet / opus / haiku。
-          </span>
         </label>
-        <div className="inline-actions">
+        <div className="inline-actions" style={{flexWrap: "nowrap"}}>
           <button type="button" className="secondary-button small" onClick={onFetchModels} disabled={disabled || modelFetchBusy}>
             {modelFetchBusy ? "获取中..." : "获取模型列表"}
           </button>
+          {modelFetchStatus && <span className="muted" style={{whiteSpace: "nowrap"}}>{modelFetchStatus}</span>}
         </div>
-        {modelFetchStatus && <p className="muted">{modelFetchStatus}</p>}
         {modelFetchError && <div className="banner error">{modelFetchError}</div>}
       </GlassCard>
 
