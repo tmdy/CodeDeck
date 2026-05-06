@@ -239,6 +239,7 @@ export class ProfileService {
       name: this.allocateCloneName(targetProv, source.name),
       url: source.url,
       key: source.key,
+      permissions: source.permissions,
       balance_session_id: source.balance_session_id,
     };
     cloned = adapter.normalizeProfile(cloned);

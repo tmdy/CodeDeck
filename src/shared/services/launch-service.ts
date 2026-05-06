@@ -11,6 +11,15 @@ import {
   type Profile,
   type RuntimeSettings,
 } from "../profile/types.js";
+import {
+  requiresFullAccessConfirmation,
+  normalizeProfilePermissions,
+  resolveEffectivePermissions,
+  summarizePermissions,
+  toClaudePermissionMode,
+  toCodexPermissionConfig,
+  type ProfilePermissions,
+} from "../profile/permissions.js";
 import { itemKey } from "../profile/keys-internal.js";
 import { defaultParameterSettings } from "../parameter/types.js";
 import { buildClaudeArgs, buildClaudeCommand } from "../provider/claude/command-builder.js";
@@ -44,6 +53,7 @@ export interface LaunchExecutionPlan {
   sessionId?: string;
   error?: string;
   codexConfig?: CodexConfigWritePlan;
+  permissionSummary?: string;
 }
 
 export interface LaunchServiceOptions {
@@ -58,6 +68,7 @@ interface ProviderLaunchArtifacts {
   env: Record<string, string>;
   requiredEnvKeys: string[];
   codexConfig?: CodexConfigWritePlan;
+  permissionSummary: string;
 }
 
 export class LaunchService {
@@ -113,6 +124,7 @@ export class LaunchService {
       request.runtime_settings,
       request.model_mappings_state,
       request.session_id,
+      request.permission_override,
     );
   }
 
@@ -121,6 +133,7 @@ export class LaunchService {
     runtime: RuntimeSettings,
     _mappingsState?: ModelMappingsState,
     sessionId?: string,
+    permissionOverride?: LaunchRequest["permission_override"],
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
     const normalizedSessionId = (sessionId ?? "").trim();
@@ -155,9 +168,24 @@ export class LaunchService {
       });
     }
 
+    const permissions = resolveEffectivePermissions({
+      provider: profile.provider,
+      globalPermissions: normalizeProfilePermissions(this.profileService.getState().global_settings.permissions, profile.provider),
+      profilePermissions: profile.permissions ? normalizeProfilePermissions(profile.permissions, profile.provider) : undefined,
+      temporaryPreset: permissionOverride,
+    });
+    const permissionSummary = summarizePermissions(profile.provider, permissions);
+    if (requiresFullAccessConfirmation(permissions)) {
+      return this.buildInvalidPlan({
+        ...basePlan,
+        error: "全权限模式需要二次确认后才能保存或启动。",
+        permissionSummary,
+      });
+    }
+
     const artifacts = profile.provider === PROVIDER_CLAUDE
-      ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId)
-      : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId);
+      ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions)
+      : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions);
     const env = this.mergeInjectedEnv(artifacts.env);
 
     return {
@@ -175,6 +203,7 @@ export class LaunchService {
       requiredEnvKeys: artifacts.requiredEnvKeys,
       sessionId: normalizedSessionId || undefined,
       codexConfig: artifacts.codexConfig,
+      permissionSummary: artifacts.permissionSummary,
     };
   }
 
@@ -183,6 +212,7 @@ export class LaunchService {
     runtime: RuntimeSettings,
     sessionId: string,
     selectedModelId: string,
+    permissions: ProfilePermissions,
   ): ProviderLaunchArtifacts {
     const launchMode = runtime.launch_mode === "resume_picker_all"
       ? "resume_picker"
@@ -197,6 +227,7 @@ export class LaunchService {
       settingsFile: runtime.settings_file,
       settingSources: this.getParameterSettings().cli_settings.claude.setting_sources,
       model: selectedModelId || undefined,
+      permissionMode: toClaudePermissionMode(permissions.preset),
     });
     const command = buildClaudeCommand({
       commandBase,
@@ -207,6 +238,7 @@ export class LaunchService {
       settingsFile: runtime.settings_file,
       settingSources: this.getParameterSettings().cli_settings.claude.setting_sources,
       model: selectedModelId || undefined,
+      permissionMode: toClaudePermissionMode(permissions.preset),
     });
 
     const env: Record<string, string> = {
@@ -233,6 +265,7 @@ export class LaunchService {
       command,
       env,
       requiredEnvKeys: ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"],
+      permissionSummary: summarizePermissions(profile.provider, permissions),
     };
   }
 
@@ -241,6 +274,7 @@ export class LaunchService {
     runtime: RuntimeSettings,
     sessionId: string,
     selectedModelId: string,
+    permissions: ProfilePermissions,
   ): ProviderLaunchArtifacts {
     const advancedOverride = profile.advancedModelMapping?.enabled
       ? profile.advancedModelMapping.codex?.commandLineModelOverride?.trim() ?? ""
@@ -291,6 +325,7 @@ export class LaunchService {
           baseUrl: profile.url,
           apiKeyEnv,
           targetModel: selectedModelId,
+          permissions,
         }),
         baseUrl: profile.url,
         providerId,
@@ -298,6 +333,7 @@ export class LaunchService {
         apiKeyEnv,
         targetModel: selectedModelId,
       },
+      permissionSummary: summarizePermissions(profile.provider, permissions),
     };
   }
 
@@ -335,6 +371,7 @@ export class LaunchService {
       env: plan.previewEnv,
       valid: plan.valid,
       error: plan.error,
+      permissionSummary: plan.permissionSummary,
     };
   }
 
@@ -360,6 +397,7 @@ export class LaunchService {
     commandBase: string;
     error: string;
     sessionId?: string;
+    permissionSummary?: string;
   }): LaunchExecutionPlan {
     return {
       valid: false,
@@ -379,6 +417,7 @@ export class LaunchService {
       requiredEnvKeys: [],
       sessionId: options.sessionId,
       error: options.error,
+      permissionSummary: options.permissionSummary,
     };
   }
 
@@ -396,17 +435,36 @@ export class LaunchService {
     baseUrl: string;
     apiKeyEnv: string;
     targetModel: string;
+    permissions: ProfilePermissions;
   }): string {
     const targetModel = options.targetModel.trim();
+    const codexPermissions = toCodexPermissionConfig(options.permissions.preset);
+    const workspaceLines = codexPermissions.sandboxMode === "workspace-write"
+      ? [
+          "[sandbox_workspace_write]",
+          `network_access = ${options.permissions.common.allowNetwork ? "true" : "false"}`,
+          `writable_roots = [${options.permissions.common.additionalWritableRoots.map((item) => JSON.stringify(item)).join(", ")}]`,
+          "",
+        ]
+      : [];
     const topLevelLines = targetModel
       ? [
           `model = ${JSON.stringify(targetModel)}`,
           `model_provider = ${JSON.stringify(options.providerId)}`,
+          `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
+          `approval_policy = ${JSON.stringify(codexPermissions.approvalPolicy)}`,
+          `web_search = ${options.permissions.common.allowNetwork ? "true" : "false"}`,
           "",
         ]
-      : [];
+      : [
+          `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
+          `approval_policy = ${JSON.stringify(codexPermissions.approvalPolicy)}`,
+          `web_search = ${options.permissions.common.allowNetwork ? "true" : "false"}`,
+          "",
+        ];
     return [
       ...topLevelLines,
+      ...workspaceLines,
       `[model_providers.${options.providerId}]`,
       `name = ${JSON.stringify(options.providerName)}`,
       `base_url = ${JSON.stringify(options.baseUrl)}`,

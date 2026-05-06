@@ -38,6 +38,10 @@ export function CmdPreview({ preview }: CommandPreviewProps) {
         <p className="session-meta">{preview.cwd || "(未设置)"}</p>
       </div>
       <div className="command-preview-section">
+        <p className="session-picker-heading">权限</p>
+        <p className="session-meta">{preview.permissionSummary || "(未设置)"}</p>
+      </div>
+      <div className="command-preview-section">
         <p className="session-picker-heading">注入环境变量</p>
         {preview.env.length === 0 ? (
           <p className="muted">无</p>

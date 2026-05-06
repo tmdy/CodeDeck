@@ -12,6 +12,7 @@ import type {
 } from "./shared/services/session-service.js";
 import { itemKey } from "./shared/profile/keys-internal.js";
 import { PROVIDER_CLAUDE, PROVIDER_CODEX, defaultRuntimeSettings } from "./shared/profile/types.js";
+import { defaultProfilePermissions, normalizeProfilePermissions, type PermissionPreset, type ProfilePermissions } from "./shared/profile/permissions.js";
 import {
   listProfilesForProvider,
   resolveHistoryRestoreProfileKey,
@@ -102,6 +103,7 @@ function App() {
   const [draftKey, setDraftKey] = useState("");
   const [draftModel, setDraftModel] = useState("");
   const [draftAdvancedModelMapping, setDraftAdvancedModelMapping] = useState(buildNewProfileDraft(PROVIDER_CLAUDE).advancedModelMapping);
+  const [draftPermissions, setDraftPermissions] = useState<ProfilePermissions | null>(null);
   const [draftBalanceSessionSelection, setDraftBalanceSessionSelection] = useState("auto");
   const [draftBalanceSession, setDraftBalanceSession] = useState<BalanceSessionDraftState>(emptyBalanceSessionDraft());
   const [draftCwd, setDraftCwd] = useState("");
@@ -277,6 +279,7 @@ function App() {
       key: draftKey,
       selectedModelId: draftModel,
       advancedModelMapping: draftAdvancedModelMapping,
+      permissions: draftPermissions,
       balanceSessionSelection: draftBalanceSessionSelection,
       balanceSessionDraft: { ...draftBalanceSession },
       cwd: draftCwd,
@@ -294,6 +297,7 @@ function App() {
     setDraftKey(draft.key);
     setDraftModel(draft.selectedModelId);
     setDraftAdvancedModelMapping(draft.advancedModelMapping);
+    setDraftPermissions(draft.permissions);
     setDraftBalanceSessionSelection(draft.balanceSessionSelection);
     setDraftBalanceSession({ ...draft.balanceSessionDraft });
     setDraftCwd(draft.cwd);
@@ -448,6 +452,7 @@ function App() {
         key: snapshot.key,
         selectedModelId: snapshot.selectedModelId,
         advancedModelMapping: snapshot.advancedModelMapping,
+        permissions: snapshot.permissions ?? undefined,
         balance_session_id: balanceSessionId,
       };
       await window.profileManager.saveProfile(
@@ -638,7 +643,7 @@ function App() {
   }
 
   // ---- 启动操作 ----
-  async function handleLaunch(mode: LaunchMode, sessionId?: string) {
+  async function handleLaunch(mode: LaunchMode, sessionId?: string, permissionOverride?: PermissionPreset) {
     if (!window.profileManager || !state || !state.selected_profile_key) return;
     if (mode === "resume_selected" && !sessionId) {
       setErrorMessage("请先选择会话");
@@ -686,6 +691,7 @@ function App() {
       provider: launchState.selected_provider,
       runtime_settings: { ...runtime, launch_mode: mode },
       session_id: sessionId,
+      permission_override: permissionOverride,
     };
 
     try {
@@ -1191,7 +1197,12 @@ function App() {
                 key: draftKey,
                 selectedModelId: draftModel,
                 advancedModelMapping: draftAdvancedModelMapping,
+                permissions: draftPermissions,
               }}
+              globalPermissions={normalizeProfilePermissions(
+                state?.global_settings.permissions ?? defaultProfilePermissions((state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex"),
+                (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex",
+              )}
               siteBalanceSessions={draftSiteBalanceSessions}
               balanceSessionSelection={draftBalanceSessionSelection}
               balanceSessionDraft={draftBalanceSession}
@@ -1243,6 +1254,7 @@ function App() {
               onSaveBalanceSession={() => void handleSaveBalanceSession()}
               onDeleteSiteBalanceSession={() => void handleDeleteSiteBalanceSession()}
               onAdvancedModelMappingChange={setDraftAdvancedModelMapping}
+              onPermissionsChange={setDraftPermissions}
               onDraftCommit={(field, value) => void handleDraftCommit(field, value)}
               onRuntimeChange={(field, val) => {
                 switch (field) {
@@ -1276,6 +1288,12 @@ function App() {
               onDirectLaunch={() => void handleLaunch("new")}
               onContinueLaunch={() => void handleLaunch("continue_last")}
               onResumeLaunch={() => void handleLaunch("resume_selected", profilesSelectedSessionId)}
+              onTemporaryReadonlyLaunch={() => void handleLaunch("new", undefined, "readonly")}
+              onTemporaryFullAccessLaunch={() => {
+                if (window.confirm("确认以临时全权限模式启动？本次启动将跳过权限保护。")) {
+                  void handleLaunch("new", undefined, "full_access");
+                }
+              }}
             />
           </div>
         </div>

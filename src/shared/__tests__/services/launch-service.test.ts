@@ -63,7 +63,7 @@ describe("LaunchService", () => {
 
     expect(preview.valid).toBe(true);
     expect(preview.cwd).toBe("C:/workspace/current-project");
-    expect(preview.command).toBe('claude --setting-sources "project,local" --model deepseek-v4-pro');
+    expect(preview.command).toBe('claude --setting-sources "project,local" --model deepseek-v4-pro --permission-mode default');
     expect(preview.env).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "ANTHROPIC_BASE_URL", displayValue: "https://api.anthropic.com" }),
@@ -124,7 +124,7 @@ describe("LaunchService", () => {
 
     expect(preview.valid).toBe(true);
     expect(preview.command).toBe(
-      'claude-dev --setting-sources "project,local" --settings "C:/Users/test/My Claude/settings.json" --resume "session-123" --model kimi-k2',
+      'claude-dev --setting-sources "project,local" --settings "C:/Users/test/My Claude/settings.json" --resume "session-123" --model kimi-k2 --permission-mode default',
     );
     expect(preview.command).toBe(plan.command);
     expect(plan.valid).toBe(true);
@@ -278,7 +278,7 @@ describe("LaunchService", () => {
     });
 
     expect(plan.valid).toBe(true);
-    expect(plan.command).toBe('claude --setting-sources "project,local"');
+    expect(plan.command).toBe('claude --setting-sources "project,local" --permission-mode default');
     expect(plan.commandArgs).not.toContain("--model");
     expect(plan.env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
     expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBe("sk-ant");

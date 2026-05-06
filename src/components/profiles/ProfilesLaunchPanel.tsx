@@ -15,6 +15,8 @@ interface ProfilesLaunchPanelProps {
   onDirectLaunch: () => void;
   onContinueLaunch: () => void;
   onResumeLaunch: () => void;
+  onTemporaryReadonlyLaunch?: () => void;
+  onTemporaryFullAccessLaunch?: () => void;
 }
 
 export function ProfilesLaunchPanel({
@@ -28,6 +30,8 @@ export function ProfilesLaunchPanel({
   onDirectLaunch,
   onContinueLaunch,
   onResumeLaunch,
+  onTemporaryReadonlyLaunch,
+  onTemporaryFullAccessLaunch,
 }: ProfilesLaunchPanelProps) {
   return (
     <div className="profiles-launch-panel">
@@ -35,8 +39,11 @@ export function ProfilesLaunchPanel({
         onDirectLaunch={onDirectLaunch}
         onContinueLaunch={onContinueLaunch}
         onResumeLaunch={onResumeLaunch}
+        onTemporaryReadonlyLaunch={onTemporaryReadonlyLaunch}
+        onTemporaryFullAccessLaunch={onTemporaryFullAccessLaunch}
         disabled={disabled}
         resumeDisabled={resumeDisabled}
+        permissionSummary={preview.permissionSummary}
       />
       <SessionPicker
         sessions={sessions}

@@ -5,6 +5,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProfileEditForm } from "../../../components/profiles/ProfileEditForm.jsx";
+import { defaultProfilePermissions } from "../../profile/permissions.js";
 import type { AdvancedModelMapping } from "../../profile/types.js";
 import type { SiteBalanceSession } from "../../balance/site-balance-sessions.js";
 
@@ -75,6 +76,69 @@ describe("ProfileEditForm", () => {
     expect(html).toContain("高级模型别名映射");
     expect(html).not.toContain("Claude Profile 需要当前 Base URL");
     expect(html).not.toContain(">代理<");
+  });
+
+  it("should render permission controls and switch from inherited global permissions to custom profile permissions", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onPermissionsChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping(), permissions: null }}
+          globalPermissions={defaultProfilePermissions("claude")}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="auto"
+          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+          onChange={vi.fn()}
+          onPermissionsChange={onPermissionsChange}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("权限");
+    expect(container.textContent).toContain("继承全局");
+    const permissionSelect = Array.from(container.querySelectorAll("select")).find(
+      (select) => select.textContent?.includes("安全默认"),
+    );
+    expect(permissionSelect?.textContent).toContain("安全默认");
+    expect(container.textContent).toContain("全权限");
+    expect(container.textContent).toContain("转换结果：Claude: default");
+
+    const customButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "自定义",
+    );
+    await act(async () => {
+      customButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onPermissionsChange).toHaveBeenCalledWith(expect.objectContaining({ preset: "safe" }));
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 
   it("should render model fetch success as compact status text instead of a large success banner", () => {

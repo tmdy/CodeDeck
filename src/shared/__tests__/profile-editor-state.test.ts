@@ -52,6 +52,7 @@ function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDr
     extra_args: "--verbose",
     exclude_user_settings: true,
     ...overrides,
+    permissions: overrides.permissions ?? null,
   };
 }
 
@@ -94,6 +95,7 @@ describe("profile-editor-state", () => {
           commandLineModelOverride: "",
         },
       },
+      permissions: null,
       balanceSessionSelection: "sess-a",
       balanceSessionDraft: {
         label: "后台 A",
@@ -117,6 +119,7 @@ describe("profile-editor-state", () => {
     expect(draft.key).toBe("");
     expect(draft.command_base).toBe("codex");
     expect(draft.selectedModelId).toBe("");
+    expect(draft.permissions).toBeNull();
     expect(draft.balanceSessionSelection).toBe("auto");
     expect(draft.exclude_user_settings).toBe(true);
   });

@@ -5,6 +5,12 @@ import {
   normalizeLaunchMode as normalizeLaunchModeValue,
   type LaunchMode,
 } from "./launch-mode.js";
+import {
+  normalizeProfilePermissions,
+  permissionPresetFromLegacyLabel,
+  type CommonPermissionSettings,
+  type ProfilePermissions,
+} from "./permissions.js";
 
 export const PROVIDER_CLAUDE = "claude" as const;
 export const PROVIDER_CODEX = "codex" as const;
@@ -17,6 +23,9 @@ export const KEY_SEPARATOR = "::";
 
 export type ProviderID = typeof PROVIDER_CLAUDE | typeof PROVIDER_CODEX;
 export type ProfileKey = string; // "provider::name"
+export type ProfilePermissionsInput = Partial<Omit<ProfilePermissions, "common">> & {
+  common?: Partial<CommonPermissionSettings>;
+};
 
 export interface ClaudeAdvancedModelMapping {
   defaultTarget?: string;
@@ -43,6 +52,7 @@ export interface Profile {
   key: string;  // API Key / Token
   selectedModelId?: string;
   advancedModelMapping?: AdvancedModelMapping;
+  permissions?: ProfilePermissionsInput;
   balance_session_id?: string;
 }
 export type { LaunchMode } from "./launch-mode.js";
@@ -62,7 +72,8 @@ export interface GlobalSettings {
   disable_telemetry: boolean;
   disable_error_reporting: boolean;
   disable_nonessential_traffic: boolean;
-  permissions_preset: string;
+  permissions?: ProfilePermissionsInput;
+  permissions_preset?: string;
   include_co_authored_by: boolean;
 }
 
@@ -83,6 +94,9 @@ export function normalizeProfile(profile: Profile): Profile {
     key: profile.key.trim(),
     selectedModelId,
     advancedModelMapping: normalizeAdvancedModelMapping(profile.advancedModelMapping),
+    permissions: profile.permissions
+      ? normalizeProfilePermissions(profile.permissions, profile.provider)
+      : undefined,
     balance_session_id: profile.balance_session_id?.trim() || undefined,
   };
 }
@@ -97,6 +111,7 @@ export function extractSyncedProfile(profile: Profile): Profile {
     key: n.key,
     selectedModelId: n.selectedModelId,
     advancedModelMapping: n.advancedModelMapping,
+    permissions: n.permissions,
     balance_session_id: n.balance_session_id,
   };
 }
@@ -137,7 +152,7 @@ export function defaultGlobalSettings(): GlobalSettings {
     disable_telemetry: true,
     disable_error_reporting: true,
     disable_nonessential_traffic: true,
-    permissions_preset: DEFAULT_PERMISSION_PRESET,
+    permissions: normalizeProfilePermissions({ preset: "safe" }, DEFAULT_PROVIDER),
     include_co_authored_by: false,
   };
 }
@@ -179,12 +194,18 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
 
 export function normalizeGlobalSettings(settings: GlobalSettings): GlobalSettings {
   const defaults = defaultGlobalSettings();
+  const preset = settings.permissions?.preset
+    ?? permissionPresetFromLegacyLabel(settings.permissions_preset)
+    ?? normalizeProfilePermissions(defaults.permissions, DEFAULT_PROVIDER).preset;
   return {
     proxy: settings.proxy?.trim() ?? defaults.proxy,
     disable_telemetry: settings.disable_telemetry ?? defaults.disable_telemetry,
     disable_error_reporting: settings.disable_error_reporting ?? defaults.disable_error_reporting,
     disable_nonessential_traffic: settings.disable_nonessential_traffic ?? defaults.disable_nonessential_traffic,
-    permissions_preset: settings.permissions_preset?.trim() || defaults.permissions_preset,
+    permissions: normalizeProfilePermissions({
+      ...settings.permissions,
+      preset,
+    }, DEFAULT_PROVIDER),
     include_co_authored_by: settings.include_co_authored_by ?? defaults.include_co_authored_by,
   };
 }

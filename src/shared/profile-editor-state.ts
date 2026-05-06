@@ -5,6 +5,7 @@ import type {
   LaunchMode,
 } from "./profile/types.js";
 import { defaultRuntimeSettings } from "./profile/types.js";
+import { normalizeProfilePermissions, type ProfilePermissions } from "./profile/permissions.js";
 
 export interface ProfileEditorDraft {
   name: string;
@@ -12,6 +13,7 @@ export interface ProfileEditorDraft {
   key: string;
   selectedModelId: string;
   advancedModelMapping: AdvancedModelMapping;
+  permissions: ProfilePermissions | null;
   balanceSessionSelection: string;
   balanceSessionDraft: {
     label: string;
@@ -43,6 +45,7 @@ export function buildSelectedProfileDraft(
     key: profile.key,
     selectedModelId: profile.selectedModelId ?? baseRuntime.model ?? "",
     advancedModelMapping: cloneAdvancedModelMapping(profile.advancedModelMapping),
+    permissions: profile.permissions ? normalizeProfilePermissions(profile.permissions, provider) : null,
     balanceSessionSelection: profile.balance_session_id ?? "auto",
     balanceSessionDraft: {
       label: balanceSessionDraft?.label ?? "",
@@ -66,6 +69,7 @@ export function buildNewProfileDraft(provider: string): ProfileEditorDraft {
     key: "",
     selectedModelId: "",
     advancedModelMapping: cloneAdvancedModelMapping(undefined),
+    permissions: null,
     balanceSessionSelection: "auto",
     balanceSessionDraft: {
       label: "",
@@ -104,6 +108,7 @@ export function hasProfileDraftChanges(
       current.key ||
       current.selectedModelId ||
       current.advancedModelMapping.enabled ||
+      current.permissions !== null ||
       current.balanceSessionSelection !== "auto" ||
       current.balanceSessionDraft.label ||
       current.balanceSessionDraft.access_token ||
@@ -129,6 +134,7 @@ export function hasProfileDraftChanges(
     current.key !== baseline.key ||
     current.selectedModelId !== baseline.selectedModelId ||
     JSON.stringify(current.advancedModelMapping) !== JSON.stringify(baseline.advancedModelMapping) ||
+    JSON.stringify(current.permissions) !== JSON.stringify(baseline.permissions) ||
     current.balanceSessionSelection !== baseline.balanceSessionSelection ||
     JSON.stringify(current.balanceSessionDraft) !== JSON.stringify(baseline.balanceSessionDraft) ||
     current.cwd !== baseline.cwd ||

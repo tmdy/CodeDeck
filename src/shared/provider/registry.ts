@@ -28,6 +28,7 @@ export interface ProviderCommandOptions {
   model?: string;
   settingSources?: string;
   wireApi?: string;
+  permissionMode?: string;
 }
 
 function createClaudeAdapter(): ProviderAdapter {
@@ -43,6 +44,7 @@ function createClaudeAdapter(): ProviderAdapter {
         settingsFile: opts.settingsFile,
         settingSources: opts.settingSources,
         model: opts.model,
+        permissionMode: opts.permissionMode,
       });
     },
     normalizeProfile(profile: Profile): Profile {

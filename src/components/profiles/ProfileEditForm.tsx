@@ -5,8 +5,10 @@ import type {
   LaunchMode,
   ProviderID,
 } from "../../shared/profile/types.js";
+import { defaultProfilePermissions, normalizeProfilePermissions, type ProfilePermissions } from "../../shared/profile/permissions.js";
 import type { SiteBalanceSession } from "../../shared/balance/site-balance-sessions.js";
 import { GlassCard } from "../common/GlassCard.jsx";
+import { PermissionSettingsCard } from "../permissions/PermissionSettingsCard.jsx";
 
 interface ProfileEditFormProps {
   draft: {
@@ -15,7 +17,9 @@ interface ProfileEditFormProps {
     key: string;
     selectedModelId: string;
     advancedModelMapping: AdvancedModelMapping;
+    permissions?: ProfilePermissions | null;
   };
+  globalPermissions?: ProfilePermissions;
   siteBalanceSessions: SiteBalanceSession[];
   balanceSessionSelection: string;
   balanceSessionDraft: {
@@ -38,6 +42,7 @@ interface ProfileEditFormProps {
   modelFetchError?: string | null;
   modelFetchSuccess?: string | null;
   onChange: (field: string, value: string | boolean) => void;
+  onPermissionsChange?: (permissions: ProfilePermissions | null) => void;
   onBalanceSessionSelectionChange: (value: string) => void;
   onBalanceSessionDraftChange: (
     field: "label" | "access_token" | "user_id",
@@ -64,12 +69,14 @@ export function ProfileEditForm({
   balanceSessionDraft,
   runtime,
   provider,
+  globalPermissions,
   modelOptions,
   modelFetchedAt,
   modelFetchBusy,
   modelFetchError,
   modelFetchSuccess,
   onChange,
+  onPermissionsChange = () => {},
   onBalanceSessionSelectionChange,
   onBalanceSessionDraftChange,
   onSaveBalanceSession,
@@ -86,6 +93,10 @@ export function ProfileEditForm({
   disabled,
 }: ProfileEditFormProps) {
   const advancedMapping = draft.advancedModelMapping;
+  const customPermissions = draft.permissions != null;
+  const displayedPermissions = customPermissions
+    ? normalizeProfilePermissions(draft.permissions ?? undefined, provider)
+    : normalizeProfilePermissions(globalPermissions, provider);
   const editingExistingBalanceSession = Boolean(
     balanceSessionSelection
     && balanceSessionSelection !== "auto"
@@ -283,6 +294,19 @@ export function ProfileEditForm({
         {modelFetchStatus && <p className="muted">{modelFetchStatus}</p>}
         {modelFetchError && <div className="banner error">{modelFetchError}</div>}
       </GlassCard>
+
+      <PermissionSettingsCard
+        title="权限"
+        provider={provider}
+        permissions={displayedPermissions}
+        inheritedSummary={customPermissions ? "当前 Profile 使用自定义权限" : "当前 Profile 继承全局默认权限"}
+        inherit={!customPermissions}
+        onInheritChange={(inherit) => {
+          onPermissionsChange(inherit ? null : normalizeProfilePermissions(draft.permissions ?? globalPermissions ?? defaultProfilePermissions(provider), provider));
+        }}
+        onChange={(permissions) => onPermissionsChange(permissions)}
+        disabled={disabled}
+      />
 
       <GlassCard title="当前配置专属运行时设置">
         <p className="muted">以下字段仅作用于当前配置。代理请在“全局设置”中维护。</p>

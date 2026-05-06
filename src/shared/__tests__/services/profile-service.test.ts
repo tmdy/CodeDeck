@@ -105,6 +105,37 @@ describe("ProfileService", () => {
       expect(service.getProfiles()[0]).toEqual(normalizeProfile(makeProfiles()[0]));
     });
 
+    it("should persist profile permissions with the encrypted synced profile data", async () => {
+      const savedConfigs: unknown[] = [];
+      const localService = new ProfileService([], new MemoryStateAccessor(), {
+        async saveConfig(config) {
+          savedConfigs.push(config);
+        },
+      });
+      const draft: Profile = {
+        provider: "claude",
+        name: "Locked",
+        url: "https://api.anthropic.com",
+        key: "sk-ant",
+        permissions: {
+          preset: "strict_whitelist",
+          common: {
+            allowNetwork: false,
+            denyEnvFiles: true,
+            denyGitPush: true,
+            denyDangerousDelete: true,
+            additionalWritableRoots: ["C:/shared"],
+          },
+        },
+      };
+
+      const saved = await localService.saveProfile("", draft, makeRuntime());
+
+      expect(saved.permissions?.preset).toBe("strict_whitelist");
+      expect(JSON.stringify(savedConfigs[0])).toContain("strict_whitelist");
+      expect(JSON.stringify(savedConfigs[0])).toContain("C:/shared");
+    });
+
     it("should reject duplicate name", async () => {
       const draft: Profile = {
         provider: "claude",
@@ -283,6 +314,32 @@ describe("ProfileService", () => {
       const cloned = await localService.cloneProfileToProvider(itemKey(profile), "codex");
 
       expect(cloned.balance_session_id).toBe("sess-a");
+    });
+
+    it("should copy profile permissions when cloning", async () => {
+      const profile: Profile = {
+        provider: "claude",
+        name: "Secure",
+        url: "https://api.example.com",
+        key: "sk-key",
+        permissions: {
+          preset: "readonly",
+          common: {
+            allowNetwork: false,
+            denyEnvFiles: true,
+            denyGitPush: true,
+            denyDangerousDelete: true,
+            additionalWritableRoots: ["C:/shared"],
+          },
+        },
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor());
+
+      const cloned = await localService.cloneProfileToProvider(itemKey(profile), "codex");
+
+      expect(cloned.permissions?.preset).toBe("readonly");
+      expect(cloned.permissions?.common?.allowNetwork).toBe(false);
+      expect(cloned.permissions?.common?.additionalWritableRoots).toEqual(["C:/shared"]);
     });
   });
 

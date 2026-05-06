@@ -13,6 +13,7 @@ export interface ClaudeCommandOptions {
   settingsFile?: string;
   settingSources?: string;
   model?: string;
+  permissionMode?: string;
 }
 
 function normalizeSessionId(value: string): string {
@@ -51,6 +52,11 @@ export function buildClaudeArgs(options: ClaudeCommandOptions): string[] {
   const model = options.model?.trim() ?? "";
   if (model) {
     parts.push("--model", model);
+  }
+
+  const permissionMode = options.permissionMode?.trim() ?? "";
+  if (permissionMode) {
+    parts.push("--permission-mode", permissionMode);
   }
 
   parts.push(...parseCliArgs(options.extraArgs));

@@ -14,6 +14,7 @@ describe("ProfilesLaunchPanel", () => {
             { name: "CODEX_SITE_API_KEY", present: true, displayValue: "[已设置]", sensitive: true },
           ],
           valid: true,
+          permissionSummary: "Codex: workspace-write + on-request",
         }}
         disabled={false}
         resumeDisabled={false}
@@ -32,6 +33,8 @@ describe("ProfilesLaunchPanel", () => {
         onDirectLaunch={vi.fn()}
         onContinueLaunch={vi.fn()}
         onResumeLaunch={vi.fn()}
+        onTemporaryReadonlyLaunch={vi.fn()}
+        onTemporaryFullAccessLaunch={vi.fn()}
       />,
     );
 
@@ -41,6 +44,10 @@ describe("ProfilesLaunchPanel", () => {
     expect(html).toContain("C:/repo");
     expect(html).toContain("CODEX_SITE_API_KEY");
     expect(html).toContain("[已设置]");
+    expect(html).toContain("将以以下权限启动");
+    expect(html).toContain("Codex: workspace-write + on-request");
+    expect(html).toContain("临时只读");
+    expect(html).toContain("临时全权限");
     expect(html).not.toContain("模型映射");
   });
 });

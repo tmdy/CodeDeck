@@ -4,19 +4,26 @@ interface LaunchControlsProps {
   onDirectLaunch: () => void;
   onContinueLaunch: () => void;
   onResumeLaunch: () => void;
+  onTemporaryReadonlyLaunch?: () => void;
+  onTemporaryFullAccessLaunch?: () => void;
   disabled?: boolean;
   resumeDisabled?: boolean;
+  permissionSummary?: string;
 }
 
 export function LaunchControls({
   onDirectLaunch,
   onContinueLaunch,
   onResumeLaunch,
+  onTemporaryReadonlyLaunch,
+  onTemporaryFullAccessLaunch,
   disabled,
   resumeDisabled,
+  permissionSummary,
 }: LaunchControlsProps) {
   return (
     <div className="launch-controls">
+      {permissionSummary && <p className="session-meta">将以以下权限启动：{permissionSummary}</p>}
       <button type="button" className="launch-btn primary" onClick={onDirectLaunch} disabled={disabled}>
         直接启动
       </button>
@@ -30,6 +37,12 @@ export function LaunchControls({
         disabled={disabled || resumeDisabled}
       >
         恢复选中
+      </button>
+      <button type="button" className="launch-btn" onClick={onTemporaryReadonlyLaunch} disabled={disabled || !onTemporaryReadonlyLaunch}>
+        临时只读
+      </button>
+      <button type="button" className="launch-btn danger" onClick={onTemporaryFullAccessLaunch} disabled={disabled || !onTemporaryFullAccessLaunch}>
+        临时全权限
       </button>
     </div>
   );
