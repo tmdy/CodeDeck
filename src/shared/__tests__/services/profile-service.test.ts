@@ -369,6 +369,52 @@ describe("ProfileService", () => {
 
       expect(localService.getProfiles()[0].balance_session_id).toBeUndefined();
     });
+
+    it("should auto-name new site balance sessions as sequential accounts", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor());
+
+      const first = await localService.saveSiteBalanceSession("https://new-api.example.com/v1", {
+        label: "",
+        access_token: "token-a",
+        user_id: "1001",
+      });
+      const second = await localService.saveSiteBalanceSession("https://new-api.example.com/v1", {
+        label: "",
+        access_token: "token-b",
+        user_id: "1002",
+      });
+
+      expect(first.label).toBe("账号1");
+      expect(second.label).toBe("账号2");
+    });
+
+    it("should keep an existing session label when updating without a label", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), null, {
+        "https://new-api.example.com": [makeSiteSession("sess-a", "账号1")],
+      });
+
+      const updated = await localService.saveSiteBalanceSession("https://new-api.example.com/v1", {
+        id: "sess-a",
+        label: "",
+        access_token: "token-updated",
+        user_id: "1001",
+      });
+
+      expect(updated.label).toBe("账号1");
+      expect(updated.access_token).toBe("token-updated");
+    });
   });
 
   describe("reorderProfiles", () => {

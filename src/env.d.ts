@@ -56,6 +56,7 @@ declare global {
       checkEncryptedConfig: () => Promise<boolean>;
       unlock: (passphrase: string) => Promise<{ success: boolean }>;
       initializeEncryption: (passphrase: string) => Promise<{ success: boolean }>;
+      changePassphrase: (currentPassphrase: string, nextPassphrase: string) => Promise<{ success: boolean }>;
 
       // Profile CRUD
       listProfiles: () => Promise<{

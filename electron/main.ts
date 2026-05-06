@@ -633,6 +633,28 @@ function registerAllIpcHandlers(): void {
     },
   );
 
+  ipcMain.handle(
+    "profile:change-passphrase",
+    async (_event, currentPassword: string, nextPassword: string) => {
+      if (!encryptedStore || !localStateStore) {
+        await initProfileServices();
+      }
+      if (!currentPassword) {
+        throw new Error("当前密码不能为空");
+      }
+      if (!nextPassword) {
+        throw new Error("新密码不能为空");
+      }
+      if (currentPassword === nextPassword) {
+        throw new Error("新密码不能与当前密码相同");
+      }
+
+      await encryptedStore!.changePassphrase(currentPassword, nextPassword);
+      currentPassphrase = nextPassword;
+      return { success: true };
+    },
+  );
+
   // Profile CRUD
   ipcMain.handle("profile:list", () => {
     const svc = getProfileService();

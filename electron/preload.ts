@@ -70,6 +70,8 @@ const profileApi = {
     ipcRenderer.invoke("profile:unlock", passphrase),
   initializeEncryption: (passphrase: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke("profile:initialize-encryption", passphrase),
+  changePassphrase: (currentPassphrase: string, nextPassphrase: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke("profile:change-passphrase", currentPassphrase, nextPassphrase),
 
   // Profile CRUD
   listProfiles: (): Promise<{ profiles: unknown[]; state: unknown }> =>

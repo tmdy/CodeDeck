@@ -149,7 +149,7 @@ export function normalizeSiteBalanceSessionsByBaseUrl(value: unknown): SiteBalan
       .map((session) => normalizeSiteBalanceSession(session, baseUrl))
       .filter((session): session is SiteBalanceSession => session !== null);
     if (sessions.length > 0) {
-      result[baseUrl] = sessions;
+      result[baseUrl] = withSequentialAccountLabels(sessions);
     }
   }
   return result;
@@ -172,7 +172,7 @@ export function getSiteBalanceSessionsForBaseUrl(
 ): SiteBalanceSession[] {
   const baseUrl = normalizeBalanceBaseUrl(rawUrl);
   const sessions = value[baseUrl] ?? [];
-  return sessions.map((session) => ({ ...session }));
+  return withSequentialAccountLabels(sessions);
 }
 
 export function resolveBalanceAuth(
@@ -180,7 +180,7 @@ export function resolveBalanceAuth(
   sessionsByBaseUrl: SiteBalanceSessionsByBaseUrl,
 ): ResolvedBalanceAuth {
   const baseUrl = normalizeBalanceBaseUrl(profile.url);
-  const sessions = sessionsByBaseUrl[baseUrl] ?? [];
+  const sessions = withSequentialAccountLabels(sessionsByBaseUrl[baseUrl] ?? []);
   const balanceSessionId = profile.balance_session_id?.trim() || "";
 
   if (balanceSessionId) {
@@ -267,4 +267,11 @@ function normalizeSiteBalanceSession(
     user_id: userId,
     updated_at: record.updated_at?.trim() || "",
   };
+}
+
+function withSequentialAccountLabels(sessions: SiteBalanceSession[]): SiteBalanceSession[] {
+  return sessions.map((session, index) => ({
+    ...session,
+    label: `账号${index + 1}`,
+  }));
 }

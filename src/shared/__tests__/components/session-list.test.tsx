@@ -79,4 +79,46 @@ describe("SessionList", () => {
     expect(html).toContain("恢复选中会话");
     expect(html).toContain("disabled");
   });
+
+  it("does not render a mismatched provider session after parent-side filtering", () => {
+    const sessions = [
+      {
+        provider: "claude" as const,
+        session_id: "claude-session",
+        cwd: "C:/repo-a",
+        updated_at: "2026-05-05T07:00:00.000Z",
+        preview: "Claude 历史",
+      },
+      {
+        provider: "codex" as const,
+        session_id: "codex-session",
+        cwd: "C:/repo-b",
+        updated_at: "2026-05-05T08:00:00.000Z",
+        preview: "Body Data Sync",
+      },
+    ].filter((session) => session.provider === "claude");
+
+    const html = renderToStaticMarkup(
+      <SessionList
+        provider="claude"
+        scope="global_recent"
+        sessions={sessions}
+        selectedId="claude-session"
+        restoreProfiles={[]}
+        selectedRestoreProfileKey=""
+        restoreDisabled
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+        onScopeChange={vi.fn()}
+        onSelectRestoreProfile={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("当前 Provider：claude");
+    expect(html).toContain("Claude 历史");
+    expect(html).toContain("<code>claude</code>");
+    expect(html).not.toContain("Body Data Sync");
+    expect(html).not.toContain("<code>codex</code>");
+  });
 });

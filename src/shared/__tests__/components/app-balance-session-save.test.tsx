@@ -121,6 +121,7 @@ function createProfileManagerFixture() {
     checkEncryptedConfig: vi.fn(async () => false),
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
+    changePassphrase: vi.fn(async () => ({ success: true })),
     listProfiles,
     saveProfile,
     deleteProfile: vi.fn(async () => undefined),
@@ -199,28 +200,26 @@ describe("App balance session autosave", () => {
       await Promise.resolve();
     });
 
-    const newSessionButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "新建会话",
+    const balanceSessionSelect = Array.from(container.querySelectorAll("select")).find((select) =>
+      Array.from(select.options).some((option) => option.value === "new" && option.textContent === "新建会话"),
     );
-    expect(newSessionButton).toBeDefined();
+    expect(balanceSessionSelect).toBeInstanceOf(HTMLSelectElement);
 
     await act(async () => {
-      newSessionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      valueSetter?.call(balanceSessionSelect, "new");
+      balanceSessionSelect?.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
     const inputs = Array.from(container.querySelectorAll("input"));
-    const remarkInput = inputs.find((input) => input.placeholder === "例如 主账号 / 运营后台");
     const tokenInput = inputs.find((input) => input.placeholder === "输入后台 Access Token 或 Session");
     const userIdInput = inputs.find((input) => input.placeholder === "输入后台 User ID");
 
-    expect(remarkInput).toBeInstanceOf(HTMLInputElement);
     expect(tokenInput).toBeInstanceOf(HTMLInputElement);
     expect(userIdInput).toBeInstanceOf(HTMLInputElement);
 
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      valueSetter?.call(remarkInput, "后台 A");
-      remarkInput?.dispatchEvent(new Event("input", { bubbles: true }));
       valueSetter?.call(tokenInput, "token-a");
       tokenInput?.dispatchEvent(new Event("input", { bubbles: true }));
       valueSetter?.call(userIdInput, "42");
@@ -239,7 +238,7 @@ describe("App balance session autosave", () => {
     expect(fixture.saveSiteBalanceSession).toHaveBeenCalledWith(
       "https://new-api.example.com/v1",
       {
-        label: "后台 A",
+        label: "",
         access_token: "token-a",
         user_id: "42",
       },

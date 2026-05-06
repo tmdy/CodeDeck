@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Profile, ProfileKey, GlobalSettings, LaunchMode } from "./shared/profile/types.js";
 import type { LocalState } from "./shared/state/local-state.js";
 import type { CommandPreview } from "./shared/launcher/types.js";
@@ -80,6 +80,12 @@ function emptyPreview(): CommandPreview {
   };
 }
 
+function sameSessionRequest(left: ListSessionsRequest | null, right: ListSessionsRequest): boolean {
+  return left?.provider === right.provider
+    && left.scope === right.scope
+    && (left.cwd ?? "") === (right.cwd ?? "");
+}
+
 function App() {
   const isUnlockWindow = window.location.hash.includes("/unlock");
 
@@ -132,6 +138,8 @@ function App() {
   const [historySessions, setHistorySessions] = useState<SessionSummary[]>([]);
   const [historySelectedSessionId, setHistorySelectedSessionId] = useState<string>("");
   const [historyPreview, setHistoryPreview] = useState<CommandPreview>(emptyPreview());
+  const latestHistoryRequestRef = useRef<ListSessionsRequest | null>(null);
+  const historyRequestSeqRef = useRef(0);
 
   // 设置
   const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>("global");
@@ -158,7 +166,11 @@ function App() {
       }),
     [activeProvider, profiles, state?.runtime_by_profile],
   );
-  const selectedHistorySession = historySessions.find((session) => session.session_id === historySelectedSessionId);
+  const visibleHistorySessions = useMemo(
+    () => historySessions.filter((session) => session.provider === activeProvider),
+    [activeProvider, historySessions],
+  );
+  const selectedHistorySession = visibleHistorySessions.find((session) => session.session_id === historySelectedSessionId);
   const selectedHistoryRestoreProfile = historyRestoreProfiles.find((profile) => profile.key === historyRestoreProfileKey);
   const historyRestoreDisabled = !selectedHistorySession
     || !historyRestoreProfileKey
@@ -423,7 +435,10 @@ function App() {
       let balanceSessionId: string | undefined;
 
       if (snapshot.balanceSessionSelection === "new") {
-        const created = await window.profileManager.saveSiteBalanceSession(snapshot.url, snapshot.balanceSessionDraft);
+        const created = await window.profileManager.saveSiteBalanceSession(snapshot.url, {
+          ...snapshot.balanceSessionDraft,
+          label: "",
+        });
         balanceSessionId = created.id;
       } else if (snapshot.balanceSessionSelection !== "auto") {
         const existingSession = siteSessions.find((session) => session.id === snapshot.balanceSessionSelection);
@@ -431,13 +446,13 @@ function App() {
           throw new Error("所绑定的后台会话已被删除，请重新选择");
         }
         if (
-          existingSession.label !== snapshot.balanceSessionDraft.label
-          || existingSession.access_token !== snapshot.balanceSessionDraft.access_token
+          existingSession.access_token !== snapshot.balanceSessionDraft.access_token
           || existingSession.user_id !== snapshot.balanceSessionDraft.user_id
         ) {
           const updated = await window.profileManager.saveSiteBalanceSession(snapshot.url, {
             id: existingSession.id,
             ...snapshot.balanceSessionDraft,
+            label: "",
           });
           balanceSessionId = updated.id;
         } else {
@@ -503,6 +518,14 @@ function App() {
     return saveCurrentProfile({ snapshot, showSuccess: false });
   }
 
+  function clearHistoryState() {
+    historyRequestSeqRef.current += 1;
+    latestHistoryRequestRef.current = null;
+    setHistorySessions([]);
+    setHistorySelectedSessionId("");
+    setHistoryPreview(emptyPreview());
+  }
+
   async function resolveUnsavedProfileChanges(): Promise<boolean> {
     if (!window.profileManager) return false;
     const snapshot = currentDraftSnapshot();
@@ -545,6 +568,9 @@ function App() {
     if (!window.profileManager || !state) return;
     if (!(await resolveUnsavedProfileChanges())) {
       return;
+    }
+    if (activeTab === "sessions") {
+      clearHistoryState();
     }
     await window.profileManager.selectProfile(state.selected_provider, key);
     const data = await refreshAll(true);
@@ -629,6 +655,9 @@ function App() {
     if (!window.profileManager) return;
     if (!(await resolveUnsavedProfileChanges())) {
       return;
+    }
+    if (activeTab === "sessions") {
+      clearHistoryState();
     }
     await window.profileManager.activateProvider(provider);
     const data = await refreshAll(true);
@@ -813,23 +842,33 @@ function App() {
       scope,
       cwd: scope === "project" ? projectCwd : undefined,
     };
+    const requestSeq = ++historyRequestSeqRef.current;
+    latestHistoryRequestRef.current = request;
 
     if (request.scope === "project" && !(request.cwd ?? "").trim()) {
       setHistorySessions([]);
       setHistorySelectedSessionId("");
+      setHistoryPreview(emptyPreview());
       return;
     }
 
     try {
       const result = await window.profileManager.listSessions(request);
-      const nextSessions = result as SessionSummary[];
+      if (requestSeq !== historyRequestSeqRef.current || !sameSessionRequest(latestHistoryRequestRef.current, request)) {
+        return;
+      }
+      const nextSessions = (result as SessionSummary[]).filter((session) => session.provider === provider);
       setHistorySessions(nextSessions);
       setHistorySelectedSessionId((current) => (
         current && !nextSessions.some((session) => session.session_id === current) ? "" : current
       ));
     } catch (err) {
+      if (requestSeq !== historyRequestSeqRef.current || !sameSessionRequest(latestHistoryRequestRef.current, request)) {
+        return;
+      }
       setHistorySessions([]);
       setHistorySelectedSessionId("");
+      setHistoryPreview(emptyPreview());
       setErrorMessage(err instanceof Error ? err.message : "加载会话失败");
     }
   }
@@ -838,6 +877,7 @@ function App() {
     if (!window.profileManager) {
       return;
     }
+    clearHistoryState();
     await window.profileManager.updateSessionsTabState(activeProvider, { scope });
     await handleLoadHistorySessions(state, scope);
   }
@@ -1000,6 +1040,34 @@ function App() {
     }
   }
 
+  async function handleChangePassphrase(currentPassword: string, nextPassword: string) {
+    if (!window.profileManager) return;
+    const current = currentPassword.trim();
+    const next = nextPassword.trim();
+    if (!current) {
+      setErrorMessage("当前密码不能为空");
+      return;
+    }
+    if (!next) {
+      setErrorMessage("新密码不能为空");
+      return;
+    }
+    if (current === next) {
+      setErrorMessage("新密码不能与当前密码相同");
+      return;
+    }
+    setIsBusy(true);
+    setErrorMessage(null);
+    try {
+      await window.profileManager.changePassphrase(current, next);
+      setSuccessMessage("配置密码已修改");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "修改密码失败");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleFetchSiteModels() {
     if (!window.profileManager || !state) return;
     const provider = (state.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
@@ -1072,11 +1140,6 @@ function App() {
       <div className="unlock-screen">
         <div className="unlock-card">
           <h1>Skills Manager</h1>
-          <p className="eyebrow">
-            {hasEncryptedConfig
-              ? "请输入配置密码以解锁 Profile 管理功能"
-              : "首次使用请先设置配置密码，后续打开时将先解锁"}
-          </p>
           <input
             type="password"
             value={passphrase}
@@ -1318,7 +1381,7 @@ function App() {
           <SessionList
             provider={activeProvider}
             scope={historyScope}
-            sessions={historySessions}
+            sessions={visibleHistorySessions}
             selectedId={historySelectedSessionId}
             restoreProfiles={historyRestoreProfiles}
             selectedRestoreProfileKey={historyRestoreProfileKey}
@@ -1359,6 +1422,7 @@ function App() {
             <GlobalSettingsPanel
               settings={state?.global_settings ?? {} as GlobalSettings}
               onChange={handleGlobalSettingsChange}
+              onChangePassphrase={(currentPassword, nextPassword) => void handleChangePassphrase(currentPassword, nextPassword)}
               disabled={isBusy}
             />
           )}

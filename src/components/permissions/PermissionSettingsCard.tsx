@@ -19,12 +19,16 @@ const presetLabels: Record<PermissionPreset, string> = {
 };
 
 const presetDescriptions: Record<PermissionPreset, string> = {
-  readonly: "只允许规划或只读访问。",
-  safe: "允许工作区内编辑，敏感操作需要确认。",
-  auto_edit: "自动接受普通编辑，敏感操作仍受保护。",
-  strict_whitelist: "不询问并限制在安全白名单内。",
-  full_access: "跳过权限保护，需二次确认。",
+  readonly: "只允许规划或只读访问",
+  safe: "允许工作区内编辑，敏感操作需要确认",
+  auto_edit: "自动接受普通编辑，敏感操作仍受保护",
+  strict_whitelist: "不询问并限制在安全白名单内",
+  full_access: "跳过权限保护，需二次确认",
 };
+
+function formatPresetOption(preset: PermissionPreset): string {
+  return `${presetLabels[preset]}（${presetDescriptions[preset]}）`;
+}
 
 interface PermissionSettingsCardProps {
   title: string;
@@ -74,6 +78,7 @@ export function PermissionSettingsCard({
           <button
             type="button"
             className={inherit ? "active" : ""}
+            aria-pressed={inherit === true}
             onClick={() => onInheritChange(true)}
             disabled={disabled}
           >
@@ -82,6 +87,7 @@ export function PermissionSettingsCard({
           <button
             type="button"
             className={!inherit ? "active" : ""}
+            aria-pressed={inherit !== true}
             onClick={() => onInheritChange(false)}
             disabled={disabled}
           >
@@ -105,12 +111,11 @@ export function PermissionSettingsCard({
         >
           {PERMISSION_PRESETS.map((preset) => (
             <option key={preset} value={preset}>
-              {presetLabels[preset]}
+              {formatPresetOption(preset)}
             </option>
           ))}
         </select>
       </label>
-      <p className="muted">{presetDescriptions[normalized.preset]}</p>
       <p className="session-meta">转换结果：{providerMapping}</p>
 
       {normalized.preset === "full_access" && (

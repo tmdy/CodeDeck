@@ -336,9 +336,6 @@ export class ProfileService {
     }
 
     const normalizedDraft = normalizeSiteBalanceSessionDraft(draft);
-    if (!normalizedDraft.label) {
-      throw new Error("备注名不能为空");
-    }
     if (!normalizedDraft.access_token) {
       throw new Error("Access Token 不能为空");
     }
@@ -349,9 +346,15 @@ export class ProfileService {
     const nextSessionsByBaseUrl = this.getSiteBalanceSessionsByBaseUrl();
     const currentSessions = nextSessionsByBaseUrl[baseUrl] ?? [];
     const sessionId = normalizedDraft.id ?? allocateSessionId();
+    const existingSession = normalizedDraft.id
+      ? currentSessions.find((session) => session.id === normalizedDraft.id)
+      : undefined;
+    const label = normalizedDraft.label
+      || existingSession?.label
+      || `账号${currentSessions.length + 1}`;
     const nextSession: SiteBalanceSession = {
       id: sessionId,
-      label: normalizedDraft.label,
+      label,
       base_url: baseUrl,
       access_token: normalizedDraft.access_token,
       user_id: normalizedDraft.user_id,

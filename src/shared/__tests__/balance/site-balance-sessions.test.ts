@@ -44,7 +44,7 @@ describe("site-balance-sessions", () => {
     if (resolved.kind !== "implicit_single_session") {
       throw new Error("expected implicit_single_session");
     }
-    expect(resolved.session.label).toBe("后台 A");
+    expect(resolved.session.label).toBe("账号1");
   });
 
   it("returns ambiguous_multiple_sessions when auto mode meets multiple site sessions", () => {
@@ -93,7 +93,22 @@ describe("site-balance-sessions", () => {
       },
     );
 
-    expect(hint).toBe("后台会话：后台 A");
+    expect(hint).toBe("后台会话：账号1");
+  });
+
+  it("renames legacy custom labels to sequential account labels", () => {
+    const resolved = resolveBalanceAuth(makeProfile({ balance_session_id: "sess-b" }), {
+      "https://new-api.example.com": [
+        makeSession("sess-a", "主账号"),
+        makeSession("sess-b", "运营后台"),
+      ],
+    });
+
+    expect(resolved.kind).toBe("explicit_session");
+    if (resolved.kind !== "explicit_session") {
+      throw new Error("expected explicit_session");
+    }
+    expect(resolved.session.label).toBe("账号2");
   });
 
   it("warns when auto mode meets multiple site sessions", () => {

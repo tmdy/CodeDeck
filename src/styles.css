@@ -233,6 +233,16 @@ body.unlock-route #root {
   background: rgba(23, 64, 109, 0.16);
 }
 
+.secondary-button.danger {
+  background: rgba(168, 49, 49, 0.1);
+  color: #8a2727;
+  border-color: rgba(168, 49, 49, 0.2);
+}
+
+.secondary-button.danger:hover:not(:disabled) {
+  background: rgba(168, 49, 49, 0.16);
+}
+
 .mode-badge {
   display: inline-flex;
   align-items: center;
@@ -804,6 +814,51 @@ ul {
   font-weight: 600;
   color: #1d2733;
   font-size: 0.9rem;
+}
+
+.segmented-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.segmented-control button {
+  background: rgba(23, 64, 109, 0.08);
+  color: #17406d;
+  border: 1px solid rgba(23, 64, 109, 0.16);
+  border-radius: 12px;
+  font-weight: 700;
+}
+
+.segmented-control button:hover:not(:disabled) {
+  background: rgba(23, 64, 109, 0.14);
+  transform: none;
+}
+
+.segmented-control button.active {
+  background: #12365f;
+  color: #f8fbff;
+  border-color: #12365f;
+}
+
+.segmented-control button.active:hover:not(:disabled) {
+  background: #17406d;
+}
+
+.inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.balance-session-actions {
+  justify-content: flex-start;
+}
+
+.balance-session-actions button {
+  width: auto;
 }
 
 .checkbox-label {

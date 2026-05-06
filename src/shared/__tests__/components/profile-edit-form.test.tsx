@@ -122,8 +122,10 @@ describe("ProfileEditForm", () => {
     const permissionSelect = Array.from(container.querySelectorAll("select")).find(
       (select) => select.textContent?.includes("安全默认"),
     );
-    expect(permissionSelect?.textContent).toContain("安全默认");
+    expect(permissionSelect?.textContent).toContain("安全默认（允许工作区内编辑，敏感操作需要确认）");
+    expect(permissionSelect?.textContent).toContain("严格白名单（不询问并限制在安全白名单内）");
     expect(container.textContent).toContain("全权限");
+    expect(container.textContent).not.toContain("不询问并限制在安全白名单内。");
     expect(container.textContent).toContain("转换结果：Claude: default");
 
     const customButton = Array.from(container.querySelectorAll("button")).find(
@@ -516,7 +518,7 @@ describe("ProfileEditForm", () => {
     container.remove();
   });
 
-  it("should render site balance session options and current remark labels", () => {
+  it("should render site balance session options without a manual remark field", () => {
     const html = renderToStaticMarkup(
       <ProfileEditForm
         draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
@@ -530,9 +532,9 @@ describe("ProfileEditForm", () => {
         }}
         provider="claude"
         modelOptions={[]}
-        siteBalanceSessions={[makeSiteSession("sess-a", "后台 A")]}
+        siteBalanceSessions={[makeSiteSession("sess-a", "账号1")]}
         balanceSessionSelection="sess-a"
-        balanceSessionDraft={{ label: "后台 A", access_token: "token-a", user_id: "42" }}
+        balanceSessionDraft={{ label: "账号1", access_token: "token-a", user_id: "42" }}
         onChange={vi.fn()}
         onBalanceSessionSelectionChange={vi.fn()}
         onBalanceSessionDraftChange={vi.fn()}
@@ -549,9 +551,10 @@ describe("ProfileEditForm", () => {
     expect(html).toContain("站点后台会话");
     expect(html).toContain("仅用于管理面板类站点的余额检测");
     expect(html).toContain(">自动<");
-    expect(html).toContain("后台 A");
+    expect(html).toContain("账号1");
     expect(html).toContain("新建会话");
-    expect(html).toContain("备注名");
+    expect(html).not.toContain("备注名");
+    expect(html).not.toContain("自动模式下：当前站点只有 1 套后台会话时会自动复用");
     expect(html).toContain("保存会话");
   });
 
@@ -586,8 +589,66 @@ describe("ProfileEditForm", () => {
     );
 
     expect(html).toContain("当前站点还没有后台会话");
-    expect(html).toContain("点击“新建会话”后填写备注名、Access Token / Session 和 User ID");
+    expect(html).toContain("选择“新建会话”后填写 Access Token / Session 和 User ID");
     expect(html).toContain(">新建会话<");
+    expect(html).not.toContain("<button type=\"button\" class=\"secondary-button\">新建会话</button>");
+  });
+
+  it("should render balance session save and delete actions as small buttons in one row", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          siteBalanceSessions={[makeSiteSession("sess-a", "账号1")]}
+          balanceSessionSelection="sess-a"
+          balanceSessionDraft={{ label: "账号1", access_token: "token-a", user_id: "42" }}
+          onChange={vi.fn()}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onSaveBalanceSession={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const actionRow = container.querySelector(".balance-session-actions");
+    const saveButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "保存会话",
+    );
+    const deleteButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "删除当前会话",
+    );
+
+    expect(actionRow).toBeInstanceOf(HTMLDivElement);
+    expect(saveButton?.parentElement).toBe(actionRow);
+    expect(deleteButton?.parentElement).toBe(actionRow);
+    expect(saveButton?.className).toContain("small");
+    expect(deleteButton?.className).toContain("small");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 
   it("should invoke onSaveBalanceSession when saving a new site session", async () => {

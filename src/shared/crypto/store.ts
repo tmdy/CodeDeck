@@ -88,4 +88,9 @@ export class EncryptedConfigStore {
       }
     }
   }
+
+  async changePassphrase(currentPassphrase: string, nextPassphrase: string): Promise<void> {
+    const config = await this.load(currentPassphrase);
+    await this.save(config, nextPassphrase);
+  }
 }

@@ -64,7 +64,14 @@ describe("EncryptedConfigStore", () => {
     expect(loaded.profiles[0].balance_session_id).toBe("sess-a");
     expect(loaded.profiles[1].name).toBe("OpenAI");
     expect(loaded.profiles[1].provider).toBe("codex");
-    expect(loaded.site_balance_sessions_by_base_url).toEqual(siteSessions);
+    expect(loaded.site_balance_sessions_by_base_url).toEqual({
+      "https://new-api.example.com": [
+        {
+          ...siteSessions["https://new-api.example.com"][0],
+          label: "账号1",
+        },
+      ],
+    });
 
     // 清理
     await fs.rm(dir, { recursive: true, force: true });
@@ -85,6 +92,27 @@ describe("EncryptedConfigStore", () => {
     }, "correct-password");
 
     await expect(store.load("wrong-password")).rejects.toThrow("配置口令不正确");
+
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("should re-encrypt the existing config with a new password", async () => {
+    const dir = await createTempDir();
+    const storePath = path.join(dir, "profiles.encrypted.json");
+    const store = new EncryptedConfigStore(storePath);
+
+    await store.save({
+      profiles: [
+        { provider: "claude", name: "Test", url: "https://example.com", key: "key123" },
+      ],
+      site_balance_sessions_by_base_url: {},
+    }, "old-password");
+
+    await store.changePassphrase("old-password", "new-password");
+
+    await expect(store.load("old-password")).rejects.toThrow("配置口令不正确");
+    const loaded = await store.load("new-password");
+    expect(loaded.profiles[0].name).toBe("Test");
 
     await fs.rm(dir, { recursive: true, force: true });
   });
@@ -191,6 +219,6 @@ describe("encryptProfiles / decryptProfiles", () => {
     const decrypted = decryptProfileConfig(envelope, "password");
 
     expect(decrypted.profiles[0].name).toBe("Relay");
-    expect(decrypted.site_balance_sessions_by_base_url["https://relay.example.com"][0].label).toBe("后台 A");
+    expect(decrypted.site_balance_sessions_by_base_url["https://relay.example.com"][0].label).toBe("账号1");
   });
 });
