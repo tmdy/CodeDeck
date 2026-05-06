@@ -30,6 +30,11 @@ type PreviewState =
 interface SkillsPanelProps {
   onError: (message: string) => void;
   onSuccess: (message: string) => void;
+  statusMessage?: {
+    variant: "success" | "error";
+    text: string;
+    onDismiss: () => void;
+  } | null;
 }
 
 const STATUS_FILTERS: Array<{ key: SkillStatus; label: string }> = [
@@ -165,7 +170,7 @@ const SkillListRow = memo(function SkillListRow({
   );
 });
 
-export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
+export function SkillsPanel({ onError, onSuccess, statusMessage = null }: SkillsPanelProps) {
   const [scan, setScan] = useState<ScanResult | null>(lastSkillsSnapshot?.scan ?? null);
   const [projectScan, setProjectScan] = useState<ProjectScanResult | null>(lastSkillsSnapshot?.projectScan ?? null);
   const [filters, setFilters] = useState<SkillsViewFilters>(INITIAL_FILTERS);
@@ -519,11 +524,21 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
   return (
     <section className="skills-layout">
       <div className="skills-refresh-status glass-card">
-        <div>
-          <p className="eyebrow">扫描状态</p>
-          <p className="muted">
+        <div className="skills-refresh-summary">
+          <span className="skills-refresh-title">扫描状态</span>
+          {statusMessage && (
+            <button
+              type="button"
+              className={`skills-inline-status ${statusMessage.variant}`}
+              onClick={statusMessage.onDismiss}
+              title="点击清除"
+            >
+              {statusMessage.text}
+            </button>
+          )}
+          <span className="muted">
             上次扫描：{new Date(scan.scannedAt).toLocaleString()}
-          </p>
+          </span>
         </div>
         <span className="project-pill">
           {refreshing
@@ -558,9 +573,16 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
         <aside className="skills-filters glass-card">
           <div className="skills-panel-header">
             <h2>筛选</h2>
-            <button type="button" className="secondary-button small" onClick={() => void reloadAll()} disabled={busy}>
-              重新扫描
-            </button>
+            <div className="skills-action-row">
+              {!viewState.project.hasProject && (
+                <button type="button" className="secondary-button small" onClick={handlePickProject} disabled={busy}>
+                  选择项目
+                </button>
+              )}
+              <button type="button" className="secondary-button small" onClick={() => void reloadAll()} disabled={busy}>
+                重新扫描
+              </button>
+            </div>
           </div>
 
           <label className="field-label">
@@ -634,28 +656,28 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
             </select>
           </label>
 
-          <div className="skills-project-box">
-            <div className="skills-panel-header">
-              <h3>项目态</h3>
-              {viewState.project.hasProject && <span className="project-pill">已启用</span>}
+          {viewState.project.hasProject && (
+            <div className="skills-project-box">
+              <div className="skills-panel-header">
+                <h3>项目态</h3>
+                <span className="project-pill">已启用</span>
+              </div>
+              <p className="muted">
+                {viewState.project.currentProjectName} · {viewState.project.currentProjectPath}
+              </p>
+              <div className="skills-action-row">
+                <button type="button" className="secondary-button small" onClick={handlePickProject} disabled={busy}>
+                  选择项目
+                </button>
+                <button type="button" className="secondary-button small" onClick={handleScanProject} disabled={busy}>
+                  扫描项目
+                </button>
+                <button type="button" className="secondary-button small" onClick={handleClearProject} disabled={busy}>
+                  返回全局
+                </button>
+              </div>
             </div>
-            <p className="muted">
-              {viewState.project.hasProject
-                ? `${viewState.project.currentProjectName} · ${viewState.project.currentProjectPath}`
-                : "当前未选择项目，项目技能预览与执行按钮会保持禁用。"}
-            </p>
-            <div className="skills-action-row">
-              <button type="button" className="secondary-button small" onClick={handlePickProject} disabled={busy}>
-                选择项目
-              </button>
-              <button type="button" className="secondary-button small" onClick={handleScanProject} disabled={busy || !viewState.project.hasProject}>
-                扫描项目
-              </button>
-              <button type="button" className="secondary-button small" onClick={handleClearProject} disabled={busy || !viewState.project.hasProject}>
-                返回全局
-              </button>
-            </div>
-          </div>
+          )}
         </aside>
 
         <section className="skills-list glass-card">
@@ -682,6 +704,29 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
                 清空选择
               </button>
             </div>
+          </div>
+
+          <div className="skills-list-toolbar">
+            <div className="skills-action-row">
+              <button type="button" onClick={() => handleEnvironmentPreview("enable")} disabled={busy || selectedSkillIds.length === 0}>
+                启用选中
+              </button>
+              <button type="button" onClick={() => handleEnvironmentPreview("disable")} disabled={busy || selectedSkillIds.length === 0}>
+                停用选中
+              </button>
+              <button
+                type="button"
+                className="launch-btn primary"
+                onClick={handleExecutePreview}
+                disabled={busy || previewState?.kind !== "environment"}
+              >
+                确认执行
+              </button>
+              <button type="button" className="secondary-button" onClick={handleRollback} disabled={busy}>
+                回滚上一次批次
+              </button>
+            </div>
+            <p className="helper-copy">启用/停用会移动 skill 目录；确认执行前会先生成本次预览。</p>
           </div>
 
           <div className="skills-list-body" ref={skillsListRef}>
@@ -796,62 +841,38 @@ export function SkillsPanel({ onError, onSuccess }: SkillsPanelProps) {
             </div>
           )}
 
-          <div className="skills-detail-section">
-            <h3>环境操作</h3>
-            <div className="skills-action-grid">
-              <button type="button" onClick={() => handleEnvironmentPreview("enable")} disabled={busy || selectedSkillIds.length === 0}>
-                预览启用
-              </button>
-              <button type="button" onClick={() => handleEnvironmentPreview("disable")} disabled={busy || selectedSkillIds.length === 0}>
-                预览停用
-              </button>
-              <button
-                type="button"
-                className="launch-btn primary"
-                onClick={handleExecutePreview}
-                disabled={busy || previewState?.kind !== "environment"}
-              >
-                执行环境预览
-              </button>
-              <button type="button" className="secondary-button" onClick={handleRollback} disabled={busy}>
-                回滚上一次批次
-              </button>
+          {viewState.project.hasProject && (
+            <div className="skills-detail-section">
+              <h3>项目操作</h3>
+              <div className="skills-action-grid">
+                <button
+                  type="button"
+                  onClick={() => handleProjectPreview("copy-to-project")}
+                  disabled={busy || selectedSkillIds.length === 0 || !selectedProjectHost}
+                >
+                  预览加入项目
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleProjectPreview("remove-from-project")}
+                  disabled={busy || selectedSkillIds.length === 0 || !selectedProjectHost}
+                >
+                  预览移出项目
+                </button>
+                <button
+                  type="button"
+                  className="launch-btn primary"
+                  onClick={handleExecutePreview}
+                  disabled={busy || previewState?.kind !== "project"}
+                >
+                  执行项目预览
+                </button>
+              </div>
+              {!selectedProjectHost && selectedSkillIds.length > 0 && (
+                <p className="helper-copy">项目批量操作要求当前选择项属于同一宿主。</p>
+              )}
             </div>
-            <p className="helper-copy">
-              环境操作会自动跳过只读项和冲突项；真实移动前必须先生成预览。
-            </p>
-          </div>
-
-          <div className="skills-detail-section">
-            <h3>项目操作</h3>
-            <div className="skills-action-grid">
-              <button
-                type="button"
-                onClick={() => handleProjectPreview("copy-to-project")}
-                disabled={busy || !viewState.project.hasProject || selectedSkillIds.length === 0 || !selectedProjectHost}
-              >
-                预览加入项目
-              </button>
-              <button
-                type="button"
-                onClick={() => handleProjectPreview("remove-from-project")}
-                disabled={busy || !viewState.project.hasProject || selectedSkillIds.length === 0 || !selectedProjectHost}
-              >
-                预览移出项目
-              </button>
-              <button
-                type="button"
-                className="launch-btn primary"
-                onClick={handleExecutePreview}
-                disabled={busy || previewState?.kind !== "project"}
-              >
-                执行项目预览
-              </button>
-            </div>
-            {!selectedProjectHost && selectedSkillIds.length > 0 && (
-              <p className="helper-copy">项目批量操作要求当前选择项属于同一宿主。</p>
-            )}
-          </div>
+          )}
 
           <div className="skills-detail-section">
             <h3>预览与结果</h3>

@@ -1,27 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Profile, ProfileKey, GlobalSettings, LaunchMode } from "./shared/profile/types.js";
+import type { AdvancedModelMapping, Profile, ProfileKey, GlobalSettings, LaunchMode } from "./shared/profile/types.js";
 import type { LocalState } from "./shared/state/local-state.js";
 import type { CommandPreview } from "./shared/launcher/types.js";
-import type { ConnectivityTestState } from "./shared/connectivity/types.js";
 import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
 import type {
   ListSessionsRequest,
-  SessionListScope,
   SessionSummary,
 } from "./shared/services/session-service.js";
 import { itemKey } from "./shared/profile/keys-internal.js";
-import { PROVIDER_CLAUDE, PROVIDER_CODEX, defaultRuntimeSettings } from "./shared/profile/types.js";
+import {
+  PROVIDER_CLAUDE,
+  PROVIDER_CODEX,
+  defaultRuntimeSettings,
+  resolveClaudeModelAliasMode,
+  shouldRecommendClaudeSingleModelCompatibility,
+} from "./shared/profile/types.js";
 import { defaultProfilePermissions, normalizeProfilePermissions, type PermissionPreset, type ProfilePermissions } from "./shared/profile/permissions.js";
 import {
   listProfilesForProvider,
   resolveHistoryRestoreProfileKey,
-  resolveHistoryScope,
 } from "./shared/session-history-state.js";
 import {
   buildNewProfileDraft,
   buildRuntimeSettingsFromDraft,
   buildSelectedProfileDraft,
+  balanceSessionDraftsEqual,
   hasProfileDraftChanges,
   hasOnlyProfileDraftBalanceSessionChange,
   hasOnlyProfileDraftCwdChange,
@@ -30,15 +34,9 @@ import {
 } from "./shared/profile-editor-state.js";
 
 // Components
-import { ProviderSwitch } from "./components/profiles/ProviderSwitch.jsx";
-import { ProfileListPanel } from "./components/profiles/ProfileListPanel.jsx";
-import { ProfileEditForm } from "./components/profiles/ProfileEditForm.jsx";
-import { SessionList } from "./components/launcher/SessionList.jsx";
-import { ConnectivityTestButton } from "./components/connectivity/ConnectivityTestButton.jsx";
-import { BalanceTestButton } from "./components/balance/BalanceTestButton.jsx";
-import { GlobalSettingsPanel } from "./components/settings/GlobalSettingsPanel.jsx";
-import { ParameterSettingsPanel } from "./components/settings/ParameterSettingsPanel.jsx";
-import { ProfilesLaunchPanel } from "./components/profiles/ProfilesLaunchPanel.jsx";
+import { ProfilesPage } from "./components/app/ProfilesPage.jsx";
+import { SessionsPage } from "./components/app/SessionsPage.jsx";
+import { SettingsPage } from "./components/app/SettingsPage.jsx";
 import { SkillsPanel } from "./components/skills/SkillsPanel.jsx";
 import {
   buildBalanceListEntry,
@@ -47,6 +45,7 @@ import {
 import {
   describeBalanceSessionHint,
   getSiteBalanceSessionsForBaseUrl,
+  normalizeBalanceBaseUrl,
   type SiteBalanceSessionsByBaseUrl,
 } from "./shared/balance/site-balance-sessions.js";
 
@@ -61,6 +60,10 @@ type ListProfilesResult = {
   profiles: Profile[];
   state: LocalState;
   siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+};
+type ModelCatalogCacheEntry = {
+  models: string[];
+  fetchedAt: string;
 };
 
 const EMPTY_MODEL_OPTIONS: string[] = [];
@@ -92,10 +95,48 @@ function emptyPreview(): CommandPreview {
   };
 }
 
+function applyClaudeAliasRecommendationForNewDraft(options: {
+  provider: string;
+  editingKey: string;
+  current: AdvancedModelMapping;
+  url: string;
+  selectedModelId: string;
+}): AdvancedModelMapping {
+  if (options.provider !== PROVIDER_CLAUDE || options.editingKey) {
+    return options.current;
+  }
+  const aliasMode = resolveClaudeModelAliasMode(options.current);
+  const hasCustomTargets = Boolean(
+    options.current.claude?.defaultTarget?.trim()
+    || options.current.claude?.opusTarget?.trim()
+    || options.current.claude?.sonnetTarget?.trim()
+    || options.current.claude?.haikuTarget?.trim()
+    || options.current.claude?.subagentTarget?.trim(),
+  );
+  if (aliasMode !== "none" || hasCustomTargets) {
+    return options.current;
+  }
+  if (!shouldRecommendClaudeSingleModelCompatibility(options.url, options.selectedModelId)) {
+    return options.current;
+  }
+  return {
+    ...options.current,
+    enabled: true,
+    claude: {
+      ...options.current.claude,
+      aliasMode: "single_model_compat",
+    },
+    codex: {
+      ...options.current.codex,
+    },
+  };
+}
+
 function sameSessionRequest(left: ListSessionsRequest | null, right: ListSessionsRequest): boolean {
   return left?.provider === right.provider
     && left.scope === right.scope
-    && (left.cwd ?? "") === (right.cwd ?? "");
+    && (left.cwd ?? "") === (right.cwd ?? "")
+    && (left.profile_key ?? "") === (right.profile_key ?? "");
 }
 
 function App() {
@@ -131,16 +172,12 @@ function App() {
   const [draftMode, setDraftMode] = useState<LaunchMode>("new");
   const [draftExcludeUser, setDraftExcludeUser] = useState(true);
   const [editorBaseline, setEditorBaseline] = useState<ProfileEditorDraft | null>(null);
-  const [fetchedModelsByProvider, setFetchedModelsByProvider] = useState<Partial<Record<"claude" | "codex", string[]>>>({});
-  const [lastFetchedAtByProvider, setLastFetchedAtByProvider] = useState<Partial<Record<"claude" | "codex", string>>>({});
+  const [modelCatalogByBaseUrl, setModelCatalogByBaseUrl] = useState<Record<string, ModelCatalogCacheEntry>>({});
   const [modelCatalogBusy, setModelCatalogBusy] = useState(false);
   const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
-  const [modelCatalogSuccess, setModelCatalogSuccess] = useState<string | null>(null);
 
-  // 命令预览 & 连接测试
+  // 命令预览 & 余额检测
   const [preview, setPreview] = useState<CommandPreview>(emptyPreview());
-  const [connectivityState, setConnectivityState] = useState<ConnectivityTestState | null>(null);
-  const [connectivityKey, setConnectivityKey] = useState<ProfileKey>("");
   const [balanceState, setBalanceState] = useState<BalanceCheckState | null>(null);
   const [balanceKey, setBalanceKey] = useState<ProfileKey>("");
 
@@ -161,11 +198,6 @@ function App() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const activeProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
-  const activeProfileRuntime = state?.selected_profile_key
-    ? state.runtime_by_profile[state.selected_profile_key]
-    : undefined;
-  const historyProjectCwd = activeProfileRuntime?.cwd ?? "";
-  const historyScope = resolveHistoryScope(state, activeProvider, historyProjectCwd);
   const historyRestoreProfileKey = resolveHistoryRestoreProfileKey(state, profiles, activeProvider);
   const historyRestoreProfiles = useMemo(
     () =>
@@ -381,7 +413,7 @@ function App() {
       access_token: matched.access_token,
       user_id: matched.user_id,
     };
-    if (JSON.stringify(nextDraft) !== JSON.stringify(draftBalanceSession)) {
+    if (!balanceSessionDraftsEqual(nextDraft, draftBalanceSession)) {
       setDraftBalanceSession(nextDraft);
     }
   }, [
@@ -522,6 +554,14 @@ function App() {
       return false;
     }
     return saveCurrentProfile({ snapshot, showSuccess: false });
+  }
+
+  async function persistCwdOnlyChangeAndRefreshSessions(snapshot = currentDraftSnapshot()): Promise<boolean> {
+    const saved = await persistCwdOnlyChange(snapshot);
+    if (saved && activeTab === "profiles") {
+      await handleLoadProfilesSessions(state, snapshot.cwd);
+    }
+    return saved;
   }
 
   async function persistSelectedModelOnlyChange(snapshot = currentDraftSnapshot()): Promise<boolean> {
@@ -757,18 +797,6 @@ function App() {
     }
   }
 
-  // ---- 连接测试 ----
-  async function handleTestConnection() {
-    if (!window.profileManager || !state?.selected_profile_key) return;
-    const key = state.selected_profile_key;
-    setConnectivityKey(key);
-    try {
-      await window.profileManager.testConnection(key);
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "连接测试失败");
-    }
-  }
-
   async function handleTestBalance() {
     if (!window.profileManager || !state?.selected_profile_key) return;
     if (!(await resolveUnsavedProfileChanges())) {
@@ -786,16 +814,6 @@ function App() {
       setErrorMessage(err instanceof Error ? err.message : "余额检测失败");
     }
   }
-
-  useEffect(() => {
-    if (!window.profileManager) return;
-    const unsub = window.profileManager.onConnectivityProgress((key, st) => {
-      if (key === connectivityKey) {
-        setConnectivityState(st as ConnectivityTestState);
-      }
-    });
-    return unsub;
-  }, [connectivityKey]);
 
   useEffect(() => {
     const selectedKey = state?.selected_profile_key ?? "";
@@ -832,6 +850,7 @@ function App() {
       provider: nextState.selected_provider,
       scope: "project",
       cwd,
+      profile_key: nextState.selected_profile_key,
     };
 
     try {
@@ -848,10 +867,7 @@ function App() {
     }
   }
 
-  async function handleLoadHistorySessions(
-    nextState: LocalState | null = state,
-    scopeOverride?: SessionListScope,
-  ) {
+  async function handleLoadHistorySessions(nextState: LocalState | null = state) {
     if (!window.profileManager || !nextState) {
       setHistorySessions([]);
       setHistorySelectedSessionId("");
@@ -859,24 +875,13 @@ function App() {
     }
 
     const provider = nextState.selected_provider;
-    const projectCwd = nextState.selected_profile_key
-      ? nextState.runtime_by_profile[nextState.selected_profile_key]?.cwd ?? ""
-      : "";
-    const scope = scopeOverride ?? resolveHistoryScope(nextState, provider, projectCwd);
     const request: ListSessionsRequest = {
       provider,
-      scope,
-      cwd: scope === "project" ? projectCwd : undefined,
+      scope: "global_recent",
+      profile_key: nextState.selected_profile_key,
     };
     const requestSeq = ++historyRequestSeqRef.current;
     latestHistoryRequestRef.current = request;
-
-    if (request.scope === "project" && !(request.cwd ?? "").trim()) {
-      setHistorySessions([]);
-      setHistorySelectedSessionId("");
-      setHistoryPreview(emptyPreview());
-      return;
-    }
 
     try {
       const result = await window.profileManager.listSessions(request);
@@ -897,15 +902,6 @@ function App() {
       setHistoryPreview(emptyPreview());
       setErrorMessage(err instanceof Error ? err.message : "加载会话失败");
     }
-  }
-
-  async function handleHistoryScopeChange(scope: SessionListScope) {
-    if (!window.profileManager) {
-      return;
-    }
-    clearHistoryState();
-    await window.profileManager.updateSessionsTabState(activeProvider, { scope });
-    await handleLoadHistorySessions(state, scope);
   }
 
   async function handleHistoryRestoreProfileChange(profileKey: ProfileKey) {
@@ -991,7 +987,7 @@ function App() {
     if (activeTab === "profiles") {
       void handleLoadProfilesSessions();
     }
-  }, [activeTab, state?.selected_provider, state?.selected_profile_key, draftCwd]);
+  }, [activeTab, state?.selected_provider, state?.selected_profile_key]);
 
   useEffect(() => {
     if (activeTab === "sessions") {
@@ -1001,8 +997,6 @@ function App() {
     activeTab,
     state?.selected_provider,
     state?.selected_profile_key,
-    historyProjectCwd,
-    historyScope,
   ]);
 
   useEffect(() => {
@@ -1024,7 +1018,7 @@ function App() {
       if (picked !== undefined) {
         const snapshot = { ...currentDraftSnapshot(), cwd: picked };
         setDraftCwd(picked);
-        await persistCwdOnlyChange(snapshot);
+        await persistCwdOnlyChangeAndRefreshSessions(snapshot);
       }
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "选择工作目录失败");
@@ -1042,7 +1036,7 @@ function App() {
 
   async function handleRuntimeCommit(field: string) {
     if (field === "cwd") {
-      await persistCwdOnlyChange();
+      await persistCwdOnlyChangeAndRefreshSessions();
     }
   }
 
@@ -1096,24 +1090,21 @@ function App() {
 
   async function handleFetchSiteModels() {
     if (!window.profileManager || !state) return;
-    const provider = (state.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
+    const cacheKey = normalizeBalanceBaseUrl(draftUrl);
     setModelCatalogBusy(true);
     setModelCatalogError(null);
-    setModelCatalogSuccess(null);
     try {
       const result = await window.profileManager.fetchSiteModels({
         url: draftUrl,
         key: draftKey,
       });
-      setFetchedModelsByProvider((current) => ({
+      setModelCatalogByBaseUrl((current) => ({
         ...current,
-        [provider]: result.models,
+        [cacheKey]: {
+          models: result.models,
+          fetchedAt: new Date().toLocaleString(),
+        },
       }));
-      setLastFetchedAtByProvider((current) => ({
-        ...current,
-        [provider]: new Date().toLocaleString(),
-      }));
-      setModelCatalogSuccess("已更新当前站点模型列表");
     } catch (err) {
       setModelCatalogError(err instanceof Error ? err.message : "获取远端模型失败");
     } finally {
@@ -1138,18 +1129,6 @@ function App() {
     if (!state) return [];
     return state.profile_order_by_provider[state.selected_provider] ?? [];
   }, [state?.selected_provider, state?.profile_order_by_provider]);
-
-  const connectivityStates = useMemo(() => {
-    const result: Record<ProfileKey, string> = {};
-    if (!state?.connectivity_tests_by_profile) return result;
-    for (const [k, ts] of Object.entries(state.connectivity_tests_by_profile)) {
-      if (ts.running) result[k] = "pending";
-      else if (ts.success) result[k] = "success";
-      else if (ts.message) result[k] = "fail";
-      else result[k] = "";
-    }
-    return result;
-  }, [state?.connectivity_tests_by_profile]);
 
   const balanceEntries = useMemo(() => {
     const result: Record<ProfileKey, ReturnType<typeof buildBalanceListEntry>> = {};
@@ -1198,16 +1177,45 @@ function App() {
     ),
     [selectedProvider, state?.global_settings.permissions],
   );
-  const modelOptions = fetchedModelsByProvider[selectedProvider] ?? EMPTY_MODEL_OPTIONS;
-  const modelFetchedAt = lastFetchedAtByProvider[selectedProvider];
+  const modelCatalogCacheKey = normalizeBalanceBaseUrl(draftUrl);
+  const modelCatalogCacheEntry = modelCatalogCacheKey
+    ? modelCatalogByBaseUrl[modelCatalogCacheKey]
+    : undefined;
+  const modelOptions = modelCatalogCacheEntry?.models ?? EMPTY_MODEL_OPTIONS;
+  const modelFetchedAt = modelCatalogCacheEntry?.fetchedAt;
+  const modelFetchSuccess = modelCatalogCacheEntry
+    ? `已获取${modelCatalogCacheEntry.models.length}个模型`
+    : null;
   const handleProfileDraftChange = useCallback((field: string, val: string | boolean) => {
     switch (field) {
       case "name": setDraftName(val as string); break;
-      case "url": setDraftUrl(val as string); break;
+      case "url": {
+        const nextUrl = val as string;
+        setDraftUrl(nextUrl);
+        setDraftAdvancedModelMapping((current) => applyClaudeAliasRecommendationForNewDraft({
+          provider: selectedProvider,
+          editingKey,
+          current,
+          url: nextUrl,
+          selectedModelId: draftModel,
+        }));
+        break;
+      }
       case "key": setDraftKey(val as string); break;
-      case "selectedModelId": setDraftModel(val as string); break;
+      case "selectedModelId": {
+        const nextModel = val as string;
+        setDraftModel(nextModel);
+        setDraftAdvancedModelMapping((current) => applyClaudeAliasRecommendationForNewDraft({
+          provider: selectedProvider,
+          editingKey,
+          current,
+          url: draftUrl,
+          selectedModelId: nextModel,
+        }));
+        break;
+      }
     }
-  }, []);
+  }, [draftModel, draftUrl, editingKey, selectedProvider]);
   const handleBalanceSessionSelectionChange = useCallback((value: string) => {
     setDraftBalanceSessionSelection(value);
     if (value === "auto" || value === "new") {
@@ -1250,7 +1258,6 @@ function App() {
   const stableHandleNewProfile = useEventCallback(handleNewProfile);
   const stableHandleCloneProfile = useEventCallback(handleCloneProfile);
   const stableHandleDeleteProfile = useEventCallback(handleDeleteProfile);
-  const stableHandleTestConnection = useEventCallback(handleTestConnection);
   const stableHandleTestBalance = useEventCallback(handleTestBalance);
   const stableHandleSaveBalanceSession = useEventCallback(handleSaveBalanceSession);
   const stableHandleDeleteSiteBalanceSession = useEventCallback(handleDeleteSiteBalanceSession);
@@ -1263,7 +1270,6 @@ function App() {
   const stableHandleLoadProfilesSessions = useEventCallback(handleLoadProfilesSessions);
   const stableHandleLaunch = useEventCallback(handleLaunch);
   const stableHandleLoadHistorySessions = useEventCallback(handleLoadHistorySessions);
-  const stableHandleHistoryScopeChange = useEventCallback(handleHistoryScopeChange);
   const stableHandleHistoryRestoreProfileChange = useEventCallback(handleHistoryRestoreProfileChange);
   const stableHandleHistoryRestoreLaunch = useEventCallback(handleHistoryRestoreLaunch);
   const stableHandleGlobalSettingsChange = useEventCallback(handleGlobalSettingsChange);
@@ -1271,6 +1277,11 @@ function App() {
   const stableHandleParameterSettingsChange = useEventCallback(handleParameterSettingsChange);
   const stableSetErrorMessage = useCallback((message: string) => setErrorMessage(message), []);
   const stableSetSuccessMessage = useCallback((message: string) => setSuccessMessage(message), []);
+  const skillsStatusMessage = errorMessage
+    ? { variant: "error" as const, text: errorMessage, onDismiss: stableClearErrorMessage }
+    : successMessage
+      ? { variant: "success" as const, text: successMessage, onDismiss: stableClearSuccessMessage }
+      : null;
   const stableOpenSessionsTab = useCallback(() => {
     setActiveTab("sessions");
     void stableHandleLoadHistorySessions();
@@ -1307,10 +1318,6 @@ function App() {
     }
   }, [stableHandleLaunch]);
   const stableRefreshHistorySessionsAction = useCallback(() => void stableHandleLoadHistorySessions(), [stableHandleLoadHistorySessions]);
-  const stableHistoryScopeChangeAction = useCallback(
-    (scope: SessionListScope) => void stableHandleHistoryScopeChange(scope),
-    [stableHandleHistoryScopeChange],
-  );
   const stableHistoryRestoreProfileChangeAction = useCallback(
     (profileKey: ProfileKey) => void stableHandleHistoryRestoreProfileChange(profileKey),
     [stableHandleHistoryRestoreProfileChange],
@@ -1352,7 +1359,6 @@ function App() {
     <div className="app-shell-v2">
       <header className="hero-v2">
         <div>
-          <p className="eyebrow">Skills Manager V2</p>
           <h1>AI CLI 工具统一管理</h1>
         </div>
         <nav className="tab-bar">
@@ -1387,12 +1393,12 @@ function App() {
         </nav>
       </header>
 
-      {errorMessage && (
+      {errorMessage && activeTab !== "skills" && (
         <div className="banner error" onClick={stableClearErrorMessage}>
           {errorMessage}
         </div>
       )}
-      {successMessage && (
+      {successMessage && activeTab !== "skills" && (
         <div className="banner success" onClick={stableClearSuccessMessage}>
           {successMessage}
         </div>
@@ -1400,92 +1406,76 @@ function App() {
 
       {/* ===== PROFILES Tab ===== */}
       {activeTab === "profiles" && (
-        <div className="profiles-layout">
-          <div className="profiles-left">
-            <ProviderSwitch
-              activeProvider={state?.selected_provider ?? PROVIDER_CLAUDE}
-              onSwitch={stableHandleProviderSwitch}
-              disabled={isBusy}
-            />
-            <ProfileListPanel
-              profiles={profiles}
-              activeProvider={selectedProvider}
-              selectedKey={state?.selected_profile_key ?? ""}
-              orderedKeys={orderedKeys}
-              connectivityStates={connectivityStates}
-              balanceEntries={balanceEntries}
-              onSelect={stableHandleSelectProfile}
-              onReorder={stableHandleReorder}
-              onCreate={stableHandleNewProfile}
-              onClone={stableHandleCloneProfile}
-              onDelete={stableHandleDeleteProfile}
-              disabled={isBusy}
-            />
-            <ConnectivityTestButton
-              isRunning={connectivityState?.running ?? false}
-              success={connectivityState?.success ?? false}
-              message={connectivityState?.message ?? ""}
-              onTest={stableHandleTestConnection}
-              disabled={isBusy}
-            />
-            <BalanceTestButton
-              state={balanceState}
-              onTest={stableHandleTestBalance}
-              disabled={isBusy || !state?.selected_profile_key}
-              sessionHint={savedBalanceSessionHint}
-            />
-          </div>
-
-          <div className="profiles-center">
-            <ProfileEditForm
-              draft={profileDraft}
-              globalPermissions={globalPermissions}
-              siteBalanceSessions={draftSiteBalanceSessions}
-              balanceSessionSelection={draftBalanceSessionSelection}
-              balanceSessionDraft={draftBalanceSession}
-              runtime={profileRuntime}
-              provider={selectedProvider}
-              modelOptions={modelOptions}
-              modelFetchedAt={modelFetchedAt}
-              modelFetchBusy={modelCatalogBusy}
-              modelFetchError={modelCatalogError}
-              modelFetchSuccess={modelCatalogSuccess}
-              onChange={handleProfileDraftChange}
-              onBalanceSessionSelectionChange={handleBalanceSessionSelectionChange}
-              onBalanceSessionDraftChange={handleBalanceSessionDraftChange}
-              onSaveBalanceSession={stableSaveBalanceSessionAction}
-              onDeleteSiteBalanceSession={stableDeleteSiteBalanceSessionAction}
-              onAdvancedModelMappingChange={setDraftAdvancedModelMapping}
-              onPermissionsChange={setDraftPermissions}
-              onDraftCommit={stableDraftCommitAction}
-              onRuntimeChange={handleProfileRuntimeChange}
-              onRuntimeCommit={stableRuntimeCommitAction}
-              onFetchModels={stableFetchModelsAction}
-              onOpenBaseUrl={stableOpenBaseUrlAction}
-              onSave={stableSaveProfileAction}
-              onCancel={stableCancelProfileEditAction}
-              onPickCwd={stablePickWorkingDirectoryAction}
-              disabled={isBusy}
-            />
-          </div>
-
-          <div className="profiles-right">
-            <ProfilesLaunchPanel
-              preview={preview}
-              disabled={isBusy || !state?.selected_profile_key}
-              resumeDisabled={!profilesSelectedSessionId}
-              sessions={profilesSessions}
-              selectedSessionId={profilesSelectedSessionId}
-              onSelectSession={setProfilesSelectedSessionId}
-              onRefreshSessions={stableRefreshProfilesSessionsAction}
-              onDirectLaunch={stableDirectLaunchAction}
-              onContinueLaunch={stableContinueLaunchAction}
-              onResumeLaunch={stableResumeLaunchAction}
-              onTemporaryReadonlyLaunch={stableTemporaryReadonlyLaunchAction}
-              onTemporaryFullAccessLaunch={stableTemporaryFullAccessLaunchAction}
-            />
-          </div>
-        </div>
+        <ProfilesPage
+          providerSwitchProps={{
+            activeProvider: state?.selected_provider ?? PROVIDER_CLAUDE,
+            onSwitch: stableHandleProviderSwitch,
+            disabled: isBusy,
+          }}
+          profileListProps={{
+            profiles,
+            activeProvider: selectedProvider,
+            selectedKey: state?.selected_profile_key ?? "",
+            orderedKeys,
+            balanceEntries,
+            onSelect: stableHandleSelectProfile,
+            onReorder: stableHandleReorder,
+            onCreate: stableHandleNewProfile,
+            onClone: stableHandleCloneProfile,
+            onDelete: stableHandleDeleteProfile,
+            disabled: isBusy,
+          }}
+          balanceTestProps={{
+            state: balanceState,
+            onTest: stableHandleTestBalance,
+            disabled: isBusy || !state?.selected_profile_key,
+            sessionHint: savedBalanceSessionHint,
+          }}
+          profileEditProps={{
+            draft: profileDraft,
+            globalPermissions,
+            siteBalanceSessions: draftSiteBalanceSessions,
+            balanceSessionSelection: draftBalanceSessionSelection,
+            balanceSessionDraft: draftBalanceSession,
+            runtime: profileRuntime,
+            provider: selectedProvider,
+            modelOptions,
+            modelFetchedAt,
+            modelFetchBusy: modelCatalogBusy,
+            modelFetchError: modelCatalogError,
+            modelFetchSuccess,
+            onChange: handleProfileDraftChange,
+            onBalanceSessionSelectionChange: handleBalanceSessionSelectionChange,
+            onBalanceSessionDraftChange: handleBalanceSessionDraftChange,
+            onSaveBalanceSession: stableSaveBalanceSessionAction,
+            onDeleteSiteBalanceSession: stableDeleteSiteBalanceSessionAction,
+            onAdvancedModelMappingChange: setDraftAdvancedModelMapping,
+            onPermissionsChange: setDraftPermissions,
+            onDraftCommit: stableDraftCommitAction,
+            onRuntimeChange: handleProfileRuntimeChange,
+            onRuntimeCommit: stableRuntimeCommitAction,
+            onFetchModels: stableFetchModelsAction,
+            onOpenBaseUrl: stableOpenBaseUrlAction,
+            onSave: stableSaveProfileAction,
+            onCancel: stableCancelProfileEditAction,
+            onPickCwd: stablePickWorkingDirectoryAction,
+            disabled: isBusy,
+          }}
+          launchPanelProps={{
+            preview,
+            disabled: isBusy || !state?.selected_profile_key,
+            resumeDisabled: !profilesSelectedSessionId,
+            sessions: profilesSessions,
+            selectedSessionId: profilesSelectedSessionId,
+            onSelectSession: setProfilesSelectedSessionId,
+            onRefreshSessions: stableRefreshProfilesSessionsAction,
+            onDirectLaunch: stableDirectLaunchAction,
+            onContinueLaunch: stableContinueLaunchAction,
+            onResumeLaunch: stableResumeLaunchAction,
+            onTemporaryReadonlyLaunch: stableTemporaryReadonlyLaunchAction,
+            onTemporaryFullAccessLaunch: stableTemporaryFullAccessLaunchAction,
+          }}
+        />
       )}
 
       {/* ===== SKILLS Tab ===== */}
@@ -1493,74 +1483,54 @@ function App() {
         <SkillsPanel
           onError={stableSetErrorMessage}
           onSuccess={stableSetSuccessMessage}
+          statusMessage={skillsStatusMessage}
         />
       )}
 
       {/* ===== SESSIONS Tab ===== */}
       {activeTab === "sessions" && (
-        <div className="sessions-layout">
-          <ProviderSwitch
-            activeProvider={activeProvider}
-            onSwitch={stableHandleProviderSwitch}
-            disabled={isBusy}
-          />
-          <SessionList
-            provider={activeProvider}
-            scope={historyScope}
-            sessions={visibleHistorySessions}
-            selectedId={historySelectedSessionId}
-            restoreProfiles={historyRestoreProfiles}
-            selectedRestoreProfileKey={historyRestoreProfileKey}
-            restoreHint={historyRestoreHint}
-            restoreDisabled={historyRestoreDisabled}
-            preview={historyPreview}
-            onSelect={setHistorySelectedSessionId}
-            onRefresh={stableRefreshHistorySessionsAction}
-            onScopeChange={stableHistoryScopeChangeAction}
-            onSelectRestoreProfile={stableHistoryRestoreProfileChangeAction}
-            onRestore={stableHistoryRestoreLaunchAction}
-            disabled={isBusy}
-          />
-        </div>
+        <SessionsPage
+          providerSwitchProps={{
+            activeProvider,
+            onSwitch: stableHandleProviderSwitch,
+            disabled: isBusy,
+          }}
+          sessionListProps={{
+            provider: activeProvider,
+            sessions: visibleHistorySessions,
+            selectedId: historySelectedSessionId,
+            restoreProfiles: historyRestoreProfiles,
+            selectedRestoreProfileKey: historyRestoreProfileKey,
+            restoreHint: historyRestoreHint,
+            restoreDisabled: historyRestoreDisabled,
+            preview: historyPreview,
+            onSelect: setHistorySelectedSessionId,
+            onRefresh: stableRefreshHistorySessionsAction,
+            onSelectRestoreProfile: stableHistoryRestoreProfileChangeAction,
+            onRestore: stableHistoryRestoreLaunchAction,
+            disabled: isBusy,
+          }}
+        />
       )}
 
       {/* ===== SETTINGS Tab ===== */}
       {activeTab === "settings" && (
-        <div className="settings-layout">
-          <nav className="settings-sub-tabs">
-            <button
-              type="button"
-              className={`tab-btn ${settingsSubTab === "global" ? "active" : ""}`}
-              onClick={stableSetGlobalSettingsSubTab}
-            >
-              全局设置
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${settingsSubTab === "parameters" ? "active" : ""}`}
-              onClick={stableSetParameterSettingsSubTab}
-            >
-              参数设置
-            </button>
-          </nav>
-
-          {settingsSubTab === "global" && (
-            <GlobalSettingsPanel
-              settings={state?.global_settings ?? {} as GlobalSettings}
-              onChange={stableHandleGlobalSettingsChange}
-              onChangePassphrase={stableChangePassphraseAction}
-              disabled={isBusy}
-            />
-          )}
-
-          {settingsSubTab === "parameters" && (
-            <ParameterSettingsPanel
-              settings={state?.parameter_settings ?? {} as ParameterSettings}
-              onChange={stableHandleParameterSettingsChange}
-              disabled={isBusy}
-            />
-          )}
-        </div>
+        <SettingsPage
+          settingsSubTab={settingsSubTab}
+          onSelectGlobal={stableSetGlobalSettingsSubTab}
+          onSelectParameters={stableSetParameterSettingsSubTab}
+          globalSettingsProps={{
+            settings: state?.global_settings ?? {} as GlobalSettings,
+            onChange: stableHandleGlobalSettingsChange,
+            onChangePassphrase: stableChangePassphraseAction,
+            disabled: isBusy,
+          }}
+          parameterSettingsProps={{
+            settings: state?.parameter_settings ?? {} as ParameterSettings,
+            onChange: stableHandleParameterSettingsChange,
+            disabled: isBusy,
+          }}
+        />
       )}
     </div>
   );
