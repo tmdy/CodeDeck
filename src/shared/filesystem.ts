@@ -42,20 +42,33 @@ export async function computeDirectorySizeStats(root: string): Promise<Directory
 
   async function walk(currentPath: string): Promise<void> {
     const entries = await fs.readdir(currentPath, { withFileTypes: true });
+    const childDirectories: string[] = [];
+    const files: Array<{ name: string; absolute: string }> = [];
+
     for (const entry of entries) {
       const absolute = path.join(currentPath, entry.name);
       if (entry.isDirectory()) {
-        await walk(absolute);
+        childDirectories.push(absolute);
         continue;
       }
 
-      const stat = await fs.stat(absolute);
-      if (entry.name === "SKILL.md") {
+      files.push({ name: entry.name, absolute });
+    }
+
+    const fileStats = await Promise.all(files.map(async (file) => ({
+      name: file.name,
+      stat: await fs.stat(file.absolute),
+    })));
+
+    for (const { name, stat } of fileStats) {
+      if (name === "SKILL.md") {
         skillMdBytes += stat.size;
       } else {
         bodyBytes += stat.size;
       }
     }
+
+    await Promise.all(childDirectories.map((absolute) => walk(absolute)));
   }
 
   await walk(root);

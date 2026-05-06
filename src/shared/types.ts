@@ -97,12 +97,48 @@ export interface SkillUserTagsFile {
   entries: Record<string, string[]>;
 }
 
+export interface FileScanSignature {
+  exists: boolean;
+  mtimeMs?: number;
+  size?: number;
+}
+
+export interface DirectoryEntryScanSignature {
+  name: string;
+  type: "directory" | "file" | "other";
+}
+
+export interface SkillScanSignature {
+  sourcePath: string;
+  expectedActivePath: string;
+  expectedLibraryPath: string;
+  status: SkillStatus;
+  location: SkillLocation;
+  inActive: boolean;
+  inLibrary: boolean;
+  sourceDirectoryMtimeMs: number;
+  skillMd: FileScanSignature;
+  readme: FileScanSignature;
+  topLevelEntries: DirectoryEntryScanSignature[];
+}
+
+export interface SkillScanCacheEntry {
+  signature: SkillScanSignature;
+  scannedAt: string;
+}
+
+export interface ScanCache {
+  version: 1;
+  entries: Record<string, SkillScanCacheEntry>;
+}
+
 export interface ScanManifest {
   version: 1;
   projectRoot: string;
   lastScannedAt: string;
   lastSuccessfulOperationId?: string;
   records: SkillRecord[];
+  scanCache?: ScanCache;
 }
 
 export interface HostSummary {

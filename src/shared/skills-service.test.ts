@@ -4,7 +4,7 @@ import { promises as fs } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { readJson } from "./filesystem.js";
 import { SkillsManagerService, removePath } from "./skills-service.js";
-import type { AppPaths, SkillUserTagsFile } from "./types.js";
+import type { AppPaths, ScanManifest, SkillUserTagsFile } from "./types.js";
 
 async function createSkill(dirPath: string, skillMd: string, extraFiles: Array<[string, string]> = []): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
@@ -127,6 +127,136 @@ body`,
 
     expect(record?.userTags).toEqual(["缓存标签"]);
     expect(record?.hasUserTags).toBe(true);
+  });
+
+  it("applies current translations when loading a cached snapshot", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-cache-translations-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    await service.scanEnvironment();
+    await fs.mkdir(path.dirname(paths.translationsPath), { recursive: true });
+    await fs.writeFile(
+      paths.translationsPath,
+      JSON.stringify({
+        version: 1,
+        updatedAt: "2026-05-06T00:00:00.000Z",
+        entries: {
+          "codex:writer": {
+            translatedDisplayName: "缓存作者",
+            translatedDescription: "缓存描述",
+          },
+        },
+      }, null, 2),
+      "utf8",
+    );
+
+    const cached = await service.loadCachedSnapshot();
+    const record = cached?.scan.records.find((item) => item.skillId === "codex:writer");
+
+    expect(record?.displayName).toBe("缓存作者");
+    expect(record?.description).toBe("缓存描述");
+    expect(record?.originalDescription).toBe("For writing.");
+  });
+
+  it("reuses unchanged skill metadata from the scan cache while applying current overlays", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+
+    await service.scanEnvironment();
+    const manifest = await readJson<ScanManifest>(paths.manifestPath);
+    const cachedRecord = manifest?.records.find((item) => item.skillId === "codex:writer");
+    expect(manifest?.scanCache?.entries["codex:writer"]).toBeDefined();
+    expect(cachedRecord).toBeDefined();
+
+    await fs.writeFile(
+      paths.manifestPath,
+      JSON.stringify({
+        ...manifest,
+        records: manifest?.records.map((record) => record.skillId === "codex:writer"
+          ? { ...record, displayName: "Cached Writer", summary: "Cached summary", sizeTotalBytes: 12345 }
+          : record),
+      }, null, 2),
+      "utf8",
+    );
+    await fs.mkdir(path.dirname(paths.translationsPath), { recursive: true });
+    await fs.writeFile(
+      paths.translationsPath,
+      JSON.stringify({
+        version: 1,
+        updatedAt: "2026-05-06T00:00:00.000Z",
+        entries: {
+          "codex:writer": {
+            translatedDisplayName: "缓存作者",
+          },
+        },
+      }, null, 2),
+      "utf8",
+    );
+    await service.updateSkillUserTags("codex:writer", ["缓存命中"]);
+
+    const scan = await service.scanEnvironment();
+    const record = scan.records.find((item) => item.skillId === "codex:writer");
+
+    expect(record?.displayName).toBe("缓存作者");
+    expect(record?.originalDescription).toBe("For writing.");
+    expect(record?.summary).toBe("Cached summary");
+    expect(record?.sizeTotalBytes).toBe(12345);
+    expect(record?.userTags).toEqual(["缓存命中"]);
+    expect(record?.lastScannedAt).toBe(scan.scannedAt);
+  });
+
+  it("rebuilds cached skill metadata when SKILL.md changes", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-change-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    const skillPath = path.join(paths.hosts.codex.activeRoot, "writer");
+    await createSkill(
+      skillPath,
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+
+    await service.scanEnvironment();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await fs.writeFile(path.join(skillPath, "SKILL.md"), `---
+name: Updated Writer
+description: Updated description.
+---
+# Updated
+new body`, "utf8");
+
+    const scan = await service.scanEnvironment();
+    const record = scan.records.find((item) => item.skillId === "codex:writer");
+
+    expect(record?.displayName).toBe("Updated Writer");
+    expect(record?.description).toBe("Updated description.");
+    expect(record?.summary).toContain("Updated");
   });
 
   it("ignores translated tags and keeps original parsed tags", async () => {

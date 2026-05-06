@@ -32,6 +32,8 @@ import type {
   SkillHost,
   SkillLocation,
   SkillRecord,
+  SkillScanCacheEntry,
+  SkillScanSignature,
   SkillStatus,
   SkillTranslationEntry,
   SkillTranslationsFile,
@@ -90,6 +92,27 @@ interface SkillsManagerServiceOptions {
   moveDirectory?: typeof moveDirectory;
   copyDirectory?: typeof copyDirectory;
 }
+
+interface SkillScanCandidate {
+  host: SkillHost;
+  directoryName: string;
+  activePath: string;
+  libraryPath: string;
+  inActive: boolean;
+  inLibrary: boolean;
+  sourcePath: string;
+  status: SkillStatus;
+  location: SkillLocation;
+  notes: string[];
+}
+
+interface SkillScanItem {
+  baseRecord: SkillRecord;
+  record: SkillRecord;
+  cacheEntry: SkillScanCacheEntry;
+}
+
+const SKILL_SCAN_CONCURRENCY = 8;
 
 export function resolveDefaultPaths(projectRoot: string): AppPaths {
   const codexActive = path.join(os.homedir(), ".codex", "skills");
@@ -202,6 +225,74 @@ function applyTranslations(record: SkillRecord, translation?: SkillTranslationEn
   };
 }
 
+function signaturesEqual(left: SkillScanSignature | undefined, right: SkillScanSignature): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function run(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => run()));
+  return results;
+}
+
+async function buildFileSignature(targetPath: string): Promise<SkillScanSignature["skillMd"]> {
+  try {
+    const stat = await fs.stat(targetPath);
+    return {
+      exists: true,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { exists: false };
+    }
+    throw error;
+  }
+}
+
+async function buildSkillScanSignature(candidate: SkillScanCandidate): Promise<SkillScanSignature> {
+  const [sourceStat, entries, skillMd, readme] = await Promise.all([
+    fs.stat(candidate.sourcePath),
+    fs.readdir(candidate.sourcePath, { withFileTypes: true }),
+    buildFileSignature(path.join(candidate.sourcePath, "SKILL.md")),
+    buildFileSignature(path.join(candidate.sourcePath, "README.md")),
+  ]);
+
+  return {
+    sourcePath: candidate.sourcePath,
+    expectedActivePath: candidate.activePath,
+    expectedLibraryPath: candidate.libraryPath,
+    status: candidate.status,
+    location: candidate.location,
+    inActive: candidate.inActive,
+    inLibrary: candidate.inLibrary,
+    sourceDirectoryMtimeMs: sourceStat.mtimeMs,
+    skillMd,
+    readme,
+    topLevelEntries: entries
+      .map((entry) => ({
+        name: entry.name,
+        type: entry.isDirectory() ? "directory" as const : entry.isFile() ? "file" as const : "other" as const,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+  };
+}
+
 export class SkillsManagerService {
   private readonly moveDirectoryFn: typeof moveDirectory;
   private readonly copyDirectoryFn: typeof copyDirectory;
@@ -219,19 +310,29 @@ export class SkillsManagerService {
     const translations = await this.loadTranslations();
     const userTags = await this.loadUserTags();
     const manifest = await this.loadManifest();
+    const manifestRecords = new Map((manifest?.records ?? []).map((record) => [record.skillId, record]));
+    const manifestCache = manifest?.scanCache?.version === 1 ? manifest.scanCache.entries : {};
 
-    const records: SkillRecord[] = [];
-    for (const host of ["codex", "claude"] as const) {
+    const candidates: SkillScanCandidate[] = [];
+    const hostDirectoryLists = await Promise.all((["codex", "claude"] as const).map(async (host) => {
       const hostPaths = this.paths.hosts[host];
-      const activeNames = await listDirectories(hostPaths.activeRoot);
-      const libraryNames = await listDirectories(hostPaths.libraryRoot);
+      const [activeNames, libraryNames] = await Promise.all([
+        listDirectories(hostPaths.activeRoot),
+        listDirectories(hostPaths.libraryRoot),
+      ]);
+      return { host, hostPaths, activeNames, libraryNames };
+    }));
+
+    for (const { host, hostPaths, activeNames, libraryNames } of hostDirectoryLists) {
+      const activeNameSet = new Set(activeNames);
+      const libraryNameSet = new Set(libraryNames);
       const names = [...new Set([...activeNames, ...libraryNames])].sort((left, right) => left.localeCompare(right));
 
       for (const directoryName of names) {
         const activePath = path.join(hostPaths.activeRoot, directoryName);
         const libraryPath = path.join(hostPaths.libraryRoot, directoryName);
-        const inActive = activeNames.includes(directoryName);
-        const inLibrary = libraryNames.includes(directoryName);
+        const inActive = activeNameSet.has(directoryName);
+        const inLibrary = libraryNameSet.has(directoryName);
         const notes: string[] = [];
         const placement = resolveSkillPlacement({
           inActive,
@@ -247,21 +348,46 @@ export class SkillsManagerService {
           sourcePath = libraryPath;
         }
 
-        let record = await collectMetadata(
+        candidates.push({
           host,
           directoryName,
-          sourcePath,
           activePath,
           libraryPath,
-          placement.status,
-          placement.location,
+          inActive,
+          inLibrary,
+          sourcePath,
+          status: placement.status,
+          location: placement.location,
           notes,
+        });
+      }
+    }
+
+    const scanItems = await mapWithConcurrency(candidates, SKILL_SCAN_CONCURRENCY, async (candidate): Promise<SkillScanItem> => {
+      const skillId = createSkillId(candidate.host, candidate.directoryName);
+      const signature = await buildSkillScanSignature(candidate);
+      const cachedRecord = manifestRecords.get(skillId);
+      const cachedEntry = manifestCache[skillId];
+      let record: SkillRecord;
+
+      if (cachedRecord && signaturesEqual(cachedEntry?.signature, signature)) {
+        record = cachedRecord;
+      } else {
+        record = await collectMetadata(
+          candidate.host,
+          candidate.directoryName,
+          candidate.sourcePath,
+          candidate.activePath,
+          candidate.libraryPath,
+          candidate.status,
+          candidate.location,
+          [...candidate.notes],
         );
 
         if (record.isSpecialDir) {
           const readonlyPlacement = resolveSkillPlacement({
-            inActive,
-            inLibrary,
+            inActive: candidate.inActive,
+            inLibrary: candidate.inLibrary,
             isReadonly: true,
           });
           record = {
@@ -273,22 +399,44 @@ export class SkillsManagerService {
             record.notes.push("系统/共享目录，V1 不允许移动。");
           }
         }
+      }
 
-        const translatedRecord = applyTranslations(record, translations?.entries[record.skillId]);
-        const mergedUserTags = userTags?.entries[translatedRecord.skillId] ?? [];
-        records.push({
+      const baseRecord = {
+        ...record,
+        userTags: [],
+        hasUserTags: false,
+      };
+      const translatedRecord = applyTranslations(baseRecord, translations?.entries[baseRecord.skillId]);
+      const mergedUserTags = userTags?.entries[translatedRecord.skillId] ?? [];
+      return {
+        baseRecord,
+        record: {
           ...translatedRecord,
           userTags: mergedUserTags,
           hasUserTags: mergedUserTags.length > 0,
-        });
-      }
-    }
+        },
+        cacheEntry: {
+          signature,
+          scannedAt: new Date().toISOString(),
+        },
+      };
+    });
 
     const scannedAt = new Date().toISOString();
-    const normalizedRecords = records.map((record) => ({
+    const normalizedRecords = scanItems.map(({ record }) => ({
       ...record,
       lastScannedAt: scannedAt,
     }));
+    const nextManifestRecords = scanItems.map(({ baseRecord }) => ({
+      ...baseRecord,
+      lastScannedAt: scannedAt,
+    }));
+    const scanCacheEntries = Object.fromEntries(
+      scanItems.map(({ record, cacheEntry }) => [record.skillId, {
+        ...cacheEntry,
+        scannedAt,
+      }]),
+    );
 
     const overview = this.buildOverview(normalizedRecords);
     const nextManifest: ScanManifest = {
@@ -296,7 +444,11 @@ export class SkillsManagerService {
       projectRoot: this.paths.projectRoot,
       lastScannedAt: scannedAt,
       lastSuccessfulOperationId: manifest?.lastSuccessfulOperationId,
-      records: normalizedRecords,
+      records: nextManifestRecords,
+      scanCache: {
+        version: 1,
+        entries: scanCacheEntries,
+      },
     };
     await writeJson(this.paths.manifestPath, nextManifest);
 
@@ -315,8 +467,9 @@ export class SkillsManagerService {
       return null;
     }
 
+    const translations = await this.loadTranslations();
     const userTags = await this.loadUserTags();
-    const records = this.applyCurrentUserTags(manifest.records, userTags);
+    const records = this.applyCurrentOverlays(manifest.records, translations, userTags);
     const scan = this.buildScanResult(records, manifest.lastScannedAt);
     const projectScan = await this.buildCachedProjectScanFromRecords(records);
 
@@ -947,14 +1100,16 @@ export class SkillsManagerService {
     );
   }
 
-  private applyCurrentUserTags(
+  private applyCurrentOverlays(
     records: SkillRecord[],
+    translations: SkillTranslationsFile | undefined,
     userTags: SkillUserTagsFile | undefined,
   ): SkillRecord[] {
     return records.map((record) => {
-      const mergedUserTags = userTags?.entries[record.skillId] ?? [];
+      const translatedRecord = applyTranslations(record, translations?.entries[record.skillId]);
+      const mergedUserTags = userTags?.entries[translatedRecord.skillId] ?? [];
       return {
-        ...record,
+        ...translatedRecord,
         userTags: mergedUserTags,
         hasUserTags: mergedUserTags.length > 0,
       };
