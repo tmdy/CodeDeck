@@ -99,7 +99,8 @@ function createProfileManagerFixture() {
     openBaseUrl: vi.fn(async () => undefined),
     previewForDraft: vi.fn()
       .mockImplementationOnce(async () => firstPreview.promise)
-      .mockImplementationOnce(async () => secondPreview.promise),
+      .mockImplementationOnce(async () => secondPreview.promise)
+      .mockResolvedValue({ command: "extra-preview", cwd: "", env: [], valid: false }),
     previewForProfile: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
     launch: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
@@ -149,11 +150,13 @@ function createProfileManagerFixture() {
 
 describe("App command preview", () => {
   afterEach(() => {
+    vi.useRealTimers();
     delete window.profileManager;
     document.body.innerHTML = "";
   });
 
-  it("keeps the latest draft preview when an older request resolves later", async () => {
+  it("debounces draft preview updates and keeps the latest response", async () => {
+    vi.useFakeTimers();
     const fixture = createProfileManagerFixture();
     window.profileManager = fixture.manager;
     const container = document.createElement("div");
@@ -166,6 +169,11 @@ describe("App command preview", () => {
     await act(async () => {
       await Promise.resolve();
     });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(1);
 
     const nameInput = Array.from(container.querySelectorAll("input")).find(
       (input) => input.placeholder === "输入 Profile 名称",
@@ -176,6 +184,22 @@ describe("App command preview", () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       valueSetter?.call(nameInput, "Relay Next");
       nameInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(nameInput, "Relay Next Draft");
+      nameInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(299);
+    });
+
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
     });
 
     expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(2);

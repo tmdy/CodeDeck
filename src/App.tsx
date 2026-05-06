@@ -64,6 +64,7 @@ type ListProfilesResult = {
 };
 
 const EMPTY_MODEL_OPTIONS: string[] = [];
+const DRAFT_PREVIEW_DEBOUNCE_MS = 300;
 
 function useEventCallback<T extends (...args: never[]) => unknown>(callback: T): T {
   const callbackRef = useRef(callback);
@@ -424,7 +425,13 @@ function App() {
   }
 
   useEffect(() => {
-    void refreshPreviewForDraft();
+    const timeoutId = window.setTimeout(() => {
+      void refreshPreviewForDraft();
+    }, DRAFT_PREVIEW_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [
     state?.selected_provider,
     draftName,
