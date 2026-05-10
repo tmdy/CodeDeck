@@ -11,9 +11,13 @@ export interface ClaudeCommandOptions {
   sessionId?: string;
   excludeUserSettings: boolean;
   settingsFile?: string;
+  settingsFiles?: string[];
   settingSources?: string;
   model?: string;
   permissionMode?: string;
+  addDirs?: string[];
+  pluginDirs?: string[];
+  mcpConfigPaths?: string[];
 }
 
 function normalizeSessionId(value: string): string {
@@ -23,12 +27,24 @@ function normalizeSessionId(value: string): string {
 
 export function buildClaudeArgs(options: ClaudeCommandOptions): string[] {
   const parts: string[] = [];
-  const settingsFile = (options.settingsFile ?? "").trim();
+  const settingsFiles = [
+    options.settingsFile,
+    ...(options.settingsFiles ?? []),
+  ]
+    .map((value) => value?.trim() ?? "")
+    .filter((value, index, all) => value.length > 0 && all.indexOf(value) === index);
   if (options.excludeUserSettings) {
     parts.push("--setting-sources", (options.settingSources ?? SETTING_SOURCES_VALUE).trim() || SETTING_SOURCES_VALUE);
   }
-  if (settingsFile) {
+  for (const settingsFile of settingsFiles) {
     parts.push("--settings", settingsFile);
+  }
+
+  for (const addDir of normalizeStringList(options.addDirs)) {
+    parts.push("--add-dir", addDir);
+  }
+  for (const pluginDir of normalizeStringList(options.pluginDirs)) {
+    parts.push("--plugin-dir", pluginDir);
   }
 
   switch (options.launchMode.trim()) {
@@ -61,6 +77,11 @@ export function buildClaudeArgs(options: ClaudeCommandOptions): string[] {
 
   parts.push(...parseCliArgs(options.extraArgs));
 
+  const mcpConfigPaths = normalizeStringList(options.mcpConfigPaths);
+  if (mcpConfigPaths.length > 0) {
+    parts.push("--mcp-config", ...mcpConfigPaths);
+  }
+
   return parts;
 }
 
@@ -77,4 +98,10 @@ export function buildClaudeCommand(options: ClaudeCommandOptions): string {
   }
 
   return parts.join(" ");
+}
+
+function normalizeStringList(values?: string[]): string[] {
+  return (values ?? [])
+    .map((value) => value.trim())
+    .filter((value, index, all) => value.length > 0 && all.indexOf(value) === index);
 }

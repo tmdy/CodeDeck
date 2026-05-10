@@ -29,6 +29,8 @@ app-data/projects.json
 app-data/manifest.json
 app-data/model-mappings.json
 app-data/claude_profiles.encrypted.json
+app-data/codex-runtime/
+app-data/runtime-overlays/
 app-data/codex-profiles/
 app-data/backups/
 app-data/operations/

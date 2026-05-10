@@ -29,6 +29,7 @@ function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDr
     advancedModelMapping: {
       enabled: false,
       claude: {
+        aliasMode: "none",
         defaultTarget: "",
         opusTarget: "",
         sonnetTarget: "",
@@ -85,6 +86,7 @@ describe("profile-editor-state", () => {
       advancedModelMapping: {
         enabled: false,
         claude: {
+          aliasMode: "none",
           defaultTarget: "",
           opusTarget: "",
           sonnetTarget: "",
@@ -124,6 +126,26 @@ describe("profile-editor-state", () => {
     expect(draft.exclude_user_settings).toBe(true);
   });
 
+  it("should create new Claude third-party drafts with single-model compatibility enabled by default", () => {
+    const draft = buildNewProfileDraft("claude", {
+      url: "https://api.aicod.com",
+      selectedModelId: "glm-5.1",
+    });
+
+    expect(draft.advancedModelMapping.enabled).toBe(true);
+    expect(draft.advancedModelMapping.claude?.aliasMode).toBe("single_model_compat");
+  });
+
+  it("should not enable single-model compatibility by default for official Claude models", () => {
+    const draft = buildNewProfileDraft("claude", {
+      url: "https://api.anthropic.com",
+      selectedModelId: "claude-sonnet-4-5",
+    });
+
+    expect(draft.advancedModelMapping.enabled).toBe(false);
+    expect(draft.advancedModelMapping.claude?.aliasMode).toBe("none");
+  });
+
   it("should detect unsaved changes including selectedModelId, command_base, and session binding", () => {
     const baseline = makeDraft();
     const changed = makeDraft({
@@ -134,6 +156,139 @@ describe("profile-editor-state", () => {
 
     expect(hasProfileDraftChanges(changed, baseline)).toBe(true);
     expect(hasProfileDraftChanges(baseline, baseline)).toBe(false);
+  });
+
+  it("should compare advanced model mappings by normalized field values", () => {
+    const baseline = makeDraft({
+      advancedModelMapping: {
+        enabled: false,
+        claude: {
+          aliasMode: "none",
+          defaultTarget: "",
+          opusTarget: "",
+          sonnetTarget: "",
+          haikuTarget: "",
+          subagentTarget: "",
+        },
+        codex: {
+          commandLineModelOverride: "",
+        },
+      },
+    });
+    const defaultEquivalent = makeDraft({
+      advancedModelMapping: {
+        codex: {},
+        claude: {
+          subagentTarget: "",
+          haikuTarget: "",
+          sonnetTarget: "",
+          opusTarget: "",
+          defaultTarget: "",
+        },
+        enabled: false,
+      },
+    });
+
+    expect(hasProfileDraftChanges(defaultEquivalent, baseline)).toBe(false);
+    expect(hasProfileDraftChanges(
+      makeDraft({
+        advancedModelMapping: {
+          ...baseline.advancedModelMapping,
+          claude: {
+            ...baseline.advancedModelMapping.claude,
+            sonnetTarget: "claude-sonnet-4-5",
+          },
+        },
+      }),
+      baseline,
+    )).toBe(true);
+  });
+
+  it("should compare permissions by field values while preserving root order semantics", () => {
+    const baselinePermissions = {
+      preset: "safe" as const,
+      common: {
+        denyEnvFiles: true,
+        denyGitPush: true,
+        denyDangerousDelete: true,
+        allowNetwork: true,
+        additionalWritableRoots: ["C:/shared", "D:/cache"],
+      },
+      claude: { permissionMode: "" },
+      codex: { sandboxMode: "", approvalPolicy: "" },
+      fullAccessConfirmed: false,
+    };
+    const baseline = makeDraft({ permissions: baselinePermissions });
+    const defaultEquivalent = makeDraft({
+      permissions: {
+        common: {
+          denyEnvFiles: true,
+          denyGitPush: true,
+          denyDangerousDelete: true,
+          allowNetwork: true,
+          additionalWritableRoots: ["C:/shared", "D:/cache"],
+        },
+        preset: "safe",
+        codex: {},
+        claude: {},
+      },
+    });
+
+    expect(hasProfileDraftChanges(defaultEquivalent, baseline)).toBe(false);
+    expect(hasProfileDraftChanges(
+      makeDraft({
+        permissions: {
+          ...baselinePermissions,
+          common: {
+            ...baselinePermissions.common,
+            additionalWritableRoots: ["D:/cache", "C:/shared"],
+          },
+        },
+      }),
+      baseline,
+    )).toBe(true);
+    expect(hasProfileDraftChanges(
+      makeDraft({
+        permissions: {
+          ...baselinePermissions,
+          claude: { permissionMode: "bypassPermissions" },
+        },
+      }),
+      baseline,
+    )).toBe(true);
+    expect(hasProfileDraftChanges(
+      makeDraft({
+        permissions: {
+          ...baselinePermissions,
+          codex: { sandboxMode: "workspace-write", approvalPolicy: "on-request" },
+        },
+      }),
+      baseline,
+    )).toBe(true);
+  });
+
+  it("should compare balance session drafts by field values", () => {
+    const baseline = makeDraft();
+    const defaultEquivalent = makeDraft({
+      balanceSessionDraft: {
+        user_id: "42",
+        access_token: "token-a",
+        label: "后台 A",
+      },
+    });
+
+    expect(hasProfileDraftChanges(defaultEquivalent, baseline)).toBe(false);
+    expect(hasOnlyProfileDraftBalanceSessionChange(defaultEquivalent, baseline)).toBe(false);
+    expect(hasProfileDraftChanges(
+      makeDraft({
+        balanceSessionDraft: {
+          label: "后台 B",
+          access_token: "token-a",
+          user_id: "42",
+        },
+      }),
+      baseline,
+    )).toBe(true);
   });
 
   it("should identify cwd-only changes for silent autosave", () => {

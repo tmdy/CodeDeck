@@ -113,6 +113,24 @@ describe("buildClaudeCommand", () => {
     expect(cmd).toContain("--model claude-sonnet-4.6");
   });
 
+  it("should append capability overlay arguments with mcp config last", () => {
+    const cmd = buildClaudeCommand({
+      commandBase: "claude",
+      launchMode: "new",
+      extraArgs: "--verbose",
+      excludeUserSettings: true,
+      settingsFile: "C:/overlay/settings.global-capabilities.json",
+      addDirs: ["C:/overlay/skills-add-dir"],
+      pluginDirs: ["C:/Users/test/.claude/plugins/cache/document-skills"],
+      mcpConfigPaths: ["C:/overlay/mcp-config.json"],
+      permissionMode: "default",
+    });
+
+    expect(cmd).toBe(
+      'claude --setting-sources "project,local" --settings "C:/overlay/settings.global-capabilities.json" --add-dir C:/overlay/skills-add-dir --plugin-dir C:/Users/test/.claude/plugins/cache/document-skills --permission-mode default --verbose --mcp-config C:/overlay/mcp-config.json',
+    );
+  });
+
   it("should default to claude when empty command base", () => {
     const cmd = buildClaudeCommand({
       commandBase: "",

@@ -1,5 +1,7 @@
-import type { Profile } from "../profile/types.js";
+import type { Profile, ProfileKey } from "../profile/types.js";
 import { normalizeProfile } from "../profile/types.js";
+import { itemKey } from "../profile/keys-internal.js";
+import type { BalanceCheckState } from "./types.js";
 
 const BASE_URL_SUFFIXES = [
   "/anthropic/v1/messages",
@@ -240,6 +242,47 @@ export function describeBalanceSessionHint(
   return "";
 }
 
+export function resolveSharedBalanceProfileKeys(
+  profiles: Profile[],
+  sourceProfileKey: ProfileKey,
+  sessionsByBaseUrl: SiteBalanceSessionsByBaseUrl,
+): ProfileKey[] {
+  const sourceProfile = profiles.find((profile) => itemKey(profile) === sourceProfileKey);
+  if (!sourceProfile) {
+    return [];
+  }
+
+  const sourceScope = resolveShareableBalanceScope(sourceProfile, sessionsByBaseUrl);
+  if (!sourceScope) {
+    return [sourceProfileKey];
+  }
+
+  const sharedKeys = profiles.flatMap((profile) => {
+    const key = itemKey(profile);
+    const targetScope = resolveShareableBalanceScope(profile, sessionsByBaseUrl);
+    return targetScope
+      && targetScope.baseUrl === sourceScope.baseUrl
+      && targetScope.sessionId === sourceScope.sessionId
+      ? [key]
+      : [];
+  });
+
+  return sourceFirstUniqueKeys(sourceProfileKey, sharedKeys);
+}
+
+export function buildProfileBalanceCheckState(
+  profile: Pick<Profile, "provider" | "name" | "url">,
+  state: BalanceCheckState,
+): BalanceCheckState {
+  return {
+    ...state,
+    provider: profile.provider,
+    profile_name: profile.name,
+    base_url: normalizeBalanceBaseUrl(profile.url),
+    items: state.items.map((item) => ({ ...item })),
+  };
+}
+
 function normalizeSiteBalanceSession(
   value: unknown,
   fallbackBaseUrl: string,
@@ -274,4 +317,32 @@ function withSequentialAccountLabels(sessions: SiteBalanceSession[]): SiteBalanc
     ...session,
     label: `账号${index + 1}`,
   }));
+}
+
+function resolveShareableBalanceScope(
+  profile: Pick<Profile, "url" | "balance_session_id">,
+  sessionsByBaseUrl: SiteBalanceSessionsByBaseUrl,
+): { baseUrl: string; sessionId: string } | null {
+  const resolved = resolveBalanceAuth(profile, sessionsByBaseUrl);
+  if (resolved.kind !== "explicit_session" && resolved.kind !== "implicit_single_session") {
+    return null;
+  }
+
+  return {
+    baseUrl: resolved.base_url,
+    sessionId: resolved.session.id,
+  };
+}
+
+function sourceFirstUniqueKeys(sourceProfileKey: ProfileKey, keys: ProfileKey[]): ProfileKey[] {
+  const seen = new Set<ProfileKey>();
+  const result: ProfileKey[] = [];
+  for (const key of [sourceProfileKey, ...keys]) {
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(key);
+  }
+  return result;
 }

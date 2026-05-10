@@ -6,6 +6,7 @@ import {
 import type { LocalStateAccessor } from "./profile-service.js";
 import { cloneLocalState } from "../state/store.js";
 import { type SessionListScope } from "./session-service.js";
+import { normalizeSessionsTabScope } from "../session-history-state.js";
 import { normalizeKeyWithFallback } from "../profile/keys-internal.js";
 import { normalizeProvider, type ProfileKey } from "../profile/types.js";
 
@@ -53,7 +54,7 @@ export class SettingsStateService {
     const normalizedProvider = normalizeProvider(providerID);
 
     if (patch.scope) {
-      state.sessions_tab_scope_by_provider[normalizedProvider] = patch.scope;
+      state.sessions_tab_scope_by_provider[normalizedProvider] = normalizeSessionsTabScope(patch.scope);
     }
 
     if (patch.restore_profile_key !== undefined) {

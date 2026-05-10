@@ -2,12 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SessionList } from "../../../components/launcher/SessionList.jsx";
 
+function createSession(index: number) {
+  return {
+    provider: "codex" as const,
+    session_id: `session-${index}`,
+    cwd: `C:/repo-${index}`,
+    updated_at: `2026-05-05T${String(index % 24).padStart(2, "0")}:00:00.000Z`,
+    preview: `会话 ${index}`,
+  };
+}
+
 describe("SessionList", () => {
   it("renders the history scope toolbar, selected session details and restore profile selector", () => {
     const html = renderToStaticMarkup(
       <SessionList
         provider="claude"
-        scope="global_recent"
         sessions={[
           {
             provider: "claude",
@@ -32,14 +41,13 @@ describe("SessionList", () => {
         }}
         onSelect={vi.fn()}
         onRefresh={vi.fn()}
-        onScopeChange={vi.fn()}
         onSelectRestoreProfile={vi.fn()}
         onRestore={vi.fn()}
       />,
     );
 
-    expect(html).toContain("当前项目");
-    expect(html).toContain("本机最近");
+    expect(html).not.toContain("当前项目");
+    expect(html).not.toContain("本机最近");
     expect(html).toContain("session-1");
     expect(html).toContain("跨项目最近会话");
     expect(html).toContain("用于恢复的 Profile");
@@ -52,7 +60,6 @@ describe("SessionList", () => {
     const html = renderToStaticMarkup(
       <SessionList
         provider="codex"
-        scope="global_recent"
         sessions={[
           {
             provider: "codex",
@@ -69,7 +76,6 @@ describe("SessionList", () => {
         restoreDisabled
         onSelect={vi.fn()}
         onRefresh={vi.fn()}
-        onScopeChange={vi.fn()}
         onSelectRestoreProfile={vi.fn()}
         onRestore={vi.fn()}
       />,
@@ -101,7 +107,6 @@ describe("SessionList", () => {
     const html = renderToStaticMarkup(
       <SessionList
         provider="claude"
-        scope="global_recent"
         sessions={sessions}
         selectedId="claude-session"
         restoreProfiles={[]}
@@ -109,7 +114,6 @@ describe("SessionList", () => {
         restoreDisabled
         onSelect={vi.fn()}
         onRefresh={vi.fn()}
-        onScopeChange={vi.fn()}
         onSelectRestoreProfile={vi.fn()}
         onRestore={vi.fn()}
       />,
@@ -120,5 +124,53 @@ describe("SessionList", () => {
     expect(html).toContain("<code>claude</code>");
     expect(html).not.toContain("Body Data Sync");
     expect(html).not.toContain("<code>codex</code>");
+  });
+
+  it("renders only the first 20 sessions by default and shows a load-more summary", () => {
+    const sessions = Array.from({ length: 25 }, (_, index) => createSession(index + 1));
+
+    const html = renderToStaticMarkup(
+      <SessionList
+        provider="codex"
+        sessions={sessions}
+        restoreProfiles={[]}
+        selectedRestoreProfileKey=""
+        restoreDisabled
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+        onSelectRestoreProfile={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("会话 1");
+    expect(html).toContain("会话 20");
+    expect(html).not.toContain("会话 21");
+    expect(html).toContain("已显示 20 / 25");
+    expect(html).toContain("加载更多 20 条");
+  });
+
+  it("keeps the selected session visible when it is outside the default visible range", () => {
+    const sessions = Array.from({ length: 25 }, (_, index) => createSession(index + 1));
+
+    const html = renderToStaticMarkup(
+      <SessionList
+        provider="codex"
+        sessions={sessions}
+        selectedId="session-25"
+        restoreProfiles={[]}
+        selectedRestoreProfileKey=""
+        restoreDisabled
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+        onSelectRestoreProfile={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("会话 20");
+    expect(html).not.toContain("会话 21");
+    expect(html).toContain("会话 25");
+    expect(html).toContain("<code>session-25</code>");
   });
 });

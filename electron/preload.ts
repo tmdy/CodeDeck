@@ -127,11 +127,6 @@ const profileApi = {
   updateSessionsTabState: (provider: string, patch: unknown): Promise<void> =>
     ipcRenderer.invoke("session:update-tab-state", provider, patch),
 
-  // Connectivity
-  testConnection: (profileKey: string): Promise<void> =>
-    ipcRenderer.invoke("connectivity:test", profileKey),
-  getConnectivityState: (profileKey: string): Promise<unknown> =>
-    ipcRenderer.invoke("connectivity:get-state", profileKey),
   testBalance: (profileKey: string): Promise<void> =>
     ipcRenderer.invoke("balance:test", profileKey),
   getBalanceState: (profileKey: string): Promise<unknown> =>
@@ -165,16 +160,6 @@ const profileApi = {
     ipcRenderer.on("profile:state-changed", handler);
     return () => {
       ipcRenderer.removeListener("profile:state-changed", handler);
-    };
-  },
-  onConnectivityProgress: (
-    callback: (key: string, state: unknown) => void,
-  ): (() => void) => {
-    const handler = (_event: unknown, key: string, state: unknown) =>
-      callback(key, state);
-    ipcRenderer.on("connectivity:test-progress", handler);
-    return () => {
-      ipcRenderer.removeListener("connectivity:test-progress", handler);
     };
   },
   onBalanceProgress: (

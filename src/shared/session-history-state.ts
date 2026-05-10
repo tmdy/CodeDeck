@@ -23,13 +23,14 @@ export function listProfilesForProvider(profiles: Profile[], provider: string): 
 export function resolveHistoryScope(
   state: Pick<LocalState, "sessions_tab_scope_by_provider"> | null | undefined,
   provider: string,
-  projectCwd: string,
+  _projectCwd: string,
 ): SessionListScope {
   const remembered = state?.sessions_tab_scope_by_provider?.[normalizeProvider(provider)];
-  if (remembered === "project" || remembered === "global_recent") {
-    return remembered;
-  }
-  return projectCwd.trim() ? "project" : "global_recent";
+  return normalizeSessionsTabScope(remembered);
+}
+
+export function normalizeSessionsTabScope(_scope: SessionListScope | undefined): SessionListScope {
+  return "global_recent";
 }
 
 export function resolveHistoryRestoreProfileKey(

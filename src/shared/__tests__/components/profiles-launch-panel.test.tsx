@@ -15,6 +15,7 @@ describe("ProfilesLaunchPanel", () => {
           ],
           valid: true,
           permissionSummary: "Codex: workspace-write + on-request",
+          capabilitySummary: "继承全局 MCP/Skills：启动时启用",
         }}
         disabled={false}
         resumeDisabled={false}
@@ -46,6 +47,7 @@ describe("ProfilesLaunchPanel", () => {
     expect(html).toContain("[已设置]");
     expect(html).toContain("将以以下权限启动");
     expect(html).toContain("Codex: workspace-write + on-request");
+    expect(html).toContain("继承全局 MCP/Skills");
     expect(html).toContain("临时只读");
     expect(html).toContain("临时全权限");
     expect(html).not.toContain("模型映射");

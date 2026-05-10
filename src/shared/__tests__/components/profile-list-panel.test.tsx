@@ -16,7 +16,6 @@ describe("ProfileListPanel", () => {
         activeProvider="codex"
         selectedKey="codex::CodexOnly"
         orderedKeys={["codex::CodexOnly"]}
-        connectivityStates={{}}
         balanceEntries={{}}
         onSelect={vi.fn()}
         onReorder={vi.fn()}
@@ -42,7 +41,6 @@ describe("ProfileListPanel", () => {
         activeProvider="codex"
         selectedKey="codex::Paid"
         orderedKeys={["codex::Paid", "codex::Unsupported"]}
-        connectivityStates={{}}
         balanceEntries={{
           "codex::Paid": { status: "success", label: "余额 $12.34" },
           "codex::Unsupported": { status: "unsupported", label: "N/A" },
@@ -57,5 +55,28 @@ describe("ProfileListPanel", () => {
 
     expect(html).toContain("余额 $12.34");
     expect(html).toContain("N/A");
+  });
+
+  it("does not render legacy connectivity status markers", () => {
+    const profiles: Profile[] = [
+      { provider: "codex", name: "Relay", url: "https://relay.example.com", key: "sk-relay" },
+    ];
+
+    const html = renderToStaticMarkup(
+      <ProfileListPanel
+        profiles={profiles}
+        activeProvider="codex"
+        selectedKey="codex::Relay"
+        orderedKeys={["codex::Relay"]}
+        balanceEntries={{}}
+        onSelect={vi.fn()}
+        onReorder={vi.fn()}
+        onCreate={vi.fn()}
+        onClone={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(html).not.toContain("profile-item-status");
   });
 });

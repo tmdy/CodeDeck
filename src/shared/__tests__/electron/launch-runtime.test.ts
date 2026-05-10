@@ -123,4 +123,27 @@ describe("launch-runtime", () => {
     expect(innerScript).toContain("$env:ANTHROPIC_AUTH_TOKEN = 'sk-$literal-''quoted'''");
     expect(innerScript).not.toContain('$env:ANTHROPIC_AUTH_TOKEN = "sk-$literal-');
   });
+
+  it("writes Claude alias override environment variables before invoking Claude", () => {
+    const spec = buildWindowsExternalTerminalLaunchSpec(createPlan({
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.aicod.com",
+        ANTHROPIC_AUTH_TOKEN: "sk-glm",
+        ANTHROPIC_MODEL: "glm-5.1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.1",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.1",
+        CLAUDE_CODE_SUBAGENT_MODEL: "glm-5.1",
+      },
+      commandArgs: ["--model", "glm-5.1"],
+    }));
+    const innerScript = decodeInnerScript(spec);
+
+    expect(innerScript).toContain("$env:ANTHROPIC_DEFAULT_OPUS_MODEL = 'glm-5.1'");
+    expect(innerScript).toContain("$env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-5.1'");
+    expect(innerScript).toContain("$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-5.1'");
+    expect(innerScript).toContain("$env:CLAUDE_CODE_SUBAGENT_MODEL = 'glm-5.1'");
+    expect(innerScript.indexOf("$env:ANTHROPIC_DEFAULT_HAIKU_MODEL")).toBeLessThan(innerScript.indexOf("& 'claude' @commandArgs"));
+    expect(innerScript).not.toContain("Invoke-Expression");
+  });
 });

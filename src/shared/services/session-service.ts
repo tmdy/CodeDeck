@@ -1,6 +1,7 @@
 // 会话服务 — 会话扫描和解析
 
 import { normalizeProvider, PROVIDER_CODEX } from "../profile/types.js";
+import type { ProfileKey } from "../profile/types.js";
 
 export type SessionListScope = "project" | "global_recent";
 
@@ -8,6 +9,7 @@ export interface ListSessionsRequest {
   provider: string;
   scope: SessionListScope;
   cwd?: string;
+  profile_key?: ProfileKey;
 }
 
 export interface SessionSummary {
@@ -392,7 +394,9 @@ export async function listCodexSessions(
     ? normalizeComparablePath(requireProjectCwd(request))
     : "";
   const indexEntries = await readCodexIndex(path.join(root, "session_index.jsonl"));
-  const needsFallback = normalizedCwd.length > 0 || indexEntries.some((entry) => !entry.cwd || !entry.preview);
+  const needsFallback = indexEntries.length === 0
+    || normalizedCwd.length > 0
+    || indexEntries.some((entry) => !entry.cwd || !entry.preview);
   const fallbackMap = needsFallback ? await buildCodexFallbackMap(path.join(root, "sessions")) : new Map();
 
   const mergedFromIndex = indexEntries.map((entry) => {

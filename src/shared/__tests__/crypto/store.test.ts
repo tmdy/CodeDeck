@@ -153,7 +153,7 @@ describe("EncryptedConfigStore", () => {
       { provider: "claude", name: "Legacy", url: "https://legacy.example.com", key: "sk-legacy" },
     ];
 
-    const legacyEnvelope = encryptProfiles(profiles, "test-password");
+    const legacyEnvelope = await encryptProfiles(profiles, "test-password");
     await fs.writeFile(storePath, JSON.stringify(legacyEnvelope, null, 2), "utf-8");
 
     const store = new EncryptedConfigStore(storePath);
@@ -173,32 +173,32 @@ describe("EncryptedConfigStore", () => {
 });
 
 describe("encryptProfiles / decryptProfiles", () => {
-  it("should encrypt and decrypt profiles", () => {
+  it("should encrypt and decrypt profiles", async () => {
     const profiles: Profile[] = [
       { provider: "claude", name: "Test", url: "https://example.com", key: "secret" },
     ];
 
-    const envelope = encryptProfiles(profiles, "password");
+    const envelope = await encryptProfiles(profiles, "password");
     expect(envelope.version).toBe(1);
     expect(typeof envelope.salt).toBe("string");
     expect(typeof envelope.token).toBe("string");
 
-    const decrypted = decryptProfiles(envelope, "password");
+    const decrypted = await decryptProfiles(envelope, "password");
     expect(decrypted.length).toBe(1);
     expect(decrypted[0].name).toBe("Test");
     expect(decrypted[0].url).toBe("https://example.com");
     expect(decrypted[0].key).toBe("secret");
   });
 
-  it("should throw on empty password", () => {
-    expect(() => encryptProfiles([], "")).toThrow("配置口令不能为空");
-    expect(() => decryptProfiles({ version: 1, salt: "test", token: "test" }, "")).toThrow(
+  it("should throw on empty password", async () => {
+    await expect(encryptProfiles([], "")).rejects.toThrow("配置口令不能为空");
+    await expect(decryptProfiles({ version: 1, salt: "test", token: "test" }, "")).rejects.toThrow(
       "配置口令不能为空",
     );
   });
 
-  it("should encrypt and decrypt the new config payload format", () => {
-    const envelope = encryptProfileConfig({
+  it("should encrypt and decrypt the new config payload format", async () => {
+    const envelope = await encryptProfileConfig({
       profiles: [
         { provider: "codex", name: "Relay", url: "https://relay.example.com/v1", key: "sk-relay" },
       ],
@@ -216,7 +216,7 @@ describe("encryptProfiles / decryptProfiles", () => {
       },
     }, "password");
 
-    const decrypted = decryptProfileConfig(envelope, "password");
+    const decrypted = await decryptProfileConfig(envelope, "password");
 
     expect(decrypted.profiles[0].name).toBe("Relay");
     expect(decrypted.site_balance_sessions_by_base_url["https://relay.example.com"][0].label).toBe("账号1");

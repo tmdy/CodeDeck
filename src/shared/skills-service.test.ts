@@ -226,6 +226,81 @@ body`,
     expect(record?.lastScannedAt).toBe(scan.scannedAt);
   });
 
+  it("reuses scan cache when an unchanged signature was persisted with a different field order", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-order-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+
+    await service.scanEnvironment();
+    const manifest = await readJson<ScanManifest>(paths.manifestPath);
+    const signature = manifest?.scanCache?.entries["codex:writer"]?.signature;
+    expect(signature).toBeDefined();
+    await fs.writeFile(
+      paths.manifestPath,
+      JSON.stringify({
+        ...manifest,
+        records: manifest?.records.map((record) => record.skillId === "codex:writer"
+          ? { ...record, displayName: "Cached Writer", summary: "Cached summary", sizeTotalBytes: 12345 }
+          : record),
+        scanCache: {
+          version: 1,
+          entries: {
+            ...manifest?.scanCache?.entries,
+            "codex:writer": {
+              scannedAt: manifest?.scanCache?.entries["codex:writer"]?.scannedAt,
+              signature: {
+                topLevelEntries: signature?.topLevelEntries.map((entry) => ({
+                  type: entry.type,
+                  name: entry.name,
+                })),
+                readme: signature?.readme.exists
+                  ? {
+                      size: signature.readme.size,
+                      mtimeMs: signature.readme.mtimeMs,
+                      exists: true,
+                    }
+                  : { exists: false },
+                skillMd: signature?.skillMd.exists
+                  ? {
+                      size: signature.skillMd.size,
+                      mtimeMs: signature.skillMd.mtimeMs,
+                      exists: true,
+                    }
+                  : { exists: false },
+                sourceDirectoryMtimeMs: signature?.sourceDirectoryMtimeMs,
+                inLibrary: signature?.inLibrary,
+                inActive: signature?.inActive,
+                location: signature?.location,
+                status: signature?.status,
+                expectedLibraryPath: signature?.expectedLibraryPath,
+                expectedActivePath: signature?.expectedActivePath,
+                sourcePath: signature?.sourcePath,
+              },
+            },
+          },
+        },
+      }, null, 2),
+      "utf8",
+    );
+
+    const scan = await service.scanEnvironment();
+    const record = scan.records.find((item) => item.skillId === "codex:writer");
+
+    expect(record?.displayName).toBe("Cached Writer");
+    expect(record?.summary).toBe("Cached summary");
+    expect(record?.sizeTotalBytes).toBe(12345);
+  });
+
   it("rebuilds cached skill metadata when SKILL.md changes", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-change-"));
     tempRoots.push(root);
@@ -257,6 +332,84 @@ new body`, "utf8");
     expect(record?.displayName).toBe("Updated Writer");
     expect(record?.description).toBe("Updated description.");
     expect(record?.summary).toContain("Updated");
+  });
+
+  it("rebuilds cached skill metadata when README.md changes", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-readme-change-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    const skillPath = path.join(paths.hosts.codex.activeRoot, "writer");
+    await createSkill(
+      skillPath,
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+      [["README.md", "Original README"]],
+    );
+    const service = new SkillsManagerService(paths);
+
+    await service.scanEnvironment();
+    const manifest = await readJson<ScanManifest>(paths.manifestPath);
+    await fs.writeFile(
+      paths.manifestPath,
+      JSON.stringify({
+        ...manifest,
+        records: manifest?.records.map((record) => record.skillId === "codex:writer"
+          ? { ...record, displayName: "Cached Writer", summary: "Cached summary", sizeTotalBytes: 12345 }
+          : record),
+      }, null, 2),
+      "utf8",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await fs.writeFile(path.join(skillPath, "README.md"), "Updated README", "utf8");
+
+    const scan = await service.scanEnvironment();
+    const record = scan.records.find((item) => item.skillId === "codex:writer");
+
+    expect(record?.displayName).toBe("Writer Skill");
+    expect(record?.summary).not.toBe("Cached summary");
+    expect(record?.sizeTotalBytes).not.toBe(12345);
+  });
+
+  it("rebuilds cached skill metadata when top-level directory entries change", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-entry-change-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    const skillPath = path.join(paths.hosts.codex.activeRoot, "writer");
+    await createSkill(
+      skillPath,
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+
+    await service.scanEnvironment();
+    const manifest = await readJson<ScanManifest>(paths.manifestPath);
+    await fs.writeFile(
+      paths.manifestPath,
+      JSON.stringify({
+        ...manifest,
+        records: manifest?.records.map((record) => record.skillId === "codex:writer"
+          ? { ...record, displayName: "Cached Writer", summary: "Cached summary", sizeTotalBytes: 12345 }
+          : record),
+      }, null, 2),
+      "utf8",
+    );
+    await fs.writeFile(path.join(skillPath, "notes.txt"), "extra", "utf8");
+
+    const scan = await service.scanEnvironment();
+    const record = scan.records.find((item) => item.skillId === "codex:writer");
+
+    expect(record?.displayName).toBe("Writer Skill");
+    expect(record?.summary).not.toBe("Cached summary");
+    expect(record?.sizeTotalBytes).not.toBe(12345);
   });
 
   it("ignores translated tags and keeps original parsed tags", async () => {

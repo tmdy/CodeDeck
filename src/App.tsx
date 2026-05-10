@@ -25,7 +25,6 @@ import {
   buildNewProfileDraft,
   buildRuntimeSettingsFromDraft,
   buildSelectedProfileDraft,
-  balanceSessionDraftsEqual,
   hasProfileDraftChanges,
   hasOnlyProfileDraftBalanceSessionChange,
   hasOnlyProfileDraftCwdChange,
@@ -60,10 +59,15 @@ type ListProfilesResult = {
   profiles: Profile[];
   state: LocalState;
   siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+  defaultWorkingDirectory: string;
 };
 type ModelCatalogCacheEntry = {
   models: string[];
   fetchedAt: string;
+};
+type ModelCatalogFetchState = {
+  busy: boolean;
+  error: string | null;
 };
 
 const EMPTY_MODEL_OPTIONS: string[] = [];
@@ -93,6 +97,14 @@ function emptyPreview(): CommandPreview {
     env: [],
     valid: false,
   };
+}
+
+function withDefaultWorkingDirectory(
+  draft: ProfileEditorDraft,
+  defaultWorkingDirectory: string,
+): ProfileEditorDraft {
+  const cwd = draft.cwd.trim() || defaultWorkingDirectory.trim();
+  return cwd === draft.cwd ? draft : { ...draft, cwd };
 }
 
 function applyClaudeAliasRecommendationForNewDraft(options: {
@@ -149,6 +161,7 @@ function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [state, setState] = useState<LocalState | null>(null);
   const [siteBalanceSessionsByBaseUrl, setSiteBalanceSessionsByBaseUrl] = useState<SiteBalanceSessionsByBaseUrl>({});
+  const [defaultWorkingDirectory, setDefaultWorkingDirectory] = useState("");
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
@@ -173,8 +186,7 @@ function App() {
   const [draftExcludeUser, setDraftExcludeUser] = useState(true);
   const [editorBaseline, setEditorBaseline] = useState<ProfileEditorDraft | null>(null);
   const [modelCatalogByBaseUrl, setModelCatalogByBaseUrl] = useState<Record<string, ModelCatalogCacheEntry>>({});
-  const [modelCatalogBusy, setModelCatalogBusy] = useState(false);
-  const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
+  const [modelCatalogFetchByBaseUrl, setModelCatalogFetchByBaseUrl] = useState<Record<string, ModelCatalogFetchState>>({});
 
   // 命令预览 & 余额检测
   const [preview, setPreview] = useState<CommandPreview>(emptyPreview());
@@ -206,10 +218,10 @@ function App() {
         return {
           key,
           label: profile.name,
-          cwd: state?.runtime_by_profile[key]?.cwd ?? "",
+          cwd: state?.runtime_by_profile[key]?.cwd.trim() || defaultWorkingDirectory,
         };
       }),
-    [activeProvider, profiles, state?.runtime_by_profile],
+    [activeProvider, defaultWorkingDirectory, profiles, state?.runtime_by_profile],
   );
   const visibleHistorySessions = useMemo(
     () => historySessions.filter((session) => session.provider === activeProvider),
@@ -314,11 +326,17 @@ function App() {
       profiles: Profile[];
       state: LocalState;
       siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+      defaultWorkingDirectory?: string;
     };
     setProfiles(data.profiles);
     setState(data.state);
     setSiteBalanceSessionsByBaseUrl(data.siteBalanceSessionsByBaseUrl);
-    return data;
+    const normalizedResult = {
+      ...data,
+      defaultWorkingDirectory: data.defaultWorkingDirectory ?? "",
+    };
+    setDefaultWorkingDirectory(normalizedResult.defaultWorkingDirectory);
+    return normalizedResult;
   }
 
   async function refreshAll(syncEditor = false) {
@@ -372,14 +390,17 @@ function App() {
       ? getSiteBalanceSessionsForBaseUrl(data.siteBalanceSessionsByBaseUrl, selectedProfile.url)
         .find((session) => session.id === selectedProfile.balance_session_id)
       : undefined;
-    const snapshot = selectedProfile
-      ? buildSelectedProfileDraft(
-          selectedProfile,
-          data.state.runtime_by_profile[selectedKey],
-          data.state.selected_provider,
-          selectedSession,
-        )
-      : buildNewProfileDraft(data.state.selected_provider);
+    const snapshot = withDefaultWorkingDirectory(
+      selectedProfile
+        ? buildSelectedProfileDraft(
+            selectedProfile,
+            data.state.runtime_by_profile[selectedKey],
+            data.state.selected_provider,
+            selectedSession,
+          )
+        : buildNewProfileDraft(data.state.selected_provider),
+      data.defaultWorkingDirectory || defaultWorkingDirectory,
+    );
 
     setEditingKey(selectedProfile ? selectedKey : "");
     applyDraftSnapshot(snapshot);
@@ -391,13 +412,7 @@ function App() {
       return;
     }
     if (draftBalanceSessionSelection === "auto") {
-      if (
-        draftBalanceSession.label
-        || draftBalanceSession.access_token
-        || draftBalanceSession.user_id
-      ) {
-        setDraftBalanceSession(emptyBalanceSessionDraft());
-      }
+      setDraftBalanceSession(emptyBalanceSessionDraft());
       return;
     }
 
@@ -413,11 +428,8 @@ function App() {
       access_token: matched.access_token,
       user_id: matched.user_id,
     };
-    if (!balanceSessionDraftsEqual(nextDraft, draftBalanceSession)) {
-      setDraftBalanceSession(nextDraft);
-    }
+    setDraftBalanceSession(nextDraft);
   }, [
-    draftBalanceSession,
     draftBalanceSessionSelection,
     draftSiteBalanceSessions,
   ]);
@@ -488,7 +500,10 @@ function App() {
     setIsBusy(true);
     setErrorMessage(null);
     try {
-      const snapshot = options.snapshot ?? currentDraftSnapshot();
+      const snapshot = withDefaultWorkingDirectory(
+        options.snapshot ?? currentDraftSnapshot(),
+        defaultWorkingDirectory,
+      );
       const siteSessions = getSiteBalanceSessionsForBaseUrl(siteBalanceSessionsByBaseUrl, snapshot.url);
       let balanceSessionId: string | undefined;
 
@@ -649,14 +664,20 @@ function App() {
     if (!(await resolveUnsavedProfileChanges())) {
       return;
     }
-    const snapshot = buildNewProfileDraft(state?.selected_provider ?? PROVIDER_CLAUDE);
+    const snapshot = withDefaultWorkingDirectory(
+      buildNewProfileDraft(state?.selected_provider ?? PROVIDER_CLAUDE),
+      defaultWorkingDirectory,
+    );
     setEditingKey("");
     applyDraftSnapshot(snapshot);
     setEditorBaseline(snapshot);
   }
 
   function clearDraft() {
-    applyDraftSnapshot(buildNewProfileDraft(state?.selected_provider ?? PROVIDER_CLAUDE));
+    applyDraftSnapshot(withDefaultWorkingDirectory(
+      buildNewProfileDraft(state?.selected_provider ?? PROVIDER_CLAUDE),
+      defaultWorkingDirectory,
+    ));
   }
 
   async function handleCloneProfile() {
@@ -780,18 +801,22 @@ function App() {
     }
     const runtime = launchState.runtime_by_profile[launchState.selected_profile_key]
       ?? defaultRuntimeSettings(launchState.selected_provider);
+    const launchRuntime = {
+      ...runtime,
+      cwd: runtime.cwd.trim() || defaultWorkingDirectory,
+    };
 
     const request = {
       profile_key: launchState.selected_profile_key,
       provider: launchState.selected_provider,
-      runtime_settings: { ...runtime, launch_mode: mode },
+      runtime_settings: { ...launchRuntime, launch_mode: mode },
       session_id: sessionId,
       permission_override: permissionOverride,
     };
 
     try {
       await window.profileManager.launch(request);
-      await handleLoadProfilesSessions(launchState, runtime.cwd);
+      await handleLoadProfilesSessions(launchState, launchRuntime.cwd);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "启动失败");
     }
@@ -839,7 +864,7 @@ function App() {
       return;
     }
     const runtime = nextState.runtime_by_profile[nextState.selected_profile_key];
-    const cwd = cwdOverride ?? draftCwd ?? runtime?.cwd ?? "";
+    const cwd = cwdOverride ?? (draftCwd.trim() || runtime?.cwd.trim() || defaultWorkingDirectory);
     if (!cwd.trim()) {
       setProfilesSessions([]);
       setProfilesSelectedSessionId("");
@@ -928,10 +953,14 @@ function App() {
     try {
       const runtime = state.runtime_by_profile[historyRestoreProfileKey]
         ?? defaultRuntimeSettings(selectedProfile.provider);
+      const previewRuntime = {
+        ...runtime,
+        cwd: runtime.cwd.trim() || defaultWorkingDirectory,
+      };
       const nextPreview = (await window.profileManager.previewForDraft(
         selectedProfile,
         {
-          ...runtime,
+          ...previewRuntime,
           launch_mode: "resume_selected",
         },
         undefined,
@@ -960,7 +989,11 @@ function App() {
 
     const runtime = state.runtime_by_profile[historyRestoreProfileKey]
       ?? defaultRuntimeSettings(selectedProfile.provider);
-    if (!runtime.cwd.trim()) {
+    const launchRuntime = {
+      ...runtime,
+      cwd: runtime.cwd.trim() || defaultWorkingDirectory,
+    };
+    if (!launchRuntime.cwd.trim()) {
       setErrorMessage("所选 Profile 当前未设置工作目录，请先设置后再恢复。");
       return;
     }
@@ -969,7 +1002,7 @@ function App() {
       profile_key: historyRestoreProfileKey,
       provider: selectedHistorySession.provider,
       runtime_settings: {
-        ...runtime,
+        ...launchRuntime,
         launch_mode: "resume_selected" as const,
       },
       session_id: selectedHistorySession.session_id,
@@ -1009,6 +1042,7 @@ function App() {
     historySelectedSessionId,
     historyRestoreProfileKey,
     historySessions,
+    defaultWorkingDirectory,
   ]);
 
   async function handlePickWorkingDirectory() {
@@ -1091,8 +1125,10 @@ function App() {
   async function handleFetchSiteModels() {
     if (!window.profileManager || !state) return;
     const cacheKey = normalizeBalanceBaseUrl(draftUrl);
-    setModelCatalogBusy(true);
-    setModelCatalogError(null);
+    setModelCatalogFetchByBaseUrl((current) => ({
+      ...current,
+      [cacheKey]: { busy: true, error: null },
+    }));
     try {
       const result = await window.profileManager.fetchSiteModels({
         url: draftUrl,
@@ -1105,10 +1141,18 @@ function App() {
           fetchedAt: new Date().toLocaleString(),
         },
       }));
+      setModelCatalogFetchByBaseUrl((current) => ({
+        ...current,
+        [cacheKey]: { busy: false, error: null },
+      }));
     } catch (err) {
-      setModelCatalogError(err instanceof Error ? err.message : "获取远端模型失败");
-    } finally {
-      setModelCatalogBusy(false);
+      setModelCatalogFetchByBaseUrl((current) => ({
+        ...current,
+        [cacheKey]: {
+          busy: false,
+          error: err instanceof Error ? err.message : "获取远端模型失败",
+        },
+      }));
     }
   }
 
@@ -1181,8 +1225,11 @@ function App() {
   const modelCatalogCacheEntry = modelCatalogCacheKey
     ? modelCatalogByBaseUrl[modelCatalogCacheKey]
     : undefined;
+  const modelCatalogFetchState = modelCatalogFetchByBaseUrl[modelCatalogCacheKey];
   const modelOptions = modelCatalogCacheEntry?.models ?? EMPTY_MODEL_OPTIONS;
   const modelFetchedAt = modelCatalogCacheEntry?.fetchedAt;
+  const modelFetchBusy = modelCatalogFetchState?.busy ?? false;
+  const modelFetchError = modelCatalogFetchState?.error ?? null;
   const modelFetchSuccess = modelCatalogCacheEntry
     ? `已获取${modelCatalogCacheEntry.models.length}个模型`
     : null;
@@ -1441,8 +1488,8 @@ function App() {
             provider: selectedProvider,
             modelOptions,
             modelFetchedAt,
-            modelFetchBusy: modelCatalogBusy,
-            modelFetchError: modelCatalogError,
+            modelFetchBusy,
+            modelFetchError,
             modelFetchSuccess,
             onChange: handleProfileDraftChange,
             onBalanceSessionSelectionChange: handleBalanceSessionSelectionChange,

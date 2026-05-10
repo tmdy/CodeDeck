@@ -6,7 +6,6 @@ interface ProfileItemProps {
   name: string;
   provider: string;
   isSelected: boolean;
-  connectivity?: string; // "success" | "fail" | "pending" | ""
   balanceLabel?: string;
   balanceStatus?: string;
   onSelect: () => void;
@@ -16,7 +15,6 @@ export const ProfileItem = memo(function ProfileItem({
   name,
   provider: _provider,
   isSelected,
-  connectivity,
   balanceLabel,
   balanceStatus,
   onSelect,
@@ -34,9 +32,6 @@ export const ProfileItem = memo(function ProfileItem({
           {balanceLabel}
         </span>
       )}
-      {connectivity === "success" && <span className="profile-item-status success">&#10003;</span>}
-      {connectivity === "fail" && <span className="profile-item-status fail">!</span>}
-      {connectivity === "pending" && <span className="profile-item-status pending">...</span>}
     </button>
   );
 });

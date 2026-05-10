@@ -44,7 +44,7 @@ export class EncryptedConfigStore {
       } catch {
         throw new ConfigLoadError("加密配置文件不是有效 JSON");
       }
-      return decryptProfileConfig(envelope, passphrase);
+      return await decryptProfileConfig(envelope, passphrase);
     } catch (err) {
       if (err instanceof ConfigLoadError) throw err;
       if (err instanceof Error && err.message.includes("配置口令")) throw err;
@@ -69,7 +69,7 @@ export class EncryptedConfigStore {
    * 保存 profiles 到加密文件
    */
   async save(config: EncryptedProfileConfig, passphrase: string): Promise<void> {
-    const envelope = encryptProfileConfig(config, passphrase);
+    const envelope = await encryptProfileConfig(config, passphrase);
 
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     await fs.writeFile(

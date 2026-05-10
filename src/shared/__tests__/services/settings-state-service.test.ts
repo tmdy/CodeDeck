@@ -43,6 +43,14 @@ describe("SettingsStateService", () => {
     expect(state.runtime_by_profile).toEqual({});
   });
 
+  it("should persist the global capability inheritance toggle", async () => {
+    await service.updateParameterSettings({
+      inherit_global_capabilities: false,
+    });
+
+    expect(accessor.get().parameter_settings.inherit_global_capabilities).toBe(false);
+  });
+
   it("should update global settings without touching profile runtime", async () => {
     await accessor.save({
       ...defaultLocalState(),
@@ -72,6 +80,28 @@ describe("SettingsStateService", () => {
       launch_mode: "new",
       extra_args: "",
       exclude_user_settings: true,
+    });
+  });
+
+  it("should normalize sessions tab project scope to global_recent", async () => {
+    await service.updateSessionsTabState("codex", { scope: "project" });
+
+    const state = accessor.get();
+
+    expect(state.sessions_tab_scope_by_provider).toEqual({
+      codex: "global_recent",
+    });
+  });
+
+  it("should still persist sessions tab restore profile selections", async () => {
+    await service.updateSessionsTabState("claude", {
+      restore_profile_key: "claude::Official",
+    });
+
+    const state = accessor.get();
+
+    expect(state.sessions_tab_restore_profile_key_by_provider).toEqual({
+      claude: "claude::Official",
     });
   });
 });

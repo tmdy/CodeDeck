@@ -277,6 +277,70 @@ describe("session-service", () => {
     expect(sessions.every((session) => session.provider === "codex")).toBe(true);
   });
 
+  it("falls back to scanning Codex session files in global_recent scope when session_index is missing", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-no-index-");
+    tempDirs.push(codexRoot);
+    const olderFile = path.join(
+      codexRoot,
+      "sessions",
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-20-00-019df0ff-2000.jsonl",
+    );
+    const newerFile = path.join(
+      codexRoot,
+      "sessions",
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-30-00-019df0ff-2001.jsonl",
+    );
+    await writeJsonl(olderFile, [
+      {
+        type: "session_meta",
+        payload: {
+          id: "019df0ff-2000",
+          cwd: "C:/workspace/older",
+        },
+      },
+      {
+        type: "response_item",
+        payload: { message: "较旧 fallback 会话" },
+      },
+    ]);
+    await writeJsonl(newerFile, [
+      {
+        type: "session_meta",
+        payload: {
+          id: "019df0ff-2001",
+          cwd: "C:/workspace/newer",
+        },
+      },
+      {
+        type: "response_item",
+        payload: { message: "较新 fallback 会话" },
+      },
+    ]);
+    await setFileTime(olderFile, "2026-05-04T10:20:00.000Z");
+    await setFileTime(newerFile, "2026-05-04T10:30:00.000Z");
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, codexRoot);
+
+    expect(sessions.map((session) => session.session_id)).toEqual([
+      "019df0ff-2001",
+      "019df0ff-2000",
+    ]);
+    expect(sessions[0]).toMatchObject({
+      provider: "codex",
+      cwd: "C:/workspace/newer",
+      preview: "较新 fallback 会话",
+    });
+  });
+
   it("skips a bad JSONL file without affecting other sessions", async () => {
     const claudeRoot = await createTempDir("skills-manager-claude-bad-");
     tempDirs.push(claudeRoot);

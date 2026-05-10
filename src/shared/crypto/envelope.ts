@@ -32,14 +32,14 @@ export class ConfigLoadError extends Error {
   }
 }
 
-export function encryptProfiles(profiles: Profile[], passphrase: string): Envelope {
+export async function encryptProfiles(profiles: Profile[], passphrase: string): Promise<Envelope> {
   return encryptPayload(profiles.map(extractSyncedProfile), passphrase);
 }
 
-export function encryptProfileConfig(
+export async function encryptProfileConfig(
   config: EncryptedProfileConfig,
   passphrase: string,
-): Envelope {
+): Promise<Envelope> {
   const normalized = normalizeEncryptedProfileConfig(config);
   return encryptPayload({
     profiles: normalized.profiles.map(extractSyncedProfile),
@@ -49,15 +49,15 @@ export function encryptProfileConfig(
   }, passphrase);
 }
 
-export function decryptProfiles(envelope: Envelope, passphrase: string): Profile[] {
-  return decryptProfileConfig(envelope, passphrase).profiles;
+export async function decryptProfiles(envelope: Envelope, passphrase: string): Promise<Profile[]> {
+  return (await decryptProfileConfig(envelope, passphrase)).profiles;
 }
 
-export function decryptProfileConfig(
+export async function decryptProfileConfig(
   envelope: Envelope,
   passphrase: string,
-): EncryptedProfileConfig {
-  const payload = decryptPayload(envelope, passphrase);
+): Promise<EncryptedProfileConfig> {
+  const payload = await decryptPayload(envelope, passphrase);
   let value: unknown;
   try {
     value = JSON.parse(payload.toString("utf-8"));
@@ -76,13 +76,13 @@ export function decryptProfileConfig(
   return normalized ?? emptyEncryptedProfileConfig();
 }
 
-function encryptPayload(value: unknown, passphrase: string): Envelope {
+async function encryptPayload(value: unknown, passphrase: string): Promise<Envelope> {
   if (!passphrase) {
     throw new ConfigPasswordError("配置口令不能为空");
   }
 
   const salt = generateSalt();
-  const derived = deriveKey(passphrase, salt);
+  const derived = await deriveKey(passphrase, salt);
   const { signingKey, encryptionKey } = splitDerivedKey(derived);
   const payload = Buffer.from(JSON.stringify(value, null, 2), "utf-8");
   const token = encryptFernet(payload, signingKey, encryptionKey);
@@ -94,7 +94,7 @@ function encryptPayload(value: unknown, passphrase: string): Envelope {
   };
 }
 
-function decryptPayload(envelope: Envelope, passphrase: string): Buffer {
+async function decryptPayload(envelope: Envelope, passphrase: string): Promise<Buffer> {
   if (!passphrase) {
     throw new ConfigPasswordError("配置口令不能为空");
   }
@@ -106,7 +106,7 @@ function decryptPayload(envelope: Envelope, passphrase: string): Buffer {
     throw new ConfigLoadError("加密配置文件盐值格式无效");
   }
 
-  const derived = deriveKey(passphrase, salt);
+  const derived = await deriveKey(passphrase, salt);
   const { signingKey, encryptionKey } = splitDerivedKey(derived);
   const payload = decryptFernet(envelope.token, signingKey, encryptionKey);
   if (payload === null) {
