@@ -15,13 +15,13 @@ import {
   splitKey,
   normalizeKeyWithFallback,
 } from "../profile/keys-internal.js";
-import type { ConnectivityTestState } from "../connectivity/types.js";
 import type { BalanceCheckItem, BalanceCheckState } from "../balance/types.js";
 import type { ParameterSettings } from "../parameter/types.js";
 import { normalizeParameterSettings } from "../parameter/types.js";
 import type { LocalState } from "./local-state.js";
 import { defaultLocalState, ensureInitialized } from "./local-state.js";
 import { isSessionListScope, type SessionListScope } from "../services/session-service.js";
+import { normalizeSessionsTabScope } from "../session-history-state.js";
 
 interface RawState {
   selected_provider: string;
@@ -30,7 +30,7 @@ interface RawState {
   selected_profile_key_by_provider: Record<string, string>;
   profile_order_by_provider: Record<string, string[]>;
   runtime_by_profile: Record<string, RuntimeSettings>;
-  connectivity_tests_by_profile: Record<string, ConnectivityTestState>;
+  connectivity_tests_by_profile?: unknown;
   balance_checks_by_profile: Record<string, BalanceCheckState>;
   global_settings: GlobalSettings;
   model_mappings?: unknown[];
@@ -79,7 +79,6 @@ export class LocalStateStore {
       selected_profile_key_by_provider: {},
       profile_order_by_provider: {},
       runtime_by_profile: {},
-      connectivity_tests_by_profile: {},
       balance_checks_by_profile: {},
       global_settings: normalizeGlobalSettings(normalized.global_settings),
       parameter_settings: normalizeParameterSettings(normalized.parameter_settings),
@@ -112,18 +111,6 @@ export class LocalStateStore {
       }
     }
 
-    // 序列化 connectivity tests
-    for (const [key, testState] of Object.entries(normalized.connectivity_tests_by_profile)) {
-      const [prov, name] = splitKey(key);
-      const nKey = normalizeKeyWithFallback(key, prov);
-      if (!nKey) continue;
-
-      const ts = { ...testState };
-      ts.provider = ts.provider ? normalizeProvider(ts.provider) : prov;
-      ts.profile_name = ts.profile_name || name;
-      payload.connectivity_tests_by_profile[nKey] = ts;
-    }
-
     for (const [key, balanceState] of Object.entries(normalized.balance_checks_by_profile)) {
       const [prov, name] = splitKey(key);
       const nKey = normalizeKeyWithFallback(key, prov);
@@ -137,7 +124,7 @@ export class LocalStateStore {
 
     for (const [providerID, scope] of Object.entries(normalized.sessions_tab_scope_by_provider)) {
       if (isSessionListScope(scope)) {
-        payload.sessions_tab_scope_by_provider[normalizeProvider(providerID)] = scope;
+        payload.sessions_tab_scope_by_provider[normalizeProvider(providerID)] = normalizeSessionsTabScope(scope);
       }
     }
 
@@ -217,17 +204,6 @@ function normalizeState(raw: RawState): LocalState {
     state.runtime_by_profile[nKey] = normalizeRuntimeSettings(runtime, prov);
   }
 
-  // connectivity tests
-  for (const [rawKey, testState] of Object.entries(raw.connectivity_tests_by_profile ?? {})) {
-    const nKey = normalizeKeyWithFallback(rawKey, legacyProviderID);
-    if (!nKey) continue;
-    const [prov, name] = splitKey(nKey);
-    const ts = { ...testState };
-    ts.provider = ts.provider ? normalizeProvider(ts.provider) : prov;
-    ts.profile_name = ts.profile_name || name;
-    state.connectivity_tests_by_profile[nKey] = ts;
-  }
-
   for (const [rawKey, balanceState] of Object.entries(raw.balance_checks_by_profile ?? {})) {
     const nKey = normalizeKeyWithFallback(rawKey, legacyProviderID);
     if (!nKey) continue;
@@ -240,7 +216,7 @@ function normalizeState(raw: RawState): LocalState {
 
   for (const [providerID, scope] of Object.entries(raw.sessions_tab_scope_by_provider ?? {})) {
     if (isSessionListScope(scope)) {
-      state.sessions_tab_scope_by_provider[normalizeProvider(providerID)] = scope;
+      state.sessions_tab_scope_by_provider[normalizeProvider(providerID)] = normalizeSessionsTabScope(scope);
     }
   }
 
@@ -271,9 +247,6 @@ export function cloneLocalState(state: LocalState): LocalState {
         k,
         { ...v },
       ]),
-    ),
-    connectivity_tests_by_profile: Object.fromEntries(
-      Object.entries(state.connectivity_tests_by_profile).map(([k, v]) => [k, { ...v }]),
     ),
     balance_checks_by_profile: Object.fromEntries(
       Object.entries(state.balance_checks_by_profile).map(([k, v]) => [k, cloneBalanceCheckState(v)]),

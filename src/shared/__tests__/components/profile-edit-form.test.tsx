@@ -16,6 +16,7 @@ describe("ProfileEditForm", () => {
     return {
       enabled: false,
       claude: {
+        aliasMode: "none",
         defaultTarget: "",
         opusTarget: "",
         sonnetTarget: "",
@@ -73,9 +74,150 @@ describe("ProfileEditForm", () => {
     expect(html).toContain("当前配置专属");
     expect(html).toContain("当前模型 ID");
     expect(html).toContain("获取模型列表");
-    expect(html).toContain("高级模型别名映射");
+    expect(html).toContain("Claude 模型兼容设置");
     expect(html).not.toContain("Claude Profile 需要当前 Base URL");
     expect(html).not.toContain(">代理<");
+  });
+
+  it("should render Claude single-model compatibility controls without explanatory helper text", () => {
+    const mapping = makeAdvancedMapping();
+    mapping.enabled = true;
+    mapping.claude = {
+      ...mapping.claude,
+      aliasMode: "single_model_compat",
+    };
+
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "GLM", url: "https://api.aicod.com", key: "sk", selectedModelId: "glm-5.1", advancedModelMapping: mapping }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        siteBalanceSessions={[]}
+        balanceSessionSelection="auto"
+        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+        onChange={vi.fn()}
+        onBalanceSessionSelectionChange={vi.fn()}
+        onBalanceSessionDraftChange={vi.fn()}
+        onDeleteSiteBalanceSession={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Claude 模型兼容设置");
+    expect(html).toContain("主会话模型");
+    expect(html).toContain("glm-5.1");
+    expect(html).toContain("第三方单模型兼容模式");
+    expect(html).not.toContain("将 Opus / Sonnet / Haiku / Subagent 全部指向当前模型");
+    expect(html).not.toContain("ANTHROPIC_DEFAULT_OPUS_MODEL");
+    expect(html).not.toContain("ANTHROPIC_DEFAULT_SONNET_MODEL");
+    expect(html).not.toContain("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+    expect(html).not.toContain("CLAUDE_CODE_SUBAGENT_MODEL");
+    expect(html).not.toContain("这些不是 CLI 参数");
+  });
+
+  it("should not render Claude compatibility controls for Codex profiles", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "Codex", url: "https://api.openai.com/v1", key: "sk", selectedModelId: "gpt-5.5", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "codex",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="codex"
+        modelOptions={[]}
+        siteBalanceSessions={[]}
+        balanceSessionSelection="auto"
+        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+        onChange={vi.fn()}
+        onBalanceSessionSelectionChange={vi.fn()}
+        onBalanceSessionDraftChange={vi.fn()}
+        onDeleteSiteBalanceSession={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).not.toContain("Claude 模型兼容设置");
+    expect(html).toContain("Codex 命令行模型覆盖");
+  });
+
+  it("should offer a recommended compatibility action for third-party Claude models", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onAdvancedModelMappingChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "GLM", url: "https://api.aicod.com", key: "sk", selectedModelId: "glm-5.1", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          siteBalanceSessions={[]}
+          balanceSessionSelection="auto"
+          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
+          onChange={vi.fn()}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onDeleteSiteBalanceSession={vi.fn()}
+          onAdvancedModelMappingChange={onAdvancedModelMappingChange}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("当前模型 glm-5.1 看起来是第三方模型");
+    const applyButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "应用推荐设置",
+    );
+    expect(applyButton).toBeInstanceOf(HTMLButtonElement);
+
+    await act(async () => {
+      applyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onAdvancedModelMappingChange).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: true,
+      claude: expect.objectContaining({ aliasMode: "single_model_compat" }),
+    }));
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 
   it("should render model configuration before site balance sessions with model help beside the field title", () => {
@@ -282,7 +424,7 @@ describe("ProfileEditForm", () => {
         balanceSessionSelection="auto"
         balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         modelFetchedAt="2026/5/5 14:55:20"
-        modelFetchSuccess="已更新当前站点模型列表"
+        modelFetchSuccess="已获取2个模型"
         onChange={vi.fn()}
         onBalanceSessionSelectionChange={vi.fn()}
         onBalanceSessionDraftChange={vi.fn()}
@@ -296,8 +438,8 @@ describe("ProfileEditForm", () => {
       />,
     );
 
-    expect(html).toContain("最近获取：2026/5/5 14:55:20");
-    expect(html).toContain("已更新当前站点模型列表");
+    expect(html).toContain("最近获取：2026/5/5 14:55:20，已获取2个模型");
+    expect(html).not.toContain("已更新当前站点模型列表");
     expect(html).not.toContain("banner success");
   });
 

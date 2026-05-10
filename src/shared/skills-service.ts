@@ -28,6 +28,8 @@ import type {
   ProjectSkillRecord,
   ProjectSkillStatus,
   PreviewItem,
+  DirectoryEntryScanSignature,
+  FileScanSignature,
   ScanManifest,
   SkillHost,
   SkillLocation,
@@ -226,7 +228,45 @@ function applyTranslations(record: SkillRecord, translation?: SkillTranslationEn
 }
 
 function signaturesEqual(left: SkillScanSignature | undefined, right: SkillScanSignature): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (!left) {
+    return false;
+  }
+
+  return left.sourcePath === right.sourcePath
+    && left.expectedActivePath === right.expectedActivePath
+    && left.expectedLibraryPath === right.expectedLibraryPath
+    && left.status === right.status
+    && left.location === right.location
+    && left.inActive === right.inActive
+    && left.inLibrary === right.inLibrary
+    && left.sourceDirectoryMtimeMs === right.sourceDirectoryMtimeMs
+    && fileSignaturesEqual(left.skillMd, right.skillMd)
+    && fileSignaturesEqual(left.readme, right.readme)
+    && directoryEntrySignatureArraysEqual(left.topLevelEntries, right.topLevelEntries);
+}
+
+function fileSignaturesEqual(left: FileScanSignature, right: FileScanSignature): boolean {
+  return left.exists === right.exists
+    && left.mtimeMs === right.mtimeMs
+    && left.size === right.size;
+}
+
+function directoryEntrySignaturesEqual(
+  left: DirectoryEntryScanSignature,
+  right: DirectoryEntryScanSignature,
+): boolean {
+  return left.name === right.name && left.type === right.type;
+}
+
+function directoryEntrySignatureArraysEqual(
+  left: readonly DirectoryEntryScanSignature[],
+  right: readonly DirectoryEntryScanSignature[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((entry, index) => directoryEntrySignaturesEqual(entry, right[index]));
 }
 
 async function mapWithConcurrency<T, R>(

@@ -20,6 +20,7 @@ const profile: Profile = {
   url: "https://new-api.example.com/v1",
   key: "sk-relay",
 };
+const DEFAULT_DOWNLOADS_CWD = "C:/Users/99395/Downloads";
 
 function createState(runtime: RuntimeSettings): LocalState {
   const key = itemKey(profile);
@@ -47,9 +48,9 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
-function createProfileManagerFixture() {
+function createProfileManagerFixture(options: { initialCwd?: string } = {}) {
   const runtime: RuntimeSettings = {
-    cwd: "C:/workspace/initial",
+    cwd: options.initialCwd ?? "C:/workspace/initial",
     command_base: "claude",
     model: "",
     settings_file: "",
@@ -57,7 +58,8 @@ function createProfileManagerFixture() {
     extra_args: "",
     exclude_user_settings: true,
   };
-  const state = createState(runtime);
+  let state = createState(runtime);
+  let currentProfile = { ...profile };
   const firstPreview = createDeferred<CommandPreview>();
   const secondPreview = createDeferred<CommandPreview>();
 
@@ -67,20 +69,24 @@ function createProfileManagerFixture() {
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
     listProfiles: vi.fn(async () => ({
-      profiles: [{ ...profile }],
+      profiles: [{ ...currentProfile }],
       state: {
         ...state,
         selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
         profile_order_by_provider: { ...state.profile_order_by_provider },
         runtime_by_profile: { ...state.runtime_by_profile },
-        connectivity_tests_by_profile: { ...state.connectivity_tests_by_profile },
         balance_checks_by_profile: { ...state.balance_checks_by_profile },
         sessions_tab_scope_by_provider: { ...state.sessions_tab_scope_by_provider },
         sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
       },
       siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
     })),
-    saveProfile: vi.fn(async (_targetKey, draft) => draft),
+    saveProfile: vi.fn(async (_targetKey, draft, runtimeDraft) => {
+      currentProfile = { ...draft };
+      state = createState(runtimeDraft);
+      return currentProfile;
+    }),
     deleteProfile: vi.fn(async () => undefined),
     cloneProfile: vi.fn(async () => ({ ...profile, provider: "codex" as const })),
     selectProfile: vi.fn(async () => undefined),
@@ -95,7 +101,7 @@ function createProfileManagerFixture() {
       updated_at: "2026-05-05T10:00:00.000Z",
     })),
     deleteSiteBalanceSession: vi.fn(async () => undefined),
-    pickWorkingDirectory: vi.fn(async () => undefined),
+    pickWorkingDirectory: vi.fn(async () => "C:/workspace/picked"),
     openBaseUrl: vi.fn(async () => undefined),
     previewForDraft: vi.fn()
       .mockImplementationOnce(async () => firstPreview.promise)
@@ -106,17 +112,6 @@ function createProfileManagerFixture() {
     listSessions: vi.fn(async () => []),
     refreshSessions: vi.fn(async () => undefined),
     updateSessionsTabState: vi.fn(async () => undefined),
-    testConnection: vi.fn(async () => undefined),
-    getConnectivityState: vi.fn(async () => ({
-      provider: "claude",
-      profile_name: "Relay",
-      base_url: "https://new-api.example.com",
-      running: false,
-      success: false,
-      message: "",
-      command_used: "",
-      finished_at_display: "",
-    })),
     testBalance: vi.fn(async () => undefined),
     getBalanceState: vi.fn(async () => ({
       provider: "claude",
@@ -140,7 +135,6 @@ function createProfileManagerFixture() {
     promptUnsavedProfileAction: vi.fn(async () => "save" as const),
     promptLaunchWithUnsavedChanges: vi.fn(async () => "save_and_launch" as const),
     onStateChanged: vi.fn(() => () => undefined),
-    onConnectivityProgress: vi.fn(() => () => undefined),
     onBalanceProgress: vi.fn(() => () => undefined),
     onUnlockError: vi.fn(() => () => undefined),
   };
@@ -227,6 +221,222 @@ describe("App command preview", () => {
 
     expect(container.textContent).toContain("latest-preview");
     expect(container.textContent).not.toContain("old-preview");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("uses the downloads directory as the visible cwd when saved runtime cwd is empty", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture({ initialCwd: "" });
+    window.profileManager = fixture.manager;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const cwdInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "默认使用下载目录",
+    );
+    expect(cwdInput).toBeInstanceOf(HTMLInputElement);
+    expect((cwdInput as HTMLInputElement).value).toBe(DEFAULT_DOWNLOADS_CWD);
+    expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: DEFAULT_DOWNLOADS_CWD,
+      profile_key: "claude::Relay",
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("persists the downloads directory when saving a profile without a saved runtime cwd", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture({ initialCwd: "" });
+    window.profileManager = fixture.manager;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const saveButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "保存",
+    );
+    expect(saveButton).toBeDefined();
+
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.saveProfile).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.saveProfile).toHaveBeenLastCalledWith(
+      "claude::Relay",
+      expect.objectContaining({ name: "Relay" }),
+      expect.objectContaining({ cwd: DEFAULT_DOWNLOADS_CWD }),
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("uses the downloads directory when launching a saved profile whose runtime cwd is empty", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture({ initialCwd: "" });
+    window.profileManager = fixture.manager;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const launchButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "直接启动",
+    );
+    expect(launchButton).toBeDefined();
+
+    await act(async () => {
+      launchButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.launch).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.launch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        profile_key: "claude::Relay",
+        runtime_settings: expect.objectContaining({ cwd: DEFAULT_DOWNLOADS_CWD }),
+      }),
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("does not reload profile sessions while editing cwd until the cwd is saved", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture();
+    window.profileManager = fixture.manager;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/initial",
+      profile_key: "claude::Relay",
+    });
+
+    const cwdInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "默认使用下载目录",
+    );
+    expect(cwdInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(cwdInput, "C:/workspace/draft");
+      cwdInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      cwdInput?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.saveProfile).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(2);
+    expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/draft",
+      profile_key: "claude::Relay",
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("reloads profile sessions after picking and saving a cwd", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture();
+    window.profileManager = fixture.manager;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
+
+    const pickButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "选择",
+    );
+    expect(pickButton).toBeDefined();
+
+    await act(async () => {
+      pickButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.pickWorkingDirectory).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.saveProfile).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(2);
+    expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/picked",
+      profile_key: "claude::Relay",
+    });
 
     await act(async () => {
       root.unmount();

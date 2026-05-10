@@ -5,7 +5,6 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../../../App.jsx";
 import { defaultBalanceCheckState } from "../../balance/types.js";
-import { defaultTestState } from "../../connectivity/types.js";
 import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
 import { itemKey } from "../../profile/keys-internal.js";
 import type { Profile, RuntimeSettings } from "../../profile/types.js";
@@ -34,7 +33,6 @@ function cloneState(state: LocalState): LocalState {
     selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
     profile_order_by_provider: { ...state.profile_order_by_provider },
     runtime_by_profile: { ...state.runtime_by_profile },
-    connectivity_tests_by_profile: { ...state.connectivity_tests_by_profile },
     balance_checks_by_profile: { ...state.balance_checks_by_profile },
     sessions_tab_scope_by_provider: { ...state.sessions_tab_scope_by_provider },
     sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
@@ -103,6 +101,7 @@ function createProviderRaceFixture() {
       profiles: profiles.map((profile) => ({ ...profile })),
       state: cloneState(state),
       siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: "C:/Users/99395/Downloads",
     })),
     saveProfile: vi.fn(async (_targetKey, draft) => draft),
     deleteProfile: vi.fn(async () => undefined),
@@ -152,8 +151,6 @@ function createProviderRaceFixture() {
           : state.sessions_tab_restore_profile_key_by_provider,
       };
     }),
-    testConnection: vi.fn(async () => undefined),
-    getConnectivityState: vi.fn(async () => defaultTestState()),
     testBalance: vi.fn(async () => undefined),
     getBalanceState: vi.fn(async () => defaultBalanceCheckState()),
     getModelMappings: vi.fn(async () => createDefaultModelMappingsState()),
@@ -166,7 +163,6 @@ function createProviderRaceFixture() {
     promptUnsavedProfileAction: vi.fn(async () => "discard" as const),
     promptLaunchWithUnsavedChanges: vi.fn(async () => "launch_saved" as const),
     onStateChanged: vi.fn(() => () => undefined),
-    onConnectivityProgress: vi.fn(() => () => undefined),
     onBalanceProgress: vi.fn(() => () => undefined),
     onUnlockError: vi.fn(() => () => undefined),
   };
@@ -201,8 +197,8 @@ describe("App session history provider switching", () => {
     });
     expect(fixture.listSessions).toHaveBeenCalledWith({
       provider: "codex",
-      scope: "project",
-      cwd: "C:/repo-codex",
+      scope: "global_recent",
+      profile_key: "codex::Codex AI",
     });
 
     const claudeButton = Array.from(container.querySelectorAll("button")).find(

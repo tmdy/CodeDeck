@@ -3,8 +3,13 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import type {
   AdvancedModelMapping,
+  ClaudeModelAliasMode,
   LaunchMode,
   ProviderID,
+} from "../../shared/profile/types.js";
+import {
+  resolveClaudeModelAliasMode,
+  shouldRecommendClaudeSingleModelCompatibility,
 } from "../../shared/profile/types.js";
 import { defaultProfilePermissions, normalizeProfilePermissions, type ProfilePermissions } from "../../shared/profile/permissions.js";
 import type { SiteBalanceSession } from "../../shared/balance/site-balance-sessions.js";
@@ -98,7 +103,11 @@ export const ProfileEditForm = memo(function ProfileEditForm({
 }: ProfileEditFormProps) {
   const [showApiKey, setShowApiKey] = useState(false);
   const advancedMapping = draft.advancedModelMapping;
+  const claudeAliasMode = resolveClaudeModelAliasMode(advancedMapping);
   const customPermissions = draft.permissions != null;
+  const shouldRecommendSingleModelCompat = provider === "claude"
+    && shouldRecommendClaudeSingleModelCompatibility(draft.url, draft.selectedModelId)
+    && claudeAliasMode !== "single_model_compat";
   const effectiveOnPermissionsChange = onPermissionsChange ?? noopPermissionsChange;
   const displayedPermissions = useMemo(
     () => customPermissions
@@ -119,7 +128,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     () => [
       modelFetchedAt ? `最近获取：${modelFetchedAt}` : "",
       modelFetchSuccess ?? "",
-    ].filter(Boolean).join(" · "),
+    ].filter(Boolean).join("，"),
     [modelFetchedAt, modelFetchSuccess],
   );
 
@@ -138,6 +147,49 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     });
   }, [advancedMapping, onAdvancedModelMappingChange]);
 
+  const updateClaudeAliasMode = useCallback((aliasMode: ClaudeModelAliasMode) => {
+    onAdvancedModelMappingChange({
+      ...advancedMapping,
+      enabled: aliasMode !== "none" || (provider === "codex" && advancedMapping.enabled),
+      claude: {
+        ...advancedMapping.claude,
+        aliasMode,
+      },
+      codex: {
+        ...advancedMapping.codex,
+      },
+    });
+  }, [advancedMapping, onAdvancedModelMappingChange, provider]);
+
+  const updateClaudeAliasTarget = useCallback((field: "defaultTarget" | "opusTarget" | "sonnetTarget" | "haikuTarget" | "subagentTarget", value: string) => {
+    onAdvancedModelMappingChange({
+      ...advancedMapping,
+      enabled: true,
+      claude: {
+        ...advancedMapping.claude,
+        aliasMode: "custom",
+        [field]: value,
+      },
+      codex: {
+        ...advancedMapping.codex,
+      },
+    });
+  }, [advancedMapping, onAdvancedModelMappingChange]);
+
+  const applyRecommendedClaudeCompatibility = useCallback(() => {
+    onAdvancedModelMappingChange({
+      ...advancedMapping,
+      enabled: true,
+      claude: {
+        ...advancedMapping.claude,
+        aliasMode: "single_model_compat",
+      },
+      codex: {
+        ...advancedMapping.codex,
+      },
+    });
+  }, [advancedMapping, onAdvancedModelMappingChange]);
+
   const handlePermissionsInheritChange = useCallback((inherit: boolean) => {
     effectiveOnPermissionsChange(
       inherit
@@ -152,6 +204,11 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   const handlePermissionsChange = useCallback((permissions: ProfilePermissions) => {
     effectiveOnPermissionsChange(permissions);
   }, [effectiveOnPermissionsChange]);
+
+  const handleClearSelectedModel = useCallback(() => {
+    onChange("selectedModelId", "");
+    onDraftCommit?.("selectedModelId", "");
+  }, [onChange, onDraftCommit]);
 
   return (
     <div className="profile-edit-form">
@@ -240,6 +297,11 @@ export const ProfileEditForm = memo(function ProfileEditForm({
           <button type="button" className="secondary-button small" onClick={onFetchModels} disabled={disabled || modelFetchBusy}>
             {modelFetchBusy ? "获取中..." : "获取模型列表"}
           </button>
+          {draft.selectedModelId && (
+            <button type="button" className="secondary-button small" onClick={handleClearSelectedModel} disabled={disabled}>
+              清除
+            </button>
+          )}
           {modelFetchStatus && <span className="muted" style={{whiteSpace: "nowrap"}}>{modelFetchStatus}</span>}
         </div>
         {modelFetchError && <div className="banner error">{modelFetchError}</div>}
@@ -334,7 +396,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
               value={runtime.cwd}
               onChange={(e) => onRuntimeChange("cwd", e.target.value)}
               onBlur={() => onRuntimeCommit?.("cwd")}
-              placeholder="留空使用系统默认"
+              placeholder="默认使用下载目录"
               disabled={disabled}
             />
             <button type="button" className="secondary-button" onClick={onPickCwd} disabled={disabled}>
@@ -394,72 +456,110 @@ export const ProfileEditForm = memo(function ProfileEditForm({
         </label>
       </GlassCard>
 
-      <GlassCard title="高级选项" subtitle="默认关闭，仅在确实需要别名映射或覆盖行为时启用">
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={advancedMapping.enabled}
-            onChange={(e) => updateAdvancedMapping({ enabled: e.target.checked })}
-            disabled={disabled}
-          />
-          启用高级模型别名映射
-        </label>
-        {advancedMapping.enabled && provider === "claude" && (
-          <div className="mapping-grid">
-            <label>
-              Default Target
-              <input
-                value={advancedMapping.claude?.defaultTarget ?? ""}
-                onChange={(e) => updateAdvancedMapping({ claude: { defaultTarget: e.target.value } })}
-                disabled={disabled}
-              />
-            </label>
-            <label>
-              Opus Target
-              <input
-                value={advancedMapping.claude?.opusTarget ?? ""}
-                onChange={(e) => updateAdvancedMapping({ claude: { opusTarget: e.target.value } })}
-                disabled={disabled}
-              />
-            </label>
-            <label>
-              Sonnet Target
-              <input
-                value={advancedMapping.claude?.sonnetTarget ?? ""}
-                onChange={(e) => updateAdvancedMapping({ claude: { sonnetTarget: e.target.value } })}
-                disabled={disabled}
-              />
-            </label>
-            <label>
-              Haiku Target
-              <input
-                value={advancedMapping.claude?.haikuTarget ?? ""}
-                onChange={(e) => updateAdvancedMapping({ claude: { haikuTarget: e.target.value } })}
-                disabled={disabled}
-              />
-            </label>
-            <label>
-              Subagent Target
-              <input
-                value={advancedMapping.claude?.subagentTarget ?? ""}
-                onChange={(e) => updateAdvancedMapping({ claude: { subagentTarget: e.target.value } })}
-                disabled={disabled}
-              />
-            </label>
-          </div>
-        )}
-        {advancedMapping.enabled && provider === "codex" && (
+      {provider === "claude" && (
+        <GlassCard title="Claude 模型兼容设置" subtitle="用于第三方 Anthropic-compatible 网关的 Claude 内部模型别名覆盖">
+          <p className="session-meta">主会话模型：{draft.selectedModelId.trim() || "(未设置)"}</p>
+          {shouldRecommendSingleModelCompat && (
+            <div className="banner warning">
+              当前模型 {draft.selectedModelId.trim()} 看起来是第三方模型。Claude Code 内部子代理可能仍调用 haiku/sonnet/opus alias，建议开启“第三方单模型兼容模式”。
+              <div className="inline-actions">
+                <button
+                  type="button"
+                  className="secondary-button small"
+                  onClick={applyRecommendedClaudeCompatibility}
+                  disabled={disabled}
+                >
+                  应用推荐设置
+                </button>
+              </div>
+            </div>
+          )}
+          <label>
+            模型别名模式
+            <select
+              value={claudeAliasMode}
+              onChange={(e) => updateClaudeAliasMode(e.target.value as ClaudeModelAliasMode)}
+              disabled={disabled}
+            >
+              <option value="none">无覆盖</option>
+              <option value="single_model_compat">第三方单模型兼容模式</option>
+              <option value="custom">高级自定义</option>
+            </select>
+          </label>
+          {claudeAliasMode === "custom" && (
+            <div className="mapping-grid">
+              <label>
+                Default alias
+                <input
+                  value={advancedMapping.claude?.defaultTarget ?? ""}
+                  onChange={(e) => updateClaudeAliasTarget("defaultTarget", e.target.value)}
+                  placeholder="可选：覆盖 ANTHROPIC_MODEL"
+                  disabled={disabled}
+                />
+              </label>
+              <label>
+                Opus alias
+                <input
+                  value={advancedMapping.claude?.opusTarget ?? ""}
+                  onChange={(e) => updateClaudeAliasTarget("opusTarget", e.target.value)}
+                  placeholder={draft.selectedModelId || "例如 glm-5.1"}
+                  disabled={disabled}
+                />
+              </label>
+              <label>
+                Sonnet alias
+                <input
+                  value={advancedMapping.claude?.sonnetTarget ?? ""}
+                  onChange={(e) => updateClaudeAliasTarget("sonnetTarget", e.target.value)}
+                  placeholder={draft.selectedModelId || "例如 glm-5.1"}
+                  disabled={disabled}
+                />
+              </label>
+              <label>
+                Haiku alias
+                <input
+                  value={advancedMapping.claude?.haikuTarget ?? ""}
+                  onChange={(e) => updateClaudeAliasTarget("haikuTarget", e.target.value)}
+                  placeholder={draft.selectedModelId || "例如 glm-5.1-fast"}
+                  disabled={disabled}
+                />
+              </label>
+              <label>
+                Subagent
+                <input
+                  value={advancedMapping.claude?.subagentTarget ?? ""}
+                  onChange={(e) => updateClaudeAliasTarget("subagentTarget", e.target.value)}
+                  placeholder={draft.selectedModelId || "例如 glm-5.1"}
+                  disabled={disabled}
+                />
+              </label>
+            </div>
+          )}
+        </GlassCard>
+      )}
+
+      {provider === "codex" && (
+        <GlassCard title="高级选项" subtitle="默认关闭，仅在确实需要覆盖 Codex 命令行模型时启用">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={advancedMapping.enabled}
+              onChange={(e) => updateAdvancedMapping({ enabled: e.target.checked })}
+              disabled={disabled}
+            />
+            启用高级模型别名映射
+          </label>
           <label>
             Codex 命令行模型覆盖
             <input
               value={advancedMapping.codex?.commandLineModelOverride ?? ""}
-              onChange={(e) => updateAdvancedMapping({ codex: { commandLineModelOverride: e.target.value } })}
+              onChange={(e) => updateAdvancedMapping({ enabled: true, codex: { commandLineModelOverride: e.target.value } })}
               placeholder="可选：仅在需要显式追加 --model 时填写"
-              disabled={disabled}
+              disabled={disabled || !advancedMapping.enabled}
             />
           </label>
-        )}
-      </GlassCard>
+        </GlassCard>
+      )}
 
       <div className="form-actions">
         <button type="button" onClick={onSave} disabled={disabled}>

@@ -4,7 +4,6 @@
 import type { ProfileKey } from "../profile/types.js";
 import type { RuntimeSettings, GlobalSettings } from "../profile/types.js";
 import { DEFAULT_PROVIDER, normalizeProvider, defaultGlobalSettings } from "../profile/types.js";
-import type { ConnectivityTestState } from "../connectivity/types.js";
 import type { BalanceCheckState } from "../balance/types.js";
 import type { ParameterSettings } from "../parameter/types.js";
 import { defaultParameterSettings, normalizeParameterSettings } from "../parameter/types.js";
@@ -16,7 +15,6 @@ export interface LocalState {
   selected_profile_key_by_provider: Record<string, ProfileKey>;
   profile_order_by_provider: Record<string, ProfileKey[]>;
   runtime_by_profile: Record<ProfileKey, RuntimeSettings>;
-  connectivity_tests_by_profile: Record<ProfileKey, ConnectivityTestState>;
   balance_checks_by_profile: Record<ProfileKey, BalanceCheckState>;
   global_settings: GlobalSettings;
   /** 遗留的全局模型映射配置，仅为兼容旧状态读取 */
@@ -36,7 +34,6 @@ export function defaultLocalState(): LocalState {
     selected_profile_key_by_provider: {},
     profile_order_by_provider: {},
     runtime_by_profile: {},
-    connectivity_tests_by_profile: {},
     balance_checks_by_profile: {},
     global_settings: defaultGlobalSettings(),
     parameter_settings: defaultParameterSettings(),
@@ -57,7 +54,6 @@ export function ensureInitialized(state: LocalState): LocalState {
   state.selected_profile_key_by_provider ??= {};
   state.profile_order_by_provider ??= {};
   state.runtime_by_profile ??= {};
-  state.connectivity_tests_by_profile ??= {};
   state.balance_checks_by_profile ??= {};
   state.global_settings ??= defaultGlobalSettings();
   state.parameter_settings = normalizeParameterSettings(

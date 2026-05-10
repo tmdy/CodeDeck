@@ -17,8 +17,16 @@ export const SALT_LENGTH = 16;
  * 等价于 Python:
  *   PBKDF2HMAC(algorithm=SHA256(), length=32, salt=salt, iterations=480000)
  */
-export function deriveKey(password: string, salt: Buffer): Buffer {
-  return crypto.pbkdf2Sync(password, salt, KDF_ITERATIONS, KDF_KEY_LENGTH, "sha256");
+export function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    crypto.pbkdf2(password, salt, KDF_ITERATIONS, KDF_KEY_LENGTH, "sha256", (err, derivedKey) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(derivedKey);
+    });
+  });
 }
 
 /**

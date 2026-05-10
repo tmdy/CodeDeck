@@ -1,5 +1,4 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -18,19 +17,28 @@ import { EncryptedConfigStore } from "../src/shared/crypto/store.js";
 import { LocalStateStore } from "../src/shared/state/store.js";
 import { ProfileService } from "../src/shared/services/profile-service.js";
 import { LaunchService } from "../src/shared/services/launch-service.js";
+import { CapabilityOverlayService } from "../src/shared/services/capability-overlay-service.js";
 import { SettingsStateService, type SessionsTabStatePatch } from "../src/shared/services/settings-state-service.js";
 import { ModelMappingConfigService } from "../src/shared/services/model-mapping-config-service.js";
 import { ModelCatalogService } from "../src/shared/services/model-catalog-service.js";
 import { BalanceService, normalizeBalanceBaseUrl } from "../src/shared/services/balance-service.js";
 import {
+  buildProfileBalanceCheckState,
   resolveBalanceAuth,
+  resolveSharedBalanceProfileKeys,
   type SiteBalanceSessionDraft,
   type SiteBalanceSessionsByBaseUrl,
 } from "../src/shared/balance/site-balance-sessions.js";
 import { pickDirectoryPath } from "../src/shared/electron/dialog-helpers.js";
+import { createDebugLogWriter } from "../src/shared/electron/debug-log.js";
 import { executeLaunchPlan, type ExternalTerminalLaunchSpec } from "../src/shared/electron/launch-runtime.js";
 import { resolveBaseUrlExternalTarget } from "../src/shared/electron/open-url.js";
-import { listSessionsForProvider, type ListSessionsRequest } from "../src/shared/services/session-service.js";
+import {
+  listClaudeSessions,
+  listCodexSessions,
+  listSessionsForProvider,
+  type ListSessionsRequest,
+} from "../src/shared/services/session-service.js";
 import {
   type LocalState,
 } from "../src/shared/state/local-state.js";
@@ -43,7 +51,6 @@ import {
 } from "../src/shared/profile/types.js";
 import { itemKey } from "../src/shared/profile/keys-internal.js";
 import type { LaunchRequest, CommandPreview } from "../src/shared/launcher/types.js";
-import type { ConnectivityTestState } from "../src/shared/connectivity/types.js";
 import {
   defaultBalanceCheckState,
   type BalanceCheckState,
@@ -67,6 +74,7 @@ let skillsService: SkillsManagerService | null = null;
 // ---- Profile 服务实例 ----
 let profileService: ProfileService | null = null;
 let launchService: LaunchService | null = null;
+let capabilityOverlayService: CapabilityOverlayService | null = null;
 let settingsStateService: SettingsStateService | null = null;
 let modelMappingConfigService: ModelMappingConfigService | null = null;
 let modelCatalogService: ModelCatalogService | null = null;
@@ -78,17 +86,16 @@ let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
 let mainWindow: BrowserWindow | null = null;
 let isTransitioningFromUnlock = false;
+const debugLogWriter = createDebugLogWriter({
+  getDirectory: () => path.join(projectRoot || process.cwd(), "app-data"),
+});
 
 function writeDebugLog(message: string): void {
-  try {
-    const dir = path.join(projectRoot || process.cwd(), "app-data");
-    mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, "unlock-debug.log");
-    const line = `[${new Date().toISOString()}] ${message}\n`;
-    appendFileSync(file, line, "utf-8");
-  } catch {
-    // ignore logging failures
-  }
+  debugLogWriter.write(message);
+}
+
+function getDefaultWorkingDirectory(): string {
+  return app.getPath("downloads").replace(/\\/g, "/");
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -127,6 +134,11 @@ function getLaunchService(): LaunchService {
   return launchService;
 }
 
+function getCapabilityOverlayService(): CapabilityOverlayService {
+  if (!capabilityOverlayService) throw new Error("Capability Overlay 服务尚未初始化。");
+  return capabilityOverlayService;
+}
+
 function getSettingsStateService(): SettingsStateService {
   if (!settingsStateService) throw new Error("Settings 服务尚未初始化。");
   return settingsStateService;
@@ -145,6 +157,13 @@ function getModelCatalogService(): ModelCatalogService {
 function getBalanceService(): BalanceService {
   if (!balanceService) throw new Error("Balance 服务尚未初始化。");
   return balanceService;
+}
+
+async function resolveCodexSessionHome(request: ListSessionsRequest): Promise<string | undefined> {
+  if (request.provider.trim().toLowerCase() !== "codex") {
+    return undefined;
+  }
+  return getModelMappingConfigService().ensureCodexRuntimeHome();
 }
 
 function getProfileStateAccessor(): StateAccessor {
@@ -229,6 +248,30 @@ async function spawnExternalTerminal(spec: ExternalTerminalLaunchSpec): Promise<
   });
 }
 
+async function prepareCapabilityOverlay(request: LaunchRequest): Promise<LaunchRequest["capability_overlay"]> {
+  if (!getSettingsStateService().getParameterSettings().inherit_global_capabilities) {
+    return undefined;
+  }
+  const provider = request.provider.trim().toLowerCase();
+  if (provider === "claude") {
+    return {
+      claude: await getCapabilityOverlayService().prepareClaudeOverlay({
+        profileId: request.profile_key,
+      }),
+    };
+  }
+  if (provider === "codex") {
+    const profileHome = await getModelMappingConfigService().ensureCodexRuntimeHome();
+    return {
+      codex: await getCapabilityOverlayService().prepareCodexOverlay({
+        profileId: request.profile_key,
+        profileHome,
+      }),
+    };
+  }
+  return undefined;
+}
+
 // ---- 初始化 Profile 服务 ----
 
 async function initProfileServices(): Promise<void> {
@@ -246,6 +289,9 @@ async function initProfileServices(): Promise<void> {
   const statePath = path.join(appDataDir, LOCAL_STATE_FILE);
   localStateStore = new LocalStateStore(statePath);
   modelMappingConfigService = new ModelMappingConfigService({ appDataRoot: appDataDir });
+  capabilityOverlayService = new CapabilityOverlayService({
+    overlayRoot: path.join(appDataDir, "runtime-overlays"),
+  });
   modelCatalogService = new ModelCatalogService();
   balanceService = new BalanceService();
   modelMappingsStateCache = await modelMappingConfigService.load();
@@ -272,13 +318,28 @@ async function loadProfilesAndState(
   };
 }
 
-async function persistBalanceState(profileKey: ProfileKey, nextState: BalanceCheckState): Promise<void> {
+async function persistBalanceState(
+  profileKeys: ProfileKey[],
+  nextState: BalanceCheckState,
+): Promise<Array<[ProfileKey, BalanceCheckState]>> {
+  const profiles = getProfileService().getProfiles();
+  const profileByKey = new Map(profiles.map((profile) => [itemKey(profile), profile]));
   const state = getProfileService().getState();
-  state.balance_checks_by_profile[profileKey] = {
-    ...nextState,
-    items: nextState.items.map((item) => ({ ...item })),
-  };
+  const savedStates: Array<[ProfileKey, BalanceCheckState]> = [];
+
+  for (const profileKey of profileKeys) {
+    const profile = profileByKey.get(profileKey);
+    if (!profile) {
+      continue;
+    }
+
+    const targetState = buildProfileBalanceCheckState(profile, nextState);
+    state.balance_checks_by_profile[profileKey] = targetState;
+    savedStates.push([profileKey, targetState]);
+  }
+
   await getProfileStateAccessor().save(state);
+  return savedStates;
 }
 
 function emitBalanceProgress(profileKey: ProfileKey, nextState: BalanceCheckState): void {
@@ -287,18 +348,29 @@ function emitBalanceProgress(profileKey: ProfileKey, nextState: BalanceCheckStat
   });
 }
 
-async function saveAndEmitBalanceState(profileKey: ProfileKey, nextState: BalanceCheckState): Promise<void> {
-  await persistBalanceState(profileKey, nextState);
-  emitBalanceProgress(profileKey, nextState);
+async function saveAndEmitBalanceState(profileKeys: ProfileKey[], nextState: BalanceCheckState): Promise<void> {
+  const savedStates = await persistBalanceState(profileKeys, nextState);
+  for (const [profileKey, state] of savedStates) {
+    emitBalanceProgress(profileKey, state);
+  }
 }
 
 async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
-  const profile = getProfileService()
-    .getProfiles()
-    .find((item) => itemKey(item) === profileKey);
+  const profiles = getProfileService().getProfiles();
+  const profile = profiles.find((item) => itemKey(item) === profileKey);
   if (!profile) {
     throw new Error("Profile 不存在");
   }
+  const siteBalanceSessionsByBaseUrl = getProfileService().getSiteBalanceSessionsByBaseUrl();
+  const sharedProfileKeys = resolveSharedBalanceProfileKeys(
+    profiles,
+    profileKey,
+    siteBalanceSessionsByBaseUrl,
+  );
+  const resolvedAuth = resolveBalanceAuth(
+    profile,
+    siteBalanceSessionsByBaseUrl,
+  );
 
   const runningState: BalanceCheckState = {
     ...defaultBalanceCheckState(),
@@ -310,14 +382,10 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
     message: "正在检测余额...",
   };
 
-  await saveAndEmitBalanceState(profileKey, runningState);
+  await saveAndEmitBalanceState(sharedProfileKeys, runningState);
 
   try {
     const timeoutMs = getSettingsStateService().getParameterSettings().connectivity_test_timeout_ms;
-    const resolvedAuth = resolveBalanceAuth(
-      profile,
-      getProfileService().getSiteBalanceSessionsByBaseUrl(),
-    );
     let finalState: BalanceCheckState;
 
     if (resolvedAuth.kind === "ambiguous_multiple_sessions") {
@@ -351,13 +419,13 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
           : null,
       );
     }
-    await saveAndEmitBalanceState(profileKey, {
+    await saveAndEmitBalanceState(sharedProfileKeys, {
       ...finalState,
       running: false,
       finished_at_display: new Date().toLocaleString(),
     });
   } catch (error) {
-    await saveAndEmitBalanceState(profileKey, {
+    await saveAndEmitBalanceState(sharedProfileKeys, {
       ...defaultBalanceCheckState(),
       provider: profile.provider,
       profile_name: profile.name,
@@ -482,6 +550,7 @@ async function createUnlockWindow(): Promise<string> {
         launchService = new LaunchService(profileService, {
           getModelMappingsState: () => currentModelMappingsState(),
           codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
+          codexRuntimeHome: getModelMappingConfigService().getCodexRuntimeHome(),
         });
         settingsStateService = new SettingsStateService(stateAccessor);
 
@@ -633,6 +702,7 @@ function registerAllIpcHandlers(): void {
       launchService = new LaunchService(profileService, {
         getModelMappingsState: () => currentModelMappingsState(),
         codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
+        codexRuntimeHome: getModelMappingConfigService().getCodexRuntimeHome(),
       });
       settingsStateService = new SettingsStateService(stateAccessor);
       return { success: true };
@@ -668,6 +738,7 @@ function registerAllIpcHandlers(): void {
       profiles: svc.getProfiles(),
       state: svc.getState(),
       siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
+      defaultWorkingDirectory: getDefaultWorkingDirectory(),
     };
   });
 
@@ -780,18 +851,24 @@ function registerAllIpcHandlers(): void {
   );
 
   ipcMain.handle("launcher:launch", async (_event, request: LaunchRequest) => {
-    const plan = getLaunchService().buildExecutionPlan(request);
+    const capability_overlay = await prepareCapabilityOverlay(request);
+    const plan = getLaunchService().buildExecutionPlan({
+      ...request,
+      capability_overlay,
+    });
     if (!plan.valid) {
       throw new Error(plan.error || "无法生成启动命令");
     }
     if (plan.codexConfig) {
       await getModelMappingConfigService().writeCodexProfile({
         profileId: request.profile_key,
+        profileName: plan.codexConfig.profileName,
         providerId: plan.codexConfig.providerId,
         providerName: plan.codexConfig.providerName,
         baseUrl: plan.codexConfig.baseUrl,
         apiKeyEnv: plan.codexConfig.apiKeyEnv,
         targetModel: plan.codexConfig.targetModel,
+        content: plan.codexConfig.content,
       });
     }
 
@@ -806,7 +883,11 @@ function registerAllIpcHandlers(): void {
   ipcMain.handle(
     "session:list",
     async (_event, request: ListSessionsRequest) => {
-      return listSessionsForProvider(request);
+      const codexHome = await resolveCodexSessionHome(request);
+      return listSessionsForProvider(request, {
+        listClaudeSessions,
+        listCodexSessions: (sessionRequest) => listCodexSessions(sessionRequest, codexHome),
+      });
     },
   );
 
@@ -818,67 +899,6 @@ function registerAllIpcHandlers(): void {
     "session:update-tab-state",
     async (_event, provider: string, patch: SessionsTabStatePatch) => {
       await getSettingsStateService().updateSessionsTabState(provider, patch);
-    },
-  );
-
-  // Connectivity
-  ipcMain.handle(
-    "connectivity:test",
-    async (_event, profileKey: ProfileKey) => {
-      // 异步连接测试
-      const profile = getProfileService()
-        .getProfiles()
-        .find((p) => itemKey(p) === profileKey);
-      if (!profile) throw new Error("Profile 不存在");
-
-      // 通知渲染进程测试开始
-      const progress: ConnectivityTestState = {
-        provider: profile.provider,
-        profile_name: profile.name,
-        base_url: profile.url,
-        running: true,
-        success: false,
-        message: "正在测试连接...",
-        command_used: "",
-        finished_at_display: "",
-      };
-      BrowserWindow.getAllWindows().forEach((win) => {
-        win.webContents.send("connectivity:test-progress", profileKey, progress);
-      });
-
-      // TODO: 实际连接测试实现
-      // 这里先做一个简单的模拟
-      setTimeout(() => {
-        const final: ConnectivityTestState = {
-          ...progress,
-          running: false,
-          success: true,
-          message: "连接测试功能开发中",
-          finished_at_display: new Date().toLocaleString(),
-        };
-        BrowserWindow.getAllWindows().forEach((win) => {
-          win.webContents.send("connectivity:test-progress", profileKey, final);
-        });
-      }, 1000);
-    },
-  );
-
-  ipcMain.handle(
-    "connectivity:get-state",
-    (_event, profileKey: ProfileKey): ConnectivityTestState => {
-      const state = getProfileService().getState();
-      return (
-        state.connectivity_tests_by_profile[profileKey] ?? {
-          provider: "",
-          profile_name: "",
-          base_url: "",
-          running: false,
-          success: false,
-          message: "",
-          command_used: "",
-          finished_at_display: "",
-        }
-      );
     },
   );
 

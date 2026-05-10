@@ -139,6 +139,166 @@ describe("LaunchService", () => {
     expect(plan.launchMode).toBe("resume_selected");
   });
 
+  it("should inject all Claude aliases when single-model compatibility mode is enabled", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "GLM",
+      url: "https://api.aicod.com",
+      key: "sk-glm",
+      selectedModelId: "glm-5.1",
+      advancedModelMapping: {
+        enabled: true,
+        claude: {
+          aliasMode: "single_model_compat",
+        },
+      },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime({ command_base: "claude" }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.command).toBe('claude --setting-sources "project,local" --model glm-5.1 --permission-mode default');
+    expect(plan.commandArgs).toEqual([
+      "--setting-sources",
+      "project,local",
+      "--model",
+      "glm-5.1",
+      "--permission-mode",
+      "default",
+    ]);
+    expect(plan.env.ANTHROPIC_MODEL).toBe("glm-5.1");
+    expect(plan.env.ANTHROPIC_CUSTOM_MODEL_OPTION).toBe("glm-5.1");
+    expect(plan.env.ANTHROPIC_CUSTOM_MODEL_OPTION_NAME).toBe("glm-5.1");
+    expect(plan.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("glm-5.1");
+    expect(plan.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("glm-5.1");
+    expect(plan.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("glm-5.1");
+    expect(plan.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe("glm-5.1");
+  });
+
+  it("should include prepared Claude capability overlay arguments while excluding user settings", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Overlay",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+      selectedModelId: "claude-sonnet-4-6",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime({ settings_file: "C:/custom/settings.json" }),
+      capability_overlay: {
+        claude: {
+          settingsFile: "C:/overlay/settings.global-capabilities.json",
+          addDirs: ["C:/overlay/add-dir"],
+          pluginDirs: ["C:/Users/test/.claude/plugins/cache/document-skills"],
+          mcpConfigPaths: ["C:/overlay/mcp-config.json"],
+        },
+      },
+    } as Parameters<LaunchService["buildExecutionPlan"]>[0]);
+
+    expect(plan.valid).toBe(true);
+    expect(plan.commandArgs.slice(0, 6)).toEqual([
+      "--setting-sources",
+      "project,local",
+      "--settings",
+      "C:/custom/settings.json",
+      "--settings",
+      "C:/overlay/settings.global-capabilities.json",
+    ]);
+    expect(plan.commandArgs).toEqual(expect.arrayContaining(["--add-dir", "C:/overlay/add-dir"]));
+    expect(plan.commandArgs).toEqual(expect.arrayContaining(["--plugin-dir", "C:/Users/test/.claude/plugins/cache/document-skills"]));
+    expect(plan.commandArgs.slice(-2)).toEqual(["--mcp-config", "C:/overlay/mcp-config.json"]);
+    expect(plan.capabilitySummary).toBe("继承全局能力：MCP / Skills / Plugins");
+  });
+
+  it("should not inject Claude family aliases when alias mode is none", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "GLM",
+      url: "https://api.aicod.com",
+      key: "sk-glm",
+      selectedModelId: "glm-5.1",
+      advancedModelMapping: {
+        enabled: true,
+        claude: {
+          aliasMode: "none",
+        },
+      },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime({ command_base: "claude" }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.env.ANTHROPIC_MODEL).toBe("glm-5.1");
+    expect(plan.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+    expect(plan.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    expect(plan.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+    expect(plan.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+  });
+
+  it("should inject separately configured Claude aliases in custom mode", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "GLM",
+      url: "https://api.aicod.com",
+      key: "sk-glm",
+      selectedModelId: "glm-5.1",
+      advancedModelMapping: {
+        enabled: true,
+        claude: {
+          aliasMode: "custom",
+          opusTarget: "glm-5.1-opus",
+          sonnetTarget: "glm-5.1-sonnet",
+          haikuTarget: "glm-5.1-fast",
+          subagentTarget: "glm-5.1-subagent",
+        },
+      },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime({ command_base: "claude" }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.env.ANTHROPIC_MODEL).toBe("glm-5.1");
+    expect(plan.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("glm-5.1-opus");
+    expect(plan.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("glm-5.1-sonnet");
+    expect(plan.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("glm-5.1-fast");
+    expect(plan.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe("glm-5.1-subagent");
+  });
+
   it("should build Codex config.toml from the raw selectedModelId without adding a model flag to the command", () => {
     const profile: Profile = {
       provider: "codex",
@@ -161,25 +321,30 @@ describe("LaunchService", () => {
     });
 
     expect(preview.valid).toBe(true);
-    expect(preview.command).toBe("cc");
+    expect(preview.command).toBe("cc --profile site-a632b8ac583c81de");
     expect(preview.cwd).toBe("C:/workspace/current-project");
     expect(preview.command).not.toContain("--model");
     expect(preview.env).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           name: "CODEX_HOME",
-          displayValue: "C:/workspace/app-data/codex-profiles/codex__GLM",
+          displayValue: "C:/workspace/app-data/codex-runtime/home",
         }),
         expect.objectContaining({
-          name: "CODEX_SITE_API_KEY",
+          name: "CODEX_SITE_API_KEY_A632B8AC583C81DE",
           displayValue: "[已设置]",
           sensitive: true,
         }),
       ]),
     );
+    expect(plan.commandArgs).toEqual(["--profile", "site-a632b8ac583c81de"]);
     expect(plan.codexConfig?.content).toContain('base_url = "https://open.bigmodel.cn/api/paas/v4"');
     expect(plan.codexConfig?.content).toContain('model = "glm-4.6"');
-    expect(plan.env.CODEX_HOME).toBe("C:/workspace/app-data/codex-profiles/codex__GLM");
+    expect(plan.codexConfig?.content).toContain('[profiles."site-a632b8ac583c81de"]');
+    expect(plan.codexConfig?.content).toContain("[model_providers.site_provider_a632b8ac583c81de]");
+    expect(plan.codexConfig?.profileName).toBe("site-a632b8ac583c81de");
+    expect(plan.env.CODEX_HOME).toBe("C:/workspace/app-data/codex-runtime/home");
+    expect(plan.env.CODEX_SITE_API_KEY_A632B8AC583C81DE).toBe("sk-glm");
   });
 
   it("should allow an explicit Codex command-line model override only in advanced mapping mode", () => {
@@ -210,7 +375,37 @@ describe("LaunchService", () => {
 
     expect(plan.valid).toBe(true);
     expect(plan.codexConfig?.content).toContain('model = "kimi-k2-0711-preview"');
-    expect(plan.command).toBe("codex --model gpt-5.5");
+    expect(plan.command).toBe("codex --profile site-39b645351a70122a --model gpt-5.5");
+  });
+
+  it("should keep Codex resume modes while applying the site profile", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "GLM",
+      url: "https://open.bigmodel.cn/api/paas/v4",
+      key: "sk-glm",
+      selectedModelId: "glm-4.6",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+    });
+
+    const continuePlan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex", launch_mode: "continue_last" }),
+    });
+    const selectedPlan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex", launch_mode: "resume_selected" }),
+      session_id: "019df0ff-0001",
+    });
+
+    expect(continuePlan.command).toBe("codex resume --last --profile site-a632b8ac583c81de");
+    expect(selectedPlan.command).toBe('codex resume "019df0ff-0001" --profile site-a632b8ac583c81de');
   });
 
   it("should mark preview invalid when cwd is missing", () => {
@@ -308,7 +503,7 @@ describe("LaunchService", () => {
     });
 
     expect(plan.valid).toBe(true);
-    expect(plan.command).toBe("codex");
+    expect(plan.command).toBe("codex --profile site-2badb974b243c949");
     expect(plan.commandArgs).not.toContain("--model");
     expect(plan.codexConfig?.content).toContain('base_url = "https://api.openai.com/v1"');
     expect(plan.codexConfig?.content).not.toContain("model =");

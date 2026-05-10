@@ -120,7 +120,7 @@ describe("LaunchService permissions", () => {
     expect(plan.codexConfig?.content).toContain('sandbox_mode = "workspace-write"');
     expect(plan.codexConfig?.content).toContain('approval_policy = "on-request"');
     expect(plan.codexConfig?.content).toContain("web_search = false");
-    expect(plan.codexConfig?.content).toContain("[sandbox_workspace_write]");
+    expect(plan.codexConfig?.content).toContain(".sandbox_workspace_write]");
     expect(plan.codexConfig?.content).toContain("network_access = false");
     expect(plan.codexConfig?.content).toContain('writable_roots = ["C:/shared"]');
   });

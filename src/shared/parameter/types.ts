@@ -27,7 +27,9 @@ export interface CLISpecificSettings {
 export interface ParameterSettings {
   /** 启动超时（毫秒） */
   launch_timeout_ms: number;
-  /** 连接测试超时（毫秒） */
+  /** 启动时继承全局 MCP 和 Skills，但不继承普通全局设置 */
+  inherit_global_capabilities: boolean;
+  /** 余额检测超时（毫秒）。字段名沿用旧配置以避免迁移。 */
   connectivity_test_timeout_ms: number;
   /** 每个 Provider 的默认参数 */
   provider_defaults: Record<string, ProviderParameterDefaults>;
@@ -61,6 +63,8 @@ export function normalizeParameterSettings(settings?: Partial<ParameterSettings>
   }
   const normalized: ParameterSettings = {
     launch_timeout_ms: settings?.launch_timeout_ms ?? defaults.launch_timeout_ms,
+    inherit_global_capabilities:
+      settings?.inherit_global_capabilities ?? defaults.inherit_global_capabilities,
     connectivity_test_timeout_ms:
       settings?.connectivity_test_timeout_ms ?? defaults.connectivity_test_timeout_ms,
     provider_defaults: settings?.provider_defaults ?? defaults.provider_defaults,
@@ -94,6 +98,7 @@ export function normalizeParameterSettings(settings?: Partial<ParameterSettings>
 export function defaultParameterSettings(): ParameterSettings {
   return {
     launch_timeout_ms: 30000,
+    inherit_global_capabilities: true,
     connectivity_test_timeout_ms: 60000,
     provider_defaults: {},
     launch_mode_args: {

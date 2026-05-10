@@ -280,7 +280,6 @@ export class ProfileService {
     const st = cloneLocalState(this.stateAccessor.get());
 
     delete st.runtime_by_profile[nKey];
-    delete st.connectivity_tests_by_profile[nKey];
     delete st.balance_checks_by_profile[nKey];
     st.profile_order_by_provider[provID] = removeProfileKey(
       st.profile_order_by_provider[provID] ?? [],
@@ -561,14 +560,6 @@ function migrateProfileStateKey(
   if (st.runtime_by_profile[previousKey] !== undefined) {
     st.runtime_by_profile[nextKey] = st.runtime_by_profile[previousKey];
     delete st.runtime_by_profile[previousKey];
-  }
-  if (st.connectivity_tests_by_profile[previousKey] !== undefined) {
-    st.connectivity_tests_by_profile[nextKey] = {
-      ...st.connectivity_tests_by_profile[previousKey],
-      provider: saved.provider,
-      profile_name: saved.name,
-    };
-    delete st.connectivity_tests_by_profile[previousKey];
   }
   if (st.balance_checks_by_profile[previousKey] !== undefined) {
     st.balance_checks_by_profile[nextKey] = {

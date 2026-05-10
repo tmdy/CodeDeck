@@ -97,9 +97,11 @@ describe("PBKDF2 key derivation", () => {
     expect(salt.length).toBe(16);
   });
 
-  it("should derive 32-byte key", () => {
+  it("should derive the key asynchronously", async () => {
     const salt = generateSalt();
-    const key = deriveKey("password", salt);
+    const keyPromise = deriveKey("password", salt);
+    expect(keyPromise).toBeInstanceOf(Promise);
+    const key = await keyPromise;
     expect(key.length).toBe(32);
   });
 });

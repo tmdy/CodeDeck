@@ -16,7 +16,6 @@ import type {
 // Profile Manager types
 import type { Profile, ProfileKey, RuntimeSettings, GlobalSettings } from "./shared/profile/types.js";
 import type { CommandPreview, LaunchRequest } from "./shared/launcher/types.js";
-import type { ConnectivityTestState } from "./shared/connectivity/types.js";
 import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ModelMappingsState } from "./shared/model-mapping/config-types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
@@ -66,6 +65,7 @@ declare global {
         profiles: Profile[];
         state: LocalState;
         siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+        defaultWorkingDirectory: string;
       }>;
       saveProfile: (targetKey: ProfileKey, draft: Profile, runtime: RuntimeSettings) => Promise<Profile>;
       deleteProfile: (key: ProfileKey) => Promise<void>;
@@ -96,9 +96,7 @@ declare global {
         patch: { scope?: SessionListScope; restore_profile_key?: ProfileKey },
       ) => Promise<void>;
 
-      // Connectivity
-      testConnection: (profileKey: ProfileKey) => Promise<void>;
-      getConnectivityState: (profileKey: ProfileKey) => Promise<ConnectivityTestState>;
+      // Balance
       testBalance: (profileKey: ProfileKey) => Promise<void>;
       getBalanceState: (profileKey: ProfileKey) => Promise<BalanceCheckState>;
 
@@ -117,7 +115,6 @@ declare global {
 
       // Events
       onStateChanged: (callback: (state: LocalState) => void) => () => void;
-      onConnectivityProgress: (callback: (key: ProfileKey, state: ConnectivityTestState) => void) => () => void;
       onBalanceProgress: (callback: (key: ProfileKey, state: BalanceCheckState) => void) => () => void;
       onUnlockError: (callback: (message: string) => void) => () => void;
     };

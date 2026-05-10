@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Profile } from "../../profile/types.js";
 import {
+  buildProfileBalanceCheckState,
   describeBalanceSessionHint,
   normalizeBalanceBaseUrl,
   resolveBalanceAuth,
+  resolveSharedBalanceProfileKeys,
   type SiteBalanceSession,
 } from "../../balance/site-balance-sessions.js";
+import type { BalanceCheckState } from "../../balance/types.js";
 
 function makeProfile(overrides: Partial<Profile> = {}): Profile {
   return {
@@ -25,6 +28,22 @@ function makeSession(id: string, label: string): SiteBalanceSession {
     access_token: `token-${id}`,
     user_id: `${id.length * 10}`,
     updated_at: "2026-05-05T09:00:00.000Z",
+  };
+}
+
+function makeBalanceState(overrides: Partial<BalanceCheckState> = {}): BalanceCheckState {
+  return {
+    provider: "codex",
+    profile_name: "Source",
+    base_url: "https://new-api.example.com",
+    running: false,
+    supported: true,
+    success: true,
+    message: "余额已更新",
+    items: [{ label: "USD", remaining: 12.34, total: 20, used: 7.66, unit: "$" }],
+    endpoint: "https://new-api.example.com/api/user/self",
+    finished_at_display: "2026/05/07 15:00:00",
+    ...overrides,
   };
 }
 
@@ -134,5 +153,107 @@ describe("site-balance-sessions", () => {
     );
 
     expect(hint).toBe("后台会话：所绑定会话已被删除");
+  });
+
+  it("shares balance state for explicit sessions on the same normalized site", () => {
+    const profiles: Profile[] = [
+      makeProfile({ name: "Root", url: "https://new-api.example.com/v1", balance_session_id: "sess-a" }),
+      makeProfile({ name: "Completions", url: "https://new-api.example.com/v1/chat/completions", balance_session_id: "sess-a" }),
+    ];
+
+    expect(
+      resolveSharedBalanceProfileKeys(profiles, "codex::Root", {
+        "https://new-api.example.com": [makeSession("sess-a", "后台 A")],
+      }),
+    ).toEqual(["codex::Root", "codex::Completions"]);
+  });
+
+  it("shares an explicit session with auto mode when the site has a single session", () => {
+    const profiles: Profile[] = [
+      makeProfile({ name: "Bound", balance_session_id: "sess-a" }),
+      makeProfile({ name: "Auto" }),
+    ];
+
+    expect(
+      resolveSharedBalanceProfileKeys(profiles, "codex::Bound", {
+        "https://new-api.example.com": [makeSession("sess-a", "后台 A")],
+      }),
+    ).toEqual(["codex::Bound", "codex::Auto"]);
+  });
+
+  it("keeps different explicit sessions isolated on the same site", () => {
+    const profiles: Profile[] = [
+      makeProfile({ name: "Account A", balance_session_id: "sess-a" }),
+      makeProfile({ name: "Account B", balance_session_id: "sess-b" }),
+    ];
+
+    expect(
+      resolveSharedBalanceProfileKeys(profiles, "codex::Account A", {
+        "https://new-api.example.com": [
+          makeSession("sess-a", "后台 A"),
+          makeSession("sess-b", "后台 B"),
+        ],
+      }),
+    ).toEqual(["codex::Account A"]);
+  });
+
+  it("does not share an ambiguous auto session across profiles", () => {
+    const profiles: Profile[] = [
+      makeProfile({ name: "Auto A" }),
+      makeProfile({ name: "Auto B" }),
+    ];
+
+    expect(
+      resolveSharedBalanceProfileKeys(profiles, "codex::Auto A", {
+        "https://new-api.example.com": [
+          makeSession("sess-a", "后台 A"),
+          makeSession("sess-b", "后台 B"),
+        ],
+      }),
+    ).toEqual(["codex::Auto A"]);
+  });
+
+  it("shares the same site session across providers", () => {
+    const profiles: Profile[] = [
+      makeProfile({ provider: "codex", name: "Codex", balance_session_id: "sess-a" }),
+      makeProfile({ provider: "claude", name: "Claude", balance_session_id: "sess-a" }),
+    ];
+
+    expect(
+      resolveSharedBalanceProfileKeys(profiles, "codex::Codex", {
+        "https://new-api.example.com": [makeSession("sess-a", "后台 A")],
+      }),
+    ).toEqual(["codex::Codex", "claude::Claude"]);
+  });
+
+  it("does not share sessions across different normalized sites", () => {
+    const profiles: Profile[] = [
+      makeProfile({ name: "Site A", url: "https://new-api.example.com/v1", balance_session_id: "sess-a" }),
+      makeProfile({ name: "Site B", url: "https://other.example.com/v1", balance_session_id: "sess-a" }),
+    ];
+
+    expect(
+      resolveSharedBalanceProfileKeys(profiles, "codex::Site A", {
+        "https://new-api.example.com": [makeSession("sess-a", "后台 A")],
+        "https://other.example.com": [{ ...makeSession("sess-a", "后台 A"), base_url: "https://other.example.com" }],
+      }),
+    ).toEqual(["codex::Site A"]);
+  });
+
+  it("builds per-profile balance states without leaking source profile identity", () => {
+    const targetProfile = makeProfile({
+      provider: "claude",
+      name: "Target",
+      url: "https://new-api.example.com/v1/chat/completions",
+    });
+    const state = makeBalanceState({ running: true, success: false, message: "正在检测余额..." });
+
+    expect(buildProfileBalanceCheckState(targetProfile, state)).toEqual({
+      ...state,
+      provider: "claude",
+      profile_name: "Target",
+      base_url: "https://new-api.example.com",
+      items: [{ label: "USD", remaining: 12.34, total: 20, used: 7.66, unit: "$" }],
+    });
   });
 });

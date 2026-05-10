@@ -28,8 +28,19 @@ export function ParameterSettingsPanel({
             disabled={disabled}
           />
         </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={settings.inherit_global_capabilities ?? true}
+            onChange={(e) =>
+              onChange({ inherit_global_capabilities: e.target.checked })
+            }
+            disabled={disabled}
+          />
+          启动时继承全局 MCP 和 Skills
+        </label>
         <label>
-          连接测试超时 (毫秒)
+          余额检测超时 (毫秒)
           <input
             type="number"
             value={settings.connectivity_test_timeout_ms ?? 60000}

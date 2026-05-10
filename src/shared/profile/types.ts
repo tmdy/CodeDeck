@@ -27,7 +27,10 @@ export type ProfilePermissionsInput = Partial<Omit<ProfilePermissions, "common">
   common?: Partial<CommonPermissionSettings>;
 };
 
+export type ClaudeModelAliasMode = "none" | "single_model_compat" | "custom";
+
 export interface ClaudeAdvancedModelMapping {
+  aliasMode?: ClaudeModelAliasMode;
   defaultTarget?: string;
   opusTarget?: string;
   sonnetTarget?: string;
@@ -174,7 +177,9 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
   if (!value) {
     return undefined;
   }
+  const aliasMode = resolveClaudeModelAliasMode(value);
   const claude = value.claude ? {
+    aliasMode,
     defaultTarget: value.claude.defaultTarget?.trim() || undefined,
     opusTarget: value.claude.opusTarget?.trim() || undefined,
     sonnetTarget: value.claude.sonnetTarget?.trim() || undefined,
@@ -190,6 +195,42 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
     claude,
     codex,
   };
+}
+
+export function resolveClaudeModelAliasMode(value?: AdvancedModelMapping): ClaudeModelAliasMode {
+  if (!value?.enabled) {
+    return "none";
+  }
+  const rawMode = value.claude?.aliasMode;
+  if (rawMode === "none" || rawMode === "single_model_compat" || rawMode === "custom") {
+    return rawMode;
+  }
+  const hasLegacyTargets = Boolean(
+    value.claude?.defaultTarget?.trim()
+    || value.claude?.opusTarget?.trim()
+    || value.claude?.sonnetTarget?.trim()
+    || value.claude?.haikuTarget?.trim()
+    || value.claude?.subagentTarget?.trim(),
+  );
+  return hasLegacyTargets ? "custom" : "none";
+}
+
+export function isOfficialAnthropicBaseUrl(baseUrl: string): boolean {
+  try {
+    const hostname = new URL(baseUrl.trim()).hostname.toLowerCase();
+    return hostname === "api.anthropic.com" || hostname.endsWith(".anthropic.com");
+  } catch {
+    return false;
+  }
+}
+
+export function shouldRecommendClaudeSingleModelCompatibility(baseUrl: string, selectedModelId: string): boolean {
+  const url = baseUrl.trim();
+  const model = selectedModelId.trim().toLowerCase();
+  if (!url || !model) {
+    return false;
+  }
+  return !(model.startsWith("claude-") && isOfficialAnthropicBaseUrl(url));
 }
 
 export function normalizeGlobalSettings(settings: GlobalSettings): GlobalSettings {

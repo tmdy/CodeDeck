@@ -22,12 +22,41 @@ describe("LocalStateStore", () => {
     const store = await makeStore();
     const state = defaultLocalState();
     state.parameter_settings.launch_timeout_ms = 12345;
+    state.parameter_settings.inherit_global_capabilities = false;
 
     await store.save(state);
     const loaded = await store.load();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    const persisted = JSON.parse(await readFile(rawPath, "utf-8"));
 
     expect(loaded.parameter_settings.launch_timeout_ms).toBe(12345);
+    expect(loaded.parameter_settings.inherit_global_capabilities).toBe(false);
     expect(loaded.selected_profile_key).toBe("");
+    expect("connectivity_tests_by_profile" in persisted).toBe(false);
+  });
+
+  it("should enable inherited global capabilities by default for legacy state", async () => {
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    await writeFile(
+      rawPath,
+      JSON.stringify({
+        selected_provider: "claude",
+        selected_profile_key: "",
+        selected_profile_key_by_provider: {},
+        profile_order_by_provider: {},
+        runtime_by_profile: {},
+        global_settings: defaultLocalState().global_settings,
+        parameter_settings: {
+          launch_timeout_ms: 30000,
+        },
+      }),
+      "utf-8",
+    );
+
+    const loaded = await store.load();
+
+    expect(loaded.parameter_settings.inherit_global_capabilities).toBe(true);
   });
 
   it("should persist balance check snapshots by profile", async () => {
@@ -62,6 +91,42 @@ describe("LocalStateStore", () => {
     );
   });
 
+  it("should ignore legacy connectivity test snapshots and stop writing them", async () => {
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    await writeFile(
+      rawPath,
+      JSON.stringify({
+        selected_provider: "codex",
+        selected_profile_key: "codex::Relay",
+        selected_profile_key_by_provider: { codex: "codex::Relay" },
+        profile_order_by_provider: { codex: ["codex::Relay"] },
+        runtime_by_profile: {},
+        connectivity_tests_by_profile: {
+          "codex::Relay": {
+            provider: "codex",
+            profile_name: "Relay",
+            base_url: "https://relay.example.com",
+            running: false,
+            success: true,
+            message: "ok",
+            command_used: "codex",
+            finished_at_display: "2026/05/05 12:00:00",
+          },
+        },
+        global_settings: defaultLocalState().global_settings,
+      }),
+      "utf-8",
+    );
+
+    const loaded = await store.load();
+    await store.save(loaded);
+    const persisted = JSON.parse(await readFile(rawPath, "utf-8"));
+
+    expect("connectivity_tests_by_profile" in loaded).toBe(false);
+    expect("connectivity_tests_by_profile" in persisted).toBe(false);
+  });
+
   it("should persist sessions tab scope and restore profile selections by provider", async () => {
     const store = await makeStore();
     const state = defaultLocalState();
@@ -79,11 +144,47 @@ describe("LocalStateStore", () => {
 
     expect(loaded.sessions_tab_scope_by_provider).toEqual({
       claude: "global_recent",
-      codex: "project",
+      codex: "global_recent",
     });
     expect(loaded.sessions_tab_restore_profile_key_by_provider).toEqual({
       claude: "claude::Official",
       codex: "codex::OpenAI",
+    });
+
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    const persisted = JSON.parse(await readFile(rawPath, "utf-8"));
+    expect(persisted.sessions_tab_scope_by_provider).toEqual({
+      claude: "global_recent",
+      codex: "global_recent",
+    });
+  });
+
+  it("should normalize legacy project sessions tab scope on load", async () => {
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    await writeFile(
+      rawPath,
+      JSON.stringify({
+        selected_provider: "codex",
+        selected_profile_key: "",
+        selected_profile_key_by_provider: {},
+        profile_order_by_provider: {},
+        runtime_by_profile: {},
+        global_settings: defaultLocalState().global_settings,
+        sessions_tab_scope_by_provider: {
+          codex: "project",
+          claude: "global_recent",
+        },
+        sessions_tab_restore_profile_key_by_provider: {},
+      }),
+      "utf-8",
+    );
+
+    const loaded = await store.load();
+
+    expect(loaded.sessions_tab_scope_by_provider).toEqual({
+      codex: "global_recent",
+      claude: "global_recent",
     });
   });
 
@@ -98,7 +199,6 @@ describe("LocalStateStore", () => {
         selected_profile_key_by_provider: {},
         profile_order_by_provider: {},
         runtime_by_profile: {},
-        connectivity_tests_by_profile: {},
         global_settings: defaultLocalState().global_settings,
         parameter_settings: {
           ...defaultLocalState().parameter_settings,
@@ -145,7 +245,6 @@ describe("LocalStateStore", () => {
             exclude_user_settings: true,
           },
         },
-        connectivity_tests_by_profile: {},
         global_settings: defaultLocalState().global_settings,
       }),
       "utf-8",
@@ -186,7 +285,6 @@ describe("LocalStateStore", () => {
             exclude_user_settings: true,
           },
         },
-        connectivity_tests_by_profile: {},
         global_settings: defaultLocalState().global_settings,
         model_mappings: [
           {
@@ -238,7 +336,6 @@ describe("LocalStateStore", () => {
             exclude_user_settings: true,
           },
         },
-        connectivity_tests_by_profile: {},
         global_settings: defaultLocalState().global_settings,
       }),
       "utf-8",

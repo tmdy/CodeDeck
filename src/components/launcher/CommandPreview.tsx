@@ -42,6 +42,10 @@ export function CmdPreview({ preview }: CommandPreviewProps) {
         <p className="session-meta">{preview.permissionSummary || "(未设置)"}</p>
       </div>
       <div className="command-preview-section">
+        <p className="session-picker-heading">全局能力</p>
+        <p className="session-meta">{preview.capabilitySummary || "继承全局 MCP/Skills：启动时启用"}</p>
+      </div>
+      <div className="command-preview-section">
         <p className="session-picker-heading">注入环境变量</p>
         {preview.env.length === 0 ? (
           <p className="muted">无</p>

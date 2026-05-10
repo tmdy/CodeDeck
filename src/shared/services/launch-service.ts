@@ -7,6 +7,7 @@ import {
   DEFAULT_CODEX_COMMAND,
   PROVIDER_CLAUDE,
   normalizeRuntimeSettings,
+  resolveClaudeModelAliasMode,
   type LaunchMode,
   type Profile,
   type RuntimeSettings,
@@ -26,9 +27,15 @@ import { buildClaudeArgs, buildClaudeCommand } from "../provider/claude/command-
 import { buildCodexArgs, buildCodexCommand } from "../provider/codex/command-builder.js";
 import type { ModelMappingsState } from "../model-mapping/config-types.js";
 import type { ProfileService } from "./profile-service.js";
+import {
+  buildCodexSiteApiKeyEnv,
+  buildCodexSiteProfileName,
+  buildCodexSiteProviderId,
+} from "./model-mapping-config-service.js";
 
 export interface CodexConfigWritePlan {
   profilePath: string;
+  profileName: string;
   content: string;
   baseUrl: string;
   providerId: string;
@@ -54,11 +61,13 @@ export interface LaunchExecutionPlan {
   error?: string;
   codexConfig?: CodexConfigWritePlan;
   permissionSummary?: string;
+  capabilitySummary?: string;
 }
 
 export interface LaunchServiceOptions {
   getModelMappingsState: () => ModelMappingsState;
   codexProfilesRoot: string;
+  codexRuntimeHome?: string;
 }
 
 interface ProviderLaunchArtifacts {
@@ -70,6 +79,8 @@ interface ProviderLaunchArtifacts {
   codexConfig?: CodexConfigWritePlan;
   permissionSummary: string;
 }
+
+type LaunchCapabilityOverlay = NonNullable<LaunchRequest["capability_overlay"]>;
 
 export class LaunchService {
   constructor(
@@ -125,6 +136,7 @@ export class LaunchService {
       request.model_mappings_state,
       request.session_id,
       request.permission_override,
+      request.capability_overlay,
     );
   }
 
@@ -134,6 +146,7 @@ export class LaunchService {
     _mappingsState?: ModelMappingsState,
     sessionId?: string,
     permissionOverride?: LaunchRequest["permission_override"],
+    capabilityOverlay?: LaunchCapabilityOverlay,
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
     const normalizedSessionId = (sessionId ?? "").trim();
@@ -184,8 +197,8 @@ export class LaunchService {
     }
 
     const artifacts = profile.provider === PROVIDER_CLAUDE
-      ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions)
-      : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions);
+      ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.claude)
+      : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.codex);
     const env = this.mergeInjectedEnv(artifacts.env);
 
     return {
@@ -204,6 +217,7 @@ export class LaunchService {
       sessionId: normalizedSessionId || undefined,
       codexConfig: artifacts.codexConfig,
       permissionSummary: artifacts.permissionSummary,
+      capabilitySummary: this.buildCapabilitySummary(capabilityOverlay),
     };
   }
 
@@ -213,6 +227,7 @@ export class LaunchService {
     sessionId: string,
     selectedModelId: string,
     permissions: ProfilePermissions,
+    overlay?: LaunchCapabilityOverlay["claude"],
   ): ProviderLaunchArtifacts {
     const launchMode = runtime.launch_mode === "resume_picker_all"
       ? "resume_picker"
@@ -225,9 +240,13 @@ export class LaunchService {
       sessionId,
       excludeUserSettings: runtime.exclude_user_settings,
       settingsFile: runtime.settings_file,
+      settingsFiles: overlay?.settingsFile ? [overlay.settingsFile] : [],
       settingSources: this.getParameterSettings().cli_settings.claude.setting_sources,
       model: selectedModelId || undefined,
       permissionMode: toClaudePermissionMode(permissions.preset),
+      addDirs: overlay?.addDirs,
+      pluginDirs: overlay?.pluginDirs,
+      mcpConfigPaths: overlay?.mcpConfigPaths,
     });
     const command = buildClaudeCommand({
       commandBase,
@@ -236,9 +255,13 @@ export class LaunchService {
       sessionId,
       excludeUserSettings: runtime.exclude_user_settings,
       settingsFile: runtime.settings_file,
+      settingsFiles: overlay?.settingsFile ? [overlay.settingsFile] : [],
       settingSources: this.getParameterSettings().cli_settings.claude.setting_sources,
       model: selectedModelId || undefined,
       permissionMode: toClaudePermissionMode(permissions.preset),
+      addDirs: overlay?.addDirs,
+      pluginDirs: overlay?.pluginDirs,
+      mcpConfigPaths: overlay?.mcpConfigPaths,
     });
 
     const env: Record<string, string> = {
@@ -252,11 +275,19 @@ export class LaunchService {
     }
     if (profile.advancedModelMapping?.enabled) {
       const advancedClaude = profile.advancedModelMapping.claude;
-      if (advancedClaude?.defaultTarget?.trim()) env.ANTHROPIC_MODEL = advancedClaude.defaultTarget.trim();
-      if (advancedClaude?.opusTarget?.trim()) env.ANTHROPIC_DEFAULT_OPUS_MODEL = advancedClaude.opusTarget.trim();
-      if (advancedClaude?.sonnetTarget?.trim()) env.ANTHROPIC_DEFAULT_SONNET_MODEL = advancedClaude.sonnetTarget.trim();
-      if (advancedClaude?.haikuTarget?.trim()) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = advancedClaude.haikuTarget.trim();
-      if (advancedClaude?.subagentTarget?.trim()) env.CLAUDE_CODE_SUBAGENT_MODEL = advancedClaude.subagentTarget.trim();
+      const aliasMode = resolveClaudeModelAliasMode(profile.advancedModelMapping);
+      if (aliasMode === "single_model_compat" && selectedModelId) {
+        env.ANTHROPIC_DEFAULT_OPUS_MODEL = selectedModelId;
+        env.ANTHROPIC_DEFAULT_SONNET_MODEL = selectedModelId;
+        env.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedModelId;
+        env.CLAUDE_CODE_SUBAGENT_MODEL = selectedModelId;
+      } else if (aliasMode === "custom") {
+        if (advancedClaude?.defaultTarget?.trim()) env.ANTHROPIC_MODEL = advancedClaude.defaultTarget.trim();
+        if (advancedClaude?.opusTarget?.trim()) env.ANTHROPIC_DEFAULT_OPUS_MODEL = advancedClaude.opusTarget.trim();
+        if (advancedClaude?.sonnetTarget?.trim()) env.ANTHROPIC_DEFAULT_SONNET_MODEL = advancedClaude.sonnetTarget.trim();
+        if (advancedClaude?.haikuTarget?.trim()) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = advancedClaude.haikuTarget.trim();
+        if (advancedClaude?.subagentTarget?.trim()) env.CLAUDE_CODE_SUBAGENT_MODEL = advancedClaude.subagentTarget.trim();
+      }
     }
 
     return {
@@ -275,19 +306,22 @@ export class LaunchService {
     sessionId: string,
     selectedModelId: string,
     permissions: ProfilePermissions,
+    overlay?: LaunchCapabilityOverlay["codex"],
   ): ProviderLaunchArtifacts {
     const advancedOverride = profile.advancedModelMapping?.enabled
       ? profile.advancedModelMapping.codex?.commandLineModelOverride?.trim() ?? ""
       : "";
-    const apiKeyEnv = "CODEX_SITE_API_KEY";
-    const providerId = "current_site";
+    const profileKey = itemKey(profile);
+    const siteProfileName = buildCodexSiteProfileName(profileKey);
+    const apiKeyEnv = buildCodexSiteApiKeyEnv(profileKey);
+    const providerId = buildCodexSiteProviderId(profileKey);
     const providerName = `${profile.name} Site`;
-    const profilePath = this.toDisplayPath(
-      path.join(this.options.codexProfilesRoot, this.sanitizeProfileKey(itemKey(profile))),
-    );
-    const extraArgs = advancedOverride
-      ? `${this.getCombinedExtraArgs(runtime)} --model ${JSON.stringify(advancedOverride)}`.trim()
-      : this.getCombinedExtraArgs(runtime);
+    const profilePath = this.toDisplayPath(this.getCodexRuntimeHome());
+    const extraArgs = [
+      this.getCombinedExtraArgs(runtime),
+      `--profile ${JSON.stringify(siteProfileName)}`,
+      advancedOverride ? `--model ${JSON.stringify(advancedOverride)}` : "",
+    ].filter(Boolean).join(" ").trim();
     const commandBase = normalizeCommandExecutable(runtime.command_base, DEFAULT_CODEX_COMMAND);
     const commandArgs = buildCodexArgs({
       commandBase: runtime.command_base,
@@ -319,13 +353,16 @@ export class LaunchService {
       requiredEnvKeys: ["CODEX_HOME", apiKeyEnv],
       codexConfig: {
         profilePath,
+        profileName: siteProfileName,
         content: this.buildCodexConfigContent({
+          profileName: siteProfileName,
           providerId,
           providerName,
           baseUrl: profile.url,
           apiKeyEnv,
           targetModel: selectedModelId,
           permissions,
+          globalMcpToml: overlay?.globalMcpToml ?? "",
         }),
         baseUrl: profile.url,
         providerId,
@@ -372,7 +409,34 @@ export class LaunchService {
       valid: plan.valid,
       error: plan.error,
       permissionSummary: plan.permissionSummary,
+      capabilitySummary: plan.capabilitySummary,
     };
+  }
+
+  private buildCapabilitySummary(overlay?: LaunchCapabilityOverlay): string {
+    if (!overlay) {
+      return "继承全局 MCP/Skills：启动时启用";
+    }
+    if (overlay.claude) {
+      const parts = [
+        overlay.claude.mcpConfigPaths.length > 0 ? "MCP" : "",
+        overlay.claude.addDirs.length > 0 ? "Skills" : "",
+        overlay.claude.pluginDirs.length > 0 ? "Plugins" : "",
+      ].filter(Boolean);
+      return parts.length > 0
+        ? `继承全局能力：${parts.join(" / ")}`
+        : "继承全局能力：无可用项";
+    }
+    if (overlay.codex) {
+      const parts = [
+        overlay.codex.globalMcpToml.trim() ? "MCP" : "",
+        overlay.codex.skillLinks.length > 0 ? "Skills" : "",
+      ].filter(Boolean);
+      return parts.length > 0
+        ? `继承全局能力：${parts.join(" / ")}`
+        : "继承全局能力：无可用项";
+    }
+    return "继承全局 MCP/Skills：启动时启用";
   }
 
   private toPreviewEnvList(env: Record<string, string>): PreviewEnvVar[] {
@@ -421,27 +485,33 @@ export class LaunchService {
     };
   }
 
-  private sanitizeProfileKey(profileKey: string): string {
-    return profileKey.replaceAll("::", "__").replace(/[^a-zA-Z0-9_-]+/g, "_");
-  }
-
   private toDisplayPath(targetPath: string): string {
     return targetPath.replace(/\\/g, "/");
   }
 
+  private getCodexRuntimeHome(): string {
+    if (this.options.codexRuntimeHome?.trim()) {
+      return this.options.codexRuntimeHome;
+    }
+    return path.join(path.dirname(this.options.codexProfilesRoot), "codex-runtime", "home");
+  }
+
   private buildCodexConfigContent(options: {
+    profileName: string;
     providerId: string;
     providerName: string;
     baseUrl: string;
     apiKeyEnv: string;
     targetModel: string;
     permissions: ProfilePermissions;
+    globalMcpToml?: string;
   }): string {
     const targetModel = options.targetModel.trim();
     const codexPermissions = toCodexPermissionConfig(options.permissions.preset);
+    const profileHeader = `profiles.${JSON.stringify(options.profileName)}`;
     const workspaceLines = codexPermissions.sandboxMode === "workspace-write"
       ? [
-          "[sandbox_workspace_write]",
+          `[${profileHeader}.sandbox_workspace_write]`,
           `network_access = ${options.permissions.common.allowNetwork ? "true" : "false"}`,
           `writable_roots = [${options.permissions.common.additionalWritableRoots.map((item) => JSON.stringify(item)).join(", ")}]`,
           "",
@@ -449,6 +519,7 @@ export class LaunchService {
       : [];
     const topLevelLines = targetModel
       ? [
+          `[${profileHeader}]`,
           `model = ${JSON.stringify(targetModel)}`,
           `model_provider = ${JSON.stringify(options.providerId)}`,
           `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
@@ -457,11 +528,13 @@ export class LaunchService {
           "",
         ]
       : [
+          `[${profileHeader}]`,
           `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
           `approval_policy = ${JSON.stringify(codexPermissions.approvalPolicy)}`,
           `web_search = ${options.permissions.common.allowNetwork ? "true" : "false"}`,
           "",
         ];
+    const globalMcpToml = options.globalMcpToml?.trim() ? `${options.globalMcpToml.trim()}\n` : "";
     return [
       ...topLevelLines,
       ...workspaceLines,
@@ -471,6 +544,7 @@ export class LaunchService {
       `env_key = ${JSON.stringify(options.apiKeyEnv)}`,
       'wire_api = "responses"',
       "",
+      globalMcpToml,
     ].join("\n");
   }
 }

@@ -25,20 +25,30 @@ describe("session-history-state", () => {
     expect(scope).toBe("global_recent");
   });
 
-  it("defaults to project when there is no remembered scope and cwd exists", () => {
+  it("defaults to global_recent even when cwd exists", () => {
     const scope = resolveHistoryScope(makeState(), "claude", "C:/repo");
 
-    expect(scope).toBe("project");
+    expect(scope).toBe("global_recent");
   });
 
-  it("keeps remembered scope when it is already stored", () => {
+  it("normalizes a remembered project scope to global_recent", () => {
     const scope = resolveHistoryScope(makeState({
       sessions_tab_scope_by_provider: {
         claude: "project",
       },
     }), "claude", "");
 
-    expect(scope).toBe("project");
+    expect(scope).toBe("global_recent");
+  });
+
+  it("keeps remembered global_recent scope when it is already stored", () => {
+    const scope = resolveHistoryScope(makeState({
+      sessions_tab_scope_by_provider: {
+        claude: "global_recent",
+      },
+    }), "claude", "C:/repo");
+
+    expect(scope).toBe("global_recent");
   });
 
   it("prefers remembered restore profile when it still exists under the same provider", () => {

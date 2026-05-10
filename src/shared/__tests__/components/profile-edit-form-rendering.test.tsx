@@ -33,6 +33,7 @@ describe("ProfileEditForm rendering", () => {
     return {
       enabled: false,
       claude: {
+        aliasMode: "none",
         defaultTarget: "",
         opusTarget: "",
         sonnetTarget: "",

@@ -12,7 +12,6 @@ interface ProfileListPanelProps {
   activeProvider: ProviderID;
   selectedKey: ProfileKey;
   orderedKeys: ProfileKey[];
-  connectivityStates: Record<ProfileKey, string>;
   balanceEntries: Record<ProfileKey, BalanceListEntry>;
   onSelect: (key: ProfileKey) => void;
   onReorder: (orderedKeys: ProfileKey[]) => void;
@@ -27,7 +26,6 @@ export const ProfileListPanel = memo(function ProfileListPanel({
   activeProvider,
   selectedKey,
   orderedKeys,
-  connectivityStates,
   balanceEntries,
   onSelect,
   onReorder,
@@ -117,7 +115,6 @@ export const ProfileListPanel = memo(function ProfileListPanel({
               isSelected={item.key === selectedKey}
               balanceLabel={balanceEntries[item.key]?.label ?? ""}
               balanceStatus={balanceEntries[item.key]?.status ?? ""}
-              connectivity={connectivityStates[item.key] ?? ""}
               onSelect={() => onSelect(item.key)}
             />
           </div>
