@@ -201,9 +201,17 @@ describe("App balance session autosave", () => {
     document.body.innerHTML = "";
   });
 
-  function modelOptionValues(container: HTMLElement): string[] {
-    return Array.from(container.querySelectorAll("datalist option")).map((option) =>
-      option.getAttribute("value") ?? "",
+  async function modelOptionValues(container: HTMLElement): Promise<string[]> {
+    const modelInput = container.querySelector<HTMLInputElement>('input[role="combobox"]');
+    expect(modelInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      modelInput?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    return Array.from(container.querySelectorAll('[role="option"]')).map((option) =>
+      option.textContent?.trim() ?? "",
     );
   }
 
@@ -282,14 +290,14 @@ describe("App balance session autosave", () => {
       url: "https://site-a.example.com/v1",
       key: "sk-site-a",
     });
-    expect(modelOptionValues(container)).toContain("a-model");
+    await expect(modelOptionValues(container)).resolves.toContain("a-model");
     expect(container.textContent).toMatch(/最近获取：.+，已获取1个模型/);
 
     await act(async () => {
       clickButtonByText(container, "Site B");
     });
 
-    expect(modelOptionValues(container)).not.toContain("a-model");
+    await expect(modelOptionValues(container)).resolves.not.toContain("a-model");
     expect(container.textContent).not.toContain("已获取1个模型");
 
     await act(async () => {
@@ -300,15 +308,15 @@ describe("App balance session autosave", () => {
       url: "https://site-b.example.com/v1",
       key: "sk-site-b",
     });
-    expect(modelOptionValues(container)).toContain("b-model");
-    expect(modelOptionValues(container)).not.toContain("a-model");
+    await expect(modelOptionValues(container)).resolves.toContain("b-model");
+    await expect(modelOptionValues(container)).resolves.not.toContain("a-model");
 
     await act(async () => {
       clickButtonByText(container, "Site A");
     });
 
-    expect(modelOptionValues(container)).toContain("a-model");
-    expect(modelOptionValues(container)).not.toContain("b-model");
+    await expect(modelOptionValues(container)).resolves.toContain("a-model");
+    await expect(modelOptionValues(container)).resolves.not.toContain("b-model");
 
     await act(async () => {
       root.unmount();
@@ -354,7 +362,7 @@ describe("App balance session autosave", () => {
       clickButtonByText(container, "获取模型列表");
     });
 
-    expect(modelOptionValues(container)).toContain("b-model");
+    await expect(modelOptionValues(container)).resolves.toContain("b-model");
     expect(container.textContent).not.toContain("site-a model fetch failed");
 
     await act(async () => {
@@ -386,14 +394,14 @@ describe("App balance session autosave", () => {
       clickButtonByText(container, "获取模型列表");
     });
 
-    expect(modelOptionValues(container)).toContain("same-site-model");
+    await expect(modelOptionValues(container)).resolves.toContain("same-site-model");
 
     await act(async () => {
       clickButtonByText(container, "Site Completions");
     });
 
     expect(fixture.manager.fetchSiteModels).toHaveBeenCalledTimes(1);
-    expect(modelOptionValues(container)).toContain("same-site-model");
+    await expect(modelOptionValues(container)).resolves.toContain("same-site-model");
     expect(container.textContent).toMatch(/最近获取：.+，已获取1个模型/);
 
     await act(async () => {

@@ -16,6 +16,10 @@ async function createSkill(dirPath: string, skillMd: string, extraFiles: Array<[
   }
 }
 
+async function waitForTimestampBoundary(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+
 function buildTestPaths(root: string): AppPaths {
   return {
     projectRoot: root,
@@ -194,7 +198,14 @@ body`,
       JSON.stringify({
         ...manifest,
         records: manifest?.records.map((record) => record.skillId === "codex:writer"
-          ? { ...record, displayName: "Cached Writer", summary: "Cached summary", sizeTotalBytes: 12345 }
+          ? {
+              ...record,
+              displayName: "Cached Writer",
+              summary: "Cached summary",
+              sizeSkillMdBytes: 111,
+              sizeBodyBytes: 222,
+              sizeTotalBytes: 333,
+            }
           : record),
       }, null, 2),
       "utf8",
@@ -221,9 +232,42 @@ body`,
     expect(record?.displayName).toBe("缓存作者");
     expect(record?.originalDescription).toBe("For writing.");
     expect(record?.summary).toBe("Cached summary");
-    expect(record?.sizeTotalBytes).toBe(12345);
+    expect(record?.sizeSkillMdBytes).toBe(111);
+    expect(record?.sizeBodyBytes).toBe(222);
+    expect(record?.sizeTotalBytes).toBe(333);
     expect(record?.userTags).toEqual(["缓存命中"]);
     expect(record?.lastScannedAt).toBe(scan.scannedAt);
+  });
+
+  it("marks size stats as truncated when a skill directory exceeds the scan budget", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-size-budget-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    const skillPath = path.join(paths.hosts.codex.activeRoot, "large-skill");
+    await createSkill(
+      skillPath,
+      `---
+name: Large Skill
+description: Has many files.
+---
+# Large
+body`,
+    );
+    await Promise.all(Array.from({ length: 1005 }, async (_item, index) => {
+      const dirPath = path.join(skillPath, `nested-${String(index).padStart(4, "0")}`);
+      await fs.mkdir(dirPath, { recursive: true });
+      await fs.writeFile(path.join(dirPath, "payload.txt"), "payload", "utf8");
+    }));
+    const service = new SkillsManagerService(paths);
+
+    const scan = await service.scanEnvironment();
+    const record = scan.records.find((item) => item.skillId === "codex:large-skill");
+
+    expect(record?.hasSkillMd).toBe(true);
+    expect(record?.displayName).toBe("Large Skill");
+    expect(record?.description).toBe("Has many files.");
+    expect(record?.sizeTotalBytes).toBeGreaterThanOrEqual(0);
+    expect(record?.notes).toContain("目录体积统计达到扫描上限，显示值可能低于实际大小。");
   });
 
   it("reuses scan cache when an unchanged signature was persisted with a different field order", async () => {
@@ -253,7 +297,7 @@ body`,
           ? { ...record, displayName: "Cached Writer", summary: "Cached summary", sizeTotalBytes: 12345 }
           : record),
         scanCache: {
-          version: 1,
+          version: 2,
           entries: {
             ...manifest?.scanCache?.entries,
             "codex:writer": {
@@ -633,6 +677,7 @@ body`,
 
     const service = new SkillsManagerService(paths);
     await service.selectProject(projectPath);
+    await service.scanEnvironment();
     const preview = await service.createProjectPreview("codex", ["codex:writer"], "copy-to-project");
 
     expect(preview.items).toEqual([
@@ -716,5 +761,264 @@ body`,
     expect(envPreview.blockedSkillIds.sort()).toEqual(["codex:_readonly", "codex:shared"]);
     expect(projectPreview.items).toEqual([]);
     expect(projectPreview.blockedSkillIds.sort()).toEqual(["codex:_readonly", "codex:shared"]);
+  });
+
+  it("reuses one in-flight environment scan for concurrent scan requests", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-singleflight-scan-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+
+    const [first, second] = await Promise.all([
+      service.scanEnvironment(),
+      service.scanEnvironment(),
+    ]);
+
+    expect(second).toBe(first);
+  });
+
+  it("reuses one in-flight environment scan for concurrent fresh snapshot requests", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-singleflight-snapshot-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+
+    const [first, second] = await Promise.all([
+      service.refreshSnapshot(),
+      service.refreshSnapshot(),
+    ]);
+
+    expect(first.source).toBe("fresh");
+    expect(second.source).toBe("fresh");
+    expect(second.scan).toBe(first.scan);
+  });
+
+  it("uses a recent environment snapshot for project scans while refreshing project directory state", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-project-snapshot-cache-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    const projectPath = path.join(root, "demo-project");
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    await service.selectProject(projectPath);
+    await service.scanEnvironment();
+    const manifestBefore = await readJson<ScanManifest>(paths.manifestPath);
+
+    await waitForTimestampBoundary();
+    await createSkill(
+      path.join(projectPath, ".agents", "skills", "writer"),
+      `---
+name: Writer Skill
+description: Project copy.
+---
+# Writer
+body`,
+    );
+    const projectScan = await service.scanProjectSkills();
+    const manifestAfter = await readJson<ScanManifest>(paths.manifestPath);
+    const projectRecord = projectScan?.records.find((item) => item.skillId === "codex:writer");
+
+    expect(projectRecord?.projectStatus.isEnabledInProject).toBe(true);
+    expect(manifestAfter?.lastScannedAt).toBe(manifestBefore?.lastScannedAt);
+  });
+
+  it("does not fall back to a global environment scan when project scans have no snapshot", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-project-no-snapshot-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    const projectPath = path.join(root, "demo-project");
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    await service.selectProject(projectPath);
+
+    await expect(service.scanProjectSkills()).rejects.toThrow("请先刷新全局 Skills 后再刷新项目状态。");
+    await expect(readJson<ScanManifest>(paths.manifestPath)).resolves.toBeUndefined();
+  });
+
+  it("uses a recent environment snapshot for previews without writing a new manifest", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-preview-snapshot-cache-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.claude.libraryRoot, "reviewer"),
+      `---
+name: Reviewer Skill
+description: For review.
+---
+# Reviewer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    await service.scanEnvironment();
+    const manifestBefore = await readJson<ScanManifest>(paths.manifestPath);
+
+    await waitForTimestampBoundary();
+    const preview = await service.createPreview("enable", ["claude:reviewer"]);
+    const manifestAfter = await readJson<ScanManifest>(paths.manifestPath);
+
+    expect(preview.items).toEqual([
+      expect.objectContaining({
+        skillId: "claude:reviewer",
+        statusBefore: "inactive",
+        statusAfter: "active",
+      }),
+    ]);
+    expect(manifestAfter?.lastScannedAt).toBe(manifestBefore?.lastScannedAt);
+  });
+
+  it("uses a recent environment snapshot for project previews while refreshing project directory state", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-project-preview-snapshot-cache-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    const projectPath = path.join(root, "demo-project");
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    await service.selectProject(projectPath);
+    await service.scanEnvironment();
+    const manifestBefore = await readJson<ScanManifest>(paths.manifestPath);
+
+    await waitForTimestampBoundary();
+    await createSkill(
+      path.join(projectPath, ".agents", "skills", "writer"),
+      `---
+name: Writer Skill
+description: Project copy.
+---
+# Writer
+body`,
+    );
+    const preview = await service.createProjectPreview("codex", ["codex:writer"], "remove-from-project");
+    const manifestAfter = await readJson<ScanManifest>(paths.manifestPath);
+
+    expect(preview.items).toEqual([
+      expect.objectContaining({
+        skillId: "codex:writer",
+        targetPath: path.join(projectPath, ".agents", "skills", "writer"),
+      }),
+    ]);
+    expect(manifestAfter?.lastScannedAt).toBe(manifestBefore?.lastScannedAt);
+  });
+
+  it("falls back to an environment scan for previews when no snapshot exists", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-preview-fallback-scan-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+
+    const preview = await service.createPreview("disable", ["codex:writer"]);
+    const manifest = await readJson<ScanManifest>(paths.manifestPath);
+
+    expect(preview.items).toEqual([
+      expect.objectContaining({
+        skillId: "codex:writer",
+        statusBefore: "active",
+        statusAfter: "inactive",
+      }),
+    ]);
+    expect(manifest?.records.map((record) => record.skillId)).toContain("codex:writer");
+  });
+
+  it("refreshes the environment snapshot after executing environment batches", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-execute-refreshes-snapshot-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.libraryRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    await service.scanEnvironment();
+    const manifestBefore = await readJson<ScanManifest>(paths.manifestPath);
+
+    await waitForTimestampBoundary();
+    const result = await service.executeBatch("enable", ["codex:writer"]);
+    const manifestAfter = await readJson<ScanManifest>(paths.manifestPath);
+
+    expect(result.success).toBe(true);
+    expect(manifestAfter?.lastScannedAt).not.toBe(manifestBefore?.lastScannedAt);
+    expect(manifestAfter?.records.find((record) => record.skillId === "codex:writer")?.status).toBe("active");
+  });
+
+  it("serves cached snapshots from memory after tags change even when the manifest is missing", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-memory-cache-tags-"));
+    tempRoots.push(root);
+    const paths = buildTestPaths(root);
+    await createSkill(
+      path.join(paths.hosts.codex.activeRoot, "writer"),
+      `---
+name: Writer Skill
+description: For writing.
+---
+# Writer
+body`,
+    );
+    const service = new SkillsManagerService(paths);
+    const fresh = await service.scanEnvironment();
+
+    await removePath(paths.manifestPath);
+    await service.updateSkillUserTags("codex:writer", ["缓存标签"]);
+    const cached = await service.loadCachedSnapshot();
+    const record = cached?.scan.records.find((item) => item.skillId === "codex:writer");
+
+    expect(cached?.source).toBe("cache");
+    expect(cached?.scan.scannedAt).toBe(fresh.scannedAt);
+    expect(record?.userTags).toEqual(["缓存标签"]);
+    expect(record?.hasUserTags).toBe(true);
   });
 });

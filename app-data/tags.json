@@ -1,7 +1,412 @@
 {
   "version": 1,
-  "updatedAt": "2026-05-04T03:27:53.589Z",
+  "updatedAt": "2026-05-11T06:43:00.010Z",
   "entries": {
+    "claude:0-autoresearch-skill": [
+      "AI-Research1"
+    ],
+    "claude:academic-plotting": [
+      "AI-Research1"
+    ],
+    "claude:accelerate": [
+      "AI-Research2"
+    ],
+    "claude:ara-compiler": [
+      "AI-Research1"
+    ],
+    "claude:ara-research-manager": [
+      "AI-Research1"
+    ],
+    "claude:ara-rigor-reviewer": [
+      "AI-Research1"
+    ],
+    "claude:audiocraft": [
+      "AI-Research2"
+    ],
+    "claude:autogpt": [
+      "AI-Research2"
+    ],
+    "claude:awq": [
+      "AI-Research2"
+    ],
+    "claude:axolotl": [
+      "AI-Research2"
+    ],
+    "claude:bigcode-evaluation-harness": [
+      "AI-Research2"
+    ],
+    "claude:bitsandbytes": [
+      "AI-Research2"
+    ],
+    "claude:blip-2": [
+      "AI-Research2"
+    ],
+    "claude:brainstorming-research-ideas": [
+      "AI-Research1"
+    ],
+    "claude:chroma": [
+      "AI-Research2"
+    ],
+    "claude:clip": [
+      "AI-Research2"
+    ],
+    "claude:constitutional-ai": [
+      "AI-Research2"
+    ],
+    "claude:creative-thinking-for-research": [
+      "AI-Research1"
+    ],
+    "claude:crewai": [
+      "AI-Research2"
+    ],
+    "claude:deepspeed": [
+      "AI-Research2"
+    ],
+    "claude:dspy": [
+      "AI-Research2"
+    ],
+    "claude:faiss": [
+      "AI-Research2"
+    ],
+    "claude:flash-attention": [
+      "AI-Research2"
+    ],
+    "claude:gguf": [
+      "AI-Research2"
+    ],
+    "claude:gptq": [
+      "AI-Research2"
+    ],
+    "claude:grpo-rl-training": [
+      "AI-Research2"
+    ],
+    "claude:guidance": [
+      "AI-Research2"
+    ],
+    "claude:hqq": [
+      "AI-Research2"
+    ],
+    "claude:huggingface-tokenizers": [
+      "AI-Research2"
+    ],
+    "claude:instructor": [
+      "AI-Research2"
+    ],
+    "claude:knowledge-distillation": [
+      "AI-Research2"
+    ],
+    "claude:lambda-labs": [
+      "AI-Research2"
+    ],
+    "claude:langchain": [
+      "AI-Research2"
+    ],
+    "claude:langsmith": [
+      "AI-Research2"
+    ],
+    "claude:litgpt": [
+      "AI-Research2"
+    ],
+    "claude:llama-cpp": [
+      "AI-Research2"
+    ],
+    "claude:llama-factory": [
+      "AI-Research2"
+    ],
+    "claude:llamaguard": [
+      "AI-Research2"
+    ],
+    "claude:llamaindex": [
+      "AI-Research2"
+    ],
+    "claude:llava": [
+      "AI-Research2"
+    ],
+    "claude:lm-evaluation-harness": [
+      "AI-Research2"
+    ],
+    "claude:long-context": [
+      "AI-Research2"
+    ],
+    "claude:mamba": [
+      "AI-Research2"
+    ],
+    "claude:megatron-core": [
+      "AI-Research2"
+    ],
+    "claude:miles": [
+      "AI-Research2"
+    ],
+    "claude:ml-paper-writing": [
+      "AI-Research1"
+    ],
+    "claude:mlflow": [
+      "AI-Research1"
+    ],
+    "claude:modal": [
+      "AI-Research1"
+    ],
+    "claude:model-merging": [
+      "AI-Research2"
+    ],
+    "claude:model-pruning": [
+      "AI-Research2"
+    ],
+    "claude:moe-training": [
+      "AI-Research2"
+    ],
+    "claude:nanogpt": [
+      "AI-Research2"
+    ],
+    "claude:nemo-curator": [
+      "AI-Research2"
+    ],
+    "claude:nemo-evaluator": [
+      "AI-Research2"
+    ],
+    "claude:nemo-guardrails": [
+      "AI-Research2"
+    ],
+    "claude:nnsight": [
+      "AI-Research2"
+    ],
+    "claude:openrlhf": [
+      "AI-Research2"
+    ],
+    "claude:outlines": [
+      "AI-Research2"
+    ],
+    "claude:peft": [
+      "AI-Research2"
+    ],
+    "claude:phoenix": [
+      "AI-Research2"
+    ],
+    "claude:pinecone": [
+      "AI-Research2"
+    ],
+    "claude:prompt-guard": [
+      "AI-Research2"
+    ],
+    "claude:pytorch-fsdp2": [
+      "AI-Research2"
+    ],
+    "claude:pytorch-lightning": [
+      "AI-Research1"
+    ],
+    "claude:pyvene": [
+      "AI-Research2"
+    ],
+    "claude:qdrant": [
+      "AI-Research2"
+    ],
+    "claude:ray-data": [
+      "AI-Research2"
+    ],
+    "claude:ray-train": [
+      "AI-Research2"
+    ],
+    "claude:rwkv": [
+      "AI-Research2"
+    ],
+    "claude:saelens": [
+      "AI-Research2"
+    ],
+    "claude:segment-anything": [
+      "AI-Research2"
+    ],
+    "claude:sentence-transformers": [
+      "AI-Research2"
+    ],
+    "claude:sentencepiece": [
+      "AI-Research2"
+    ],
+    "claude:sglang": [
+      "AI-Research2"
+    ],
+    "claude:simpo": [
+      "AI-Research2"
+    ],
+    "claude:skypilot": [
+      "AI-Research2"
+    ],
+    "claude:slime": [
+      "AI-Research2"
+    ],
+    "claude:speculative-decoding": [
+      "AI-Research2"
+    ],
+    "claude:stable-diffusion": [
+      "AI-Research2"
+    ],
+    "claude:tensorboard": [
+      "AI-Research1"
+    ],
+    "claude:tensorrt-llm": [
+      "AI-Research2"
+    ],
+    "claude:torchforge": [
+      "AI-Research2"
+    ],
+    "claude:torchtitan": [
+      "AI-Research2"
+    ],
+    "claude:transformer-lens": [
+      "AI-Research2"
+    ],
+    "claude:trl-fine-tuning": [
+      "AI-Research2"
+    ],
+    "claude:unsloth": [
+      "AI-Research2"
+    ],
+    "claude:verl": [
+      "AI-Research2"
+    ],
+    "claude:vllm": [
+      "AI-Research2"
+    ],
+    "claude:weights-and-biases": [
+      "AI-Research1"
+    ],
+    "claude:whisper": [
+      "AI-Research2"
+    ],
+    "codex:0-autoresearch-skill": [
+      "AI-Research1"
+    ],
+    "codex:academic-plotting": [
+      "AI-Research1"
+    ],
+    "codex:accelerate": [
+      "AI-Research2"
+    ],
+    "codex:ara-compiler": [
+      "AI-Research1"
+    ],
+    "codex:ara-research-manager": [
+      "AI-Research1"
+    ],
+    "codex:ara-rigor-reviewer": [
+      "AI-Research1"
+    ],
+    "codex:audiocraft": [
+      "AI-Research2"
+    ],
+    "codex:autogpt": [
+      "AI-Research2"
+    ],
+    "codex:awq": [
+      "AI-Research2"
+    ],
+    "codex:axolotl": [
+      "AI-Research2"
+    ],
+    "codex:bigcode-evaluation-harness": [
+      "AI-Research2"
+    ],
+    "codex:bitsandbytes": [
+      "AI-Research2"
+    ],
+    "codex:blip-2": [
+      "AI-Research2"
+    ],
+    "codex:brainstorming-research-ideas": [
+      "AI-Research1"
+    ],
+    "codex:chroma": [
+      "AI-Research2"
+    ],
+    "codex:clip": [
+      "AI-Research2"
+    ],
+    "codex:constitutional-ai": [
+      "AI-Research2"
+    ],
+    "codex:creative-thinking-for-research": [
+      "AI-Research1"
+    ],
+    "codex:crewai": [
+      "AI-Research2"
+    ],
+    "codex:deepspeed": [
+      "AI-Research2"
+    ],
+    "codex:dspy": [
+      "AI-Research2"
+    ],
+    "codex:faiss": [
+      "AI-Research2"
+    ],
+    "codex:flash-attention": [
+      "AI-Research2"
+    ],
+    "codex:gguf": [
+      "AI-Research2"
+    ],
+    "codex:gptq": [
+      "AI-Research2"
+    ],
+    "codex:grpo-rl-training": [
+      "AI-Research2"
+    ],
+    "codex:guidance": [
+      "AI-Research2"
+    ],
+    "codex:hqq": [
+      "AI-Research2"
+    ],
+    "codex:huggingface-tokenizers": [
+      "AI-Research2"
+    ],
+    "codex:instructor": [
+      "AI-Research2"
+    ],
+    "codex:knowledge-distillation": [
+      "AI-Research2"
+    ],
+    "codex:lambda-labs": [
+      "AI-Research2"
+    ],
+    "codex:langchain": [
+      "AI-Research2"
+    ],
+    "codex:langsmith": [
+      "AI-Research2"
+    ],
+    "codex:litgpt": [
+      "AI-Research2"
+    ],
+    "codex:llama-cpp": [
+      "AI-Research2"
+    ],
+    "codex:llama-factory": [
+      "AI-Research2"
+    ],
+    "codex:llamaguard": [
+      "AI-Research2"
+    ],
+    "codex:llamaindex": [
+      "AI-Research2"
+    ],
+    "codex:llava": [
+      "AI-Research2"
+    ],
+    "codex:lm-evaluation-harness": [
+      "AI-Research2"
+    ],
+    "codex:long-context": [
+      "AI-Research2"
+    ],
+    "codex:mamba": [
+      "AI-Research2"
+    ],
+    "codex:megatron-core": [
+      "AI-Research2"
+    ],
+    "codex:miles": [
+      "AI-Research2"
+    ],
     "codex:minimax-docx": [
       "文档操作"
     ],
@@ -11,527 +416,556 @@
     "codex:minimax-xlsx": [
       "文档操作"
     ],
-    "codex:0-autoresearch-skill": [
-      "AI研究"
-    ],
-    "codex:academic-plotting": [
-      "AI研究"
-    ],
-    "codex:accelerate": [
-      "AI研究"
-    ],
-    "codex:audiocraft": [
-      "AI研究"
-    ],
-    "codex:autogpt": [
-      "AI研究"
-    ],
-    "codex:awq": [
-      "AI研究"
-    ],
-    "codex:axolotl": [
-      "AI研究"
-    ],
-    "codex:bigcode-evaluation-harness": [
-      "AI研究"
-    ],
-    "codex:bitsandbytes": [
-      "AI研究"
-    ],
-    "codex:blip-2": [
-      "AI研究"
-    ],
-    "codex:chroma": [
-      "AI研究"
-    ],
-    "codex:clip": [
-      "AI研究"
-    ],
-    "codex:constitutional-ai": [
-      "AI研究"
-    ],
-    "codex:crewai": [
-      "AI研究"
-    ],
-    "codex:deepspeed": [
-      "AI研究"
-    ],
-    "codex:dspy": [
-      "AI研究"
-    ],
-    "codex:faiss": [
-      "AI研究"
-    ],
-    "codex:flash-attention": [
-      "AI研究"
-    ],
-    "codex:gguf": [
-      "AI研究"
-    ],
-    "codex:gptq": [
-      "AI研究"
-    ],
-    "codex:grpo-rl-training": [
-      "AI研究"
-    ],
-    "codex:guidance": [
-      "AI研究"
-    ],
-    "codex:hqq": [
-      "AI研究"
-    ],
-    "codex:huggingface-tokenizers": [
-      "AI研究"
-    ],
-    "codex:instructor": [
-      "AI研究"
-    ],
-    "codex:knowledge-distillation": [
-      "AI研究"
-    ],
-    "codex:lambda-labs": [
-      "AI研究"
-    ],
-    "codex:langchain": [
-      "AI研究"
-    ],
-    "codex:langsmith": [
-      "AI研究"
-    ],
-    "codex:litgpt": [
-      "AI研究"
-    ],
-    "codex:llama-cpp": [
-      "AI研究"
-    ],
-    "codex:llama-factory": [
-      "AI研究"
-    ],
-    "codex:llamaguard": [
-      "AI研究"
-    ],
-    "codex:llamaindex": [
-      "AI研究"
-    ],
-    "codex:llava": [
-      "AI研究"
-    ],
-    "codex:lm-evaluation-harness": [
-      "AI研究"
-    ],
-    "codex:long-context": [
-      "AI研究"
-    ],
-    "codex:mamba": [
-      "AI研究"
-    ],
-    "codex:megatron-core": [
-      "AI研究"
-    ],
-    "codex:miles": [
-      "AI研究"
-    ],
     "codex:ml-paper-writing": [
-      "AI研究"
+      "AI-Research1"
     ],
     "codex:mlflow": [
-      "AI研究"
+      "AI-Research1"
     ],
     "codex:modal": [
-      "AI研究"
+      "AI-Research1"
     ],
     "codex:model-merging": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:model-pruning": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:moe-training": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:nanogpt": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:nemo-curator": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:nemo-evaluator": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:nemo-guardrails": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:nnsight": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:openrlhf": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:outlines": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:peft": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:phoenix": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:pinecone": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:prompt-guard": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:pytorch-fsdp2": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:pytorch-lightning": [
-      "AI研究"
+      "AI-Research1"
     ],
     "codex:pyvene": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:qdrant": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:ray-data": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:ray-train": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:rwkv": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:saelens": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:segment-anything": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:sentence-transformers": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:sentencepiece": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:sglang": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:simpo": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:skypilot": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:slime": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:speculative-decoding": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:stable-diffusion": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:tensorboard": [
-      "AI研究"
+      "AI-Research1"
     ],
     "codex:tensorrt-llm": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:torchforge": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:torchtitan": [
-      "AI研究"
-    ],
-    "codex:trl-fine-tuning": [
-      "AI研究"
-    ],
-    "codex:unsloth": [
-      "AI研究"
-    ],
-    "codex:verl": [
-      "AI研究"
-    ],
-    "codex:vllm": [
-      "AI研究"
-    ],
-    "codex:weights-and-biases": [
-      "AI研究"
-    ],
-    "codex:whisper": [
-      "AI研究"
-    ],
-    "claude:0-autoresearch-skill": [
-      "AI研究"
-    ],
-    "claude:academic-plotting": [
-      "AI研究"
-    ],
-    "claude:accelerate": [
-      "AI研究"
-    ],
-    "claude:audiocraft": [
-      "AI研究"
-    ],
-    "claude:autogpt": [
-      "AI研究"
-    ],
-    "claude:awq": [
-      "AI研究"
-    ],
-    "claude:axolotl": [
-      "AI研究"
-    ],
-    "claude:bigcode-evaluation-harness": [
-      "AI研究"
-    ],
-    "claude:bitsandbytes": [
-      "AI研究"
-    ],
-    "claude:blip-2": [
-      "AI研究"
-    ],
-    "claude:chroma": [
-      "AI研究"
-    ],
-    "claude:clip": [
-      "AI研究"
-    ],
-    "claude:constitutional-ai": [
-      "AI研究"
-    ],
-    "claude:crewai": [
-      "AI研究"
-    ],
-    "claude:deepspeed": [
-      "AI研究"
-    ],
-    "claude:dspy": [
-      "AI研究"
-    ],
-    "claude:faiss": [
-      "AI研究"
-    ],
-    "claude:flash-attention": [
-      "AI研究"
-    ],
-    "claude:gguf": [
-      "AI研究"
-    ],
-    "claude:gptq": [
-      "AI研究"
-    ],
-    "claude:grpo-rl-training": [
-      "AI研究"
-    ],
-    "claude:guidance": [
-      "AI研究"
-    ],
-    "claude:hqq": [
-      "AI研究"
-    ],
-    "claude:huggingface-tokenizers": [
-      "AI研究"
-    ],
-    "claude:instructor": [
-      "AI研究"
-    ],
-    "claude:knowledge-distillation": [
-      "AI研究"
-    ],
-    "claude:lambda-labs": [
-      "AI研究"
-    ],
-    "claude:langchain": [
-      "AI研究"
-    ],
-    "claude:langsmith": [
-      "AI研究"
-    ],
-    "claude:litgpt": [
-      "AI研究"
-    ],
-    "claude:llama-cpp": [
-      "AI研究"
-    ],
-    "claude:llama-factory": [
-      "AI研究"
-    ],
-    "claude:llamaguard": [
-      "AI研究"
-    ],
-    "claude:llamaindex": [
-      "AI研究"
-    ],
-    "claude:llava": [
-      "AI研究"
-    ],
-    "claude:lm-evaluation-harness": [
-      "AI研究"
-    ],
-    "claude:long-context": [
-      "AI研究"
-    ],
-    "claude:mamba": [
-      "AI研究"
-    ],
-    "claude:megatron-core": [
-      "AI研究"
-    ],
-    "claude:miles": [
-      "AI研究"
-    ],
-    "claude:ml-paper-writing": [
-      "AI研究"
-    ],
-    "claude:mlflow": [
-      "AI研究"
-    ],
-    "claude:modal": [
-      "AI研究"
-    ],
-    "claude:model-merging": [
-      "AI研究"
-    ],
-    "claude:model-pruning": [
-      "AI研究"
-    ],
-    "claude:moe-training": [
-      "AI研究"
-    ],
-    "claude:nanogpt": [
-      "AI研究"
-    ],
-    "claude:nemo-curator": [
-      "AI研究"
-    ],
-    "claude:nemo-evaluator": [
-      "AI研究"
-    ],
-    "claude:nemo-guardrails": [
-      "AI研究"
-    ],
-    "claude:nnsight": [
-      "AI研究"
-    ],
-    "claude:openrlhf": [
-      "AI研究"
-    ],
-    "claude:outlines": [
-      "AI研究"
-    ],
-    "claude:peft": [
-      "AI研究"
-    ],
-    "claude:phoenix": [
-      "AI研究"
-    ],
-    "claude:pinecone": [
-      "AI研究"
-    ],
-    "claude:prompt-guard": [
-      "AI研究"
-    ],
-    "claude:pytorch-fsdp2": [
-      "AI研究"
-    ],
-    "claude:pytorch-lightning": [
-      "AI研究"
-    ],
-    "claude:pyvene": [
-      "AI研究"
-    ],
-    "claude:qdrant": [
-      "AI研究"
-    ],
-    "claude:ray-data": [
-      "AI研究"
-    ],
-    "claude:ray-train": [
-      "AI研究"
-    ],
-    "claude:rwkv": [
-      "AI研究"
-    ],
-    "claude:saelens": [
-      "AI研究"
-    ],
-    "claude:segment-anything": [
-      "AI研究"
-    ],
-    "claude:sentence-transformers": [
-      "AI研究"
-    ],
-    "claude:sentencepiece": [
-      "AI研究"
-    ],
-    "claude:sglang": [
-      "AI研究"
-    ],
-    "claude:simpo": [
-      "AI研究"
-    ],
-    "claude:skypilot": [
-      "AI研究"
-    ],
-    "claude:slime": [
-      "AI研究"
-    ],
-    "claude:speculative-decoding": [
-      "AI研究"
-    ],
-    "claude:stable-diffusion": [
-      "AI研究"
-    ],
-    "claude:tensorboard": [
-      "AI研究"
-    ],
-    "claude:tensorrt-llm": [
-      "AI研究"
-    ],
-    "claude:torchforge": [
-      "AI研究"
-    ],
-    "claude:torchtitan": [
-      "AI研究"
-    ],
-    "claude:trl-fine-tuning": [
-      "AI研究"
-    ],
-    "claude:unsloth": [
-      "AI研究"
-    ],
-    "claude:verl": [
-      "AI研究"
-    ],
-    "claude:vllm": [
-      "AI研究"
-    ],
-    "claude:weights-and-biases": [
-      "AI研究"
-    ],
-    "claude:whisper": [
-      "AI研究"
-    ],
-    "codex:brainstorming-research-ideas": [
-      "AI研究"
-    ],
-    "codex:creative-thinking-for-research": [
-      "AI研究"
+      "AI-Research2"
     ],
     "codex:transformer-lens": [
-      "AI研究"
+      "AI-Research2"
     ],
-    "claude:brainstorming-research-ideas": [
-      "AI研究"
+    "codex:trl-fine-tuning": [
+      "AI-Research2"
     ],
-    "claude:creative-thinking-for-research": [
-      "AI研究"
+    "codex:unsloth": [
+      "AI-Research2"
     ],
-    "claude:transformer-lens": [
-      "AI研究"
+    "codex:verl": [
+      "AI-Research2"
+    ],
+    "codex:vllm": [
+      "AI-Research2"
+    ],
+    "codex:weights-and-biases": [
+      "AI-Research1"
+    ],
+    "codex:whisper": [
+      "AI-Research2"
+    ],
+    "codex:analyze-with-file": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:brainstorm": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:brainstorm-with-file": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:ccw": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:ccw-cli-tools": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:clean": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:csv-wave-pipeline": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:debug-with-file": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:issue-discover": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:memory-compact": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:parallel-dev-cycle": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:project-documentation-workflow": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:review-cycle": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:roadmap-with-file": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:session-sync": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:spec-add": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:spec-generator": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:spec-setup": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-arch-opt": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-brainstorm": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-coordinate": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-designer": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-executor": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-frontend": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-frontend-debug": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-interactive-craft": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-issue": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-lifecycle-v4": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-motion-design": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-perf-opt": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-planex": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-quality-assurance": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-review": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-roadmap-dev": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-tech-debt": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-testing": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-ui-polish": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-uidesign": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-ultra-analyze": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-ux-improve": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-visual-a11y": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:workflow-execute": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:workflow-lite-planex": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:workflow-plan": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:workflow-tdd-plan": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:workflow-test-fix-cycle": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:brainstorm": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:ccw-chain": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:ccw-help": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:delegation-check": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:investigate": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:issue-manage": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:memory-capture": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:memory-manage": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:prompt-generator": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:review-code": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:review-cycle": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:security-audit": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:ship": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:skill-generator": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:skill-iter-tune": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:skill-simplify": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:skill-tuning": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:spec-generator": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-arch-opt": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-brainstorm": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-coordinate": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-designer": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-executor": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-frontend": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-frontend-debug": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-interactive-craft": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-issue": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-lifecycle-v4": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-motion-design": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-perf-opt": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-planex": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-quality-assurance": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-review": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-roadmap-dev": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-tech-debt": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-testing": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-ui-polish": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-uidesign": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-ultra-analyze": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-ux-improve": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-visual-a11y": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:wf-composer": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:wf-player": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-execute": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-lite-execute": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-lite-plan": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-lite-test-review": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-multi-cli-plan": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-plan": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-skill-designer": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-tdd-plan": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:workflow-test-fix": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:cosmos-policy": [
+      "AI-Research2"
+    ],
+    "claude:cosmos-policy": [
+      "AI-Research2"
+    ],
+    "codex:openpi": [
+      "AI-Research2"
+    ],
+    "claude:openpi": [
+      "AI-Research2"
+    ],
+    "codex:openvla-oft": [
+      "AI-Research2"
+    ],
+    "claude:openvla-oft": [
+      "AI-Research2"
+    ],
+    "codex:swanlab": [
+      "AI-Research2"
+    ],
+    "claude:swanlab": [
+      "AI-Research2"
+    ],
+    "codex:android-native-dev": [
+      "MiniMax-AI"
+    ],
+    "codex:flutter-dev": [
+      "MiniMax-AI"
+    ],
+    "codex:fullstack-dev": [
+      "MiniMax-AI"
+    ],
+    "codex:ios-application-dev": [
+      "MiniMax-AI"
+    ],
+    "codex:react-native-dev": [
+      "MiniMax-AI"
+    ],
+    "codex:shader-dev": [
+      "MiniMax-AI"
+    ],
+    "claude:research-writing-skill": [
+      "research-writing"
+    ],
+    "claude:literature-review": [
+      "research-writing"
+    ],
+    "claude:scholar-evaluation": [
+      "K-Dense论文写作"
+    ],
+    "claude:scientific-brainstorming": [
+      "K-Dense论文写作",
+      "研究写作"
+    ],
+    "claude:scientific-writing": [
+      "K-Dense论文写作",
+      "研究写作"
+    ],
+    "codex:extract-tikz": [
+      "TikZ"
+    ],
+    "claude:extract-tikz": [
+      "TikZ"
+    ],
+    "claude:tikz-layout-fixer": [
+      "TikZ"
+    ],
+    "claude:analyzing-research-papers": [
+      "研究写作"
+    ],
+    "claude:concept-development": [
+      "研究写作"
+    ],
+    "claude:literature-gap-finder": [
+      "研究写作"
+    ],
+    "claude:paper-innovate": [
+      "研究写作"
+    ],
+    "codex:collaborative-plan-with-file": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:team-lifecycle": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:unified-execute-with-file": [
+      "Claude-Code-Workflow"
+    ],
+    "codex:wave-plan-pipeline": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-coordinate-v2": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-executor-v2": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-iterdev": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-lifecycle-v3": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:team-lifecycle-v5": [
+      "Claude-Code-Workflow"
+    ],
+    "claude:collaborating-with-codex": [
+      "GuDaStudio"
+    ],
+    "claude:collaborating-with-gemini": [
+      "GuDaStudio"
+    ],
+    "codex:collaborating-with-claude": [
+      "AI-Collab-Bridge"
+    ],
+    "claude:codex": [
+      "lldxflwb-claude-code-skills"
+    ],
+    "claude:codex-plan": [
+      "lldxflwb-claude-code-skills"
     ]
   }
 }

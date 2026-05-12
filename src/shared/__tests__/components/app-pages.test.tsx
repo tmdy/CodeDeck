@@ -39,6 +39,14 @@ describe("App page containers", () => {
           onClone: vi.fn(),
           onDelete: vi.fn(),
         }}
+        siteBalanceSessionProps={{
+          siteBalanceSessions: [],
+          balanceSessionSelection: "auto",
+          balanceSessionDraft: { label: "", access_token: "", user_id: "" },
+          onBalanceSessionSelectionChange: vi.fn(),
+          onBalanceSessionDraftChange: vi.fn(),
+          onDeleteSiteBalanceSession: vi.fn(),
+        }}
         balanceTestProps={{
           state: defaultBalanceCheckState(),
           onTest: vi.fn(),
@@ -53,9 +61,6 @@ describe("App page containers", () => {
             permissions: null,
           },
           globalPermissions: defaultProfilePermissions(PROVIDER_CLAUDE),
-          siteBalanceSessions: [],
-          balanceSessionSelection: "auto",
-          balanceSessionDraft: { label: "", access_token: "", user_id: "" },
           runtime: {
             cwd: "",
             command_base: defaultRuntimeSettings(PROVIDER_CLAUDE).command_base,
@@ -67,9 +72,6 @@ describe("App page containers", () => {
           provider: PROVIDER_CLAUDE,
           modelOptions: [],
           onChange: vi.fn(),
-          onBalanceSessionSelectionChange: vi.fn(),
-          onBalanceSessionDraftChange: vi.fn(),
-          onDeleteSiteBalanceSession: vi.fn(),
           onAdvancedModelMappingChange: vi.fn(),
           onRuntimeChange: vi.fn(),
           onFetchModels: vi.fn(),
@@ -95,11 +97,13 @@ describe("App page containers", () => {
     );
 
     expect(html).toContain("Profiles");
+    expect(html).toContain("站点后台会话");
     expect(html).toContain("检测余额");
     expect(html).not.toContain("测试连接");
     expect(html).toContain("Profile 信息");
     expect(html).toContain("恢复会话");
     expect(html).toContain("命令预览");
+    expect(html.indexOf("检测余额")).toBeLessThan(html.indexOf("站点后台会话"));
   });
 
   it("renders the Sessions page layout", () => {

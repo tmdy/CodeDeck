@@ -9,6 +9,16 @@ import type { SessionSummary } from "../../shared/services/session-service.js";
 const INITIAL_VISIBLE_SESSIONS = 20;
 const VISIBLE_SESSION_INCREMENT = 20;
 
+function formatSourceKind(sourceKind: SessionSummary["source_kind"]): string {
+  if (sourceKind === "global_codex") {
+    return "全局 .codex";
+  }
+  if (sourceKind === "app_runtime") {
+    return "App Runtime";
+  }
+  return "原生历史";
+}
+
 interface RestoreProfileOption {
   key: ProfileKey;
   label: string;
@@ -28,7 +38,10 @@ interface SessionListProps {
   onRefresh: () => void;
   onSelectRestoreProfile: (profileKey: ProfileKey) => void;
   onRestore: () => void;
+  onLoadMore?: () => void;
   disabled?: boolean;
+  isLoading?: boolean;
+  hasMoreSessions?: boolean;
 }
 
 export function SessionList({
@@ -44,7 +57,10 @@ export function SessionList({
   onRefresh,
   onSelectRestoreProfile,
   onRestore,
+  onLoadMore,
   disabled,
+  isLoading,
+  hasMoreSessions: hasMoreSessionsProp,
 }: SessionListProps) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_SESSIONS);
 
@@ -53,8 +69,9 @@ export function SessionList({
   }, [provider, sessions]);
 
   const selectedSession = sessions.find((session) => session.session_id === selectedId);
+  const usesExternalPagination = !!onLoadMore;
   const visibleSessions = useMemo(() => {
-    const base = sessions.slice(0, visibleCount);
+    const base = usesExternalPagination ? sessions : sessions.slice(0, visibleCount);
     if (!selectedSession) {
       return base;
     }
@@ -62,9 +79,9 @@ export function SessionList({
       return base;
     }
     return [...base, selectedSession];
-  }, [selectedSession, sessions, visibleCount]);
-  const displayedCount = Math.min(visibleCount, sessions.length);
-  const hasMoreSessions = displayedCount < sessions.length;
+  }, [selectedSession, sessions, usesExternalPagination, visibleCount]);
+  const displayedCount = usesExternalPagination ? sessions.length : Math.min(visibleCount, sessions.length);
+  const hasMoreSessions = hasMoreSessionsProp ?? displayedCount < sessions.length;
 
   return (
     <div className="session-list glass-card">
@@ -86,7 +103,9 @@ export function SessionList({
       </div>
       <div className="sessions-detail-layout">
         <div className="session-list-body">
-          {sessions.length === 0 ? (
+          {isLoading && sessions.length === 0 ? (
+            <p className="empty-state">正在加载会话...</p>
+          ) : sessions.length === 0 ? (
             <p className="empty-state">暂无会话记录</p>
           ) : (
             <>
@@ -106,16 +125,16 @@ export function SessionList({
               ))}
               <div className="session-list-footer">
                 <span className="session-list-count">
-                  已显示 {displayedCount} / {sessions.length}
+                  已显示 {displayedCount}{hasMoreSessions ? "+" : ` / ${sessions.length}`}
                 </span>
                 {hasMoreSessions && (
                   <button
                     type="button"
                     className="secondary-button small session-load-more"
-                    onClick={() => setVisibleCount((current) => current + VISIBLE_SESSION_INCREMENT)}
-                    disabled={disabled}
+                    onClick={onLoadMore ?? (() => setVisibleCount((current) => current + VISIBLE_SESSION_INCREMENT))}
+                    disabled={disabled || isLoading}
                   >
-                    加载更多 {VISIBLE_SESSION_INCREMENT} 条
+                    {isLoading ? "正在加载..." : `加载更多 ${VISIBLE_SESSION_INCREMENT} 条`}
                   </button>
                 )}
               </div>
@@ -131,6 +150,9 @@ export function SessionList({
                 <code>{selectedSession.session_id}</code>
                 <p className="session-meta">Provider</p>
                 <code>{selectedSession.provider}</code>
+                <p className="session-meta">来源</p>
+                <code>{formatSourceKind(selectedSession.source_kind)}</code>
+                {selectedSession.source_home && <code>{selectedSession.source_home}</code>}
                 <p className="session-meta">原始工作目录</p>
                 <code>{selectedSession.cwd || "(未记录)"}</code>
                 <p className="session-meta">更新时间</p>

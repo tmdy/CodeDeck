@@ -38,10 +38,11 @@ describe("App unlock route", () => {
   it("should keep the main header compact", async () => {
     const css = await readFile(path.join(process.cwd(), "src", "styles.css"), "utf8");
 
-    expect(css).toContain(".app-shell-v2 {\n  padding: 18px 20px;\n  display: grid;\n  gap: 14px;");
-    expect(css).toContain(".hero-v2 {\n  border: 1px solid rgba(29, 39, 51, 0.08);");
-    expect(css).toContain("  padding: 14px 24px;");
-    expect(css).toContain(".hero-v2 h1 {\n  margin: 0;\n  font-size: 1.35rem;");
+    expect(css).toContain(".app-shell-v2 {\n  padding: 12px 14px;\n  display: grid;\n  gap: 10px;");
+    expect(css).toContain(".hero-v2 {\n  border: 1px solid var(--app-border);");
+    expect(css).toContain("  background: var(--app-surface);");
+    expect(css).toContain("  padding: 10px 16px;");
+    expect(css).toContain(".hero-v2 h1 {\n  margin: 0;\n  font-size: 1.22rem;");
   });
 
   it("should route Skills tab feedback into the Skills panel status strip", async () => {

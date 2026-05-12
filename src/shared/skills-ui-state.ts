@@ -3,6 +3,8 @@ import type { ProjectScanResult, ScanResult } from "./skills-service.js";
 import { matchesSkillSearch, sortRecordsByUserTagsFirst } from "./record-search.js";
 import type { ProjectSkillRecord, SkillHost, SkillRecord, SkillStatus } from "./types.js";
 
+export const NO_USER_TAGS_FILTER_VALUE = "__NO_USER_TAGS__";
+
 export interface SkillsViewFilters {
   host: SkillHost | "all";
   statuses: SkillStatus[];
@@ -91,6 +93,9 @@ function recordMatchesTag(record: Pick<SkillRecord, "userTags">, selectedTag: st
   if (!selectedTag.trim()) {
     return true;
   }
+  if (selectedTag === NO_USER_TAGS_FILTER_VALUE) {
+    return record.userTags.length === 0;
+  }
   return record.userTags.includes(selectedTag.trim());
 }
 
@@ -117,6 +122,10 @@ function buildActions(record: ProjectSkillRecord, hasProject: boolean): SkillsRo
 function matchesFilters(record: ProjectSkillRecord, filters: SkillsViewFilters): boolean {
   if (filters.includeReadonlyOnly) {
     return record.status === "readonly";
+  }
+
+  if (record.isSpecialDir) {
+    return false;
   }
 
   if (filters.host !== "all" && record.host !== filters.host) {

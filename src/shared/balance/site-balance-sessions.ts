@@ -44,19 +44,9 @@ export type ResolvedBalanceAuth =
       reason: "no_session" | "missing_bound_session";
     }
   | {
-      kind: "implicit_single_session";
-      base_url: string;
-      session: SiteBalanceSession;
-    }
-  | {
       kind: "explicit_session";
       base_url: string;
       session: SiteBalanceSession;
-    }
-  | {
-      kind: "ambiguous_multiple_sessions";
-      base_url: string;
-      sessions: SiteBalanceSession[];
     };
 
 export function normalizeBalanceBaseUrl(rawUrl: string): string {
@@ -201,22 +191,6 @@ export function resolveBalanceAuth(
     };
   }
 
-  if (sessions.length === 1) {
-    return {
-      kind: "implicit_single_session",
-      base_url: baseUrl,
-      session: { ...sessions[0] },
-    };
-  }
-
-  if (sessions.length > 1) {
-    return {
-      kind: "ambiguous_multiple_sessions",
-      base_url: baseUrl,
-      sessions: sessions.map((session) => ({ ...session })),
-    };
-  }
-
   return {
     kind: "none",
     base_url: baseUrl,
@@ -232,9 +206,6 @@ export function describeBalanceSessionHint(
 
   if (resolved.kind === "explicit_session") {
     return `后台会话：${resolved.session.label}`;
-  }
-  if (resolved.kind === "ambiguous_multiple_sessions") {
-    return "未选择后台会话";
   }
   if (resolved.kind === "none" && resolved.reason === "missing_bound_session") {
     return "后台会话：所绑定会话已被删除";
@@ -324,7 +295,7 @@ function resolveShareableBalanceScope(
   sessionsByBaseUrl: SiteBalanceSessionsByBaseUrl,
 ): { baseUrl: string; sessionId: string } | null {
   const resolved = resolveBalanceAuth(profile, sessionsByBaseUrl);
-  if (resolved.kind !== "explicit_session" && resolved.kind !== "implicit_single_session") {
+  if (resolved.kind !== "explicit_session") {
     return null;
   }
 

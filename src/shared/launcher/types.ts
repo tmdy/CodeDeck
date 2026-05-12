@@ -10,9 +10,15 @@ export interface LaunchRequest {
   provider: string;
   runtime_settings: RuntimeSettings;
   session_id?: string;
+  session_source?: LaunchSessionSource;
   model_mappings_state?: ModelMappingsState;
   permission_override?: PermissionPreset;
   capability_overlay?: LaunchCapabilityOverlay;
+}
+
+export interface LaunchSessionSource {
+  source_kind?: "app_runtime" | "global_codex";
+  source_home?: string;
 }
 
 export interface LaunchCapabilityOverlay {

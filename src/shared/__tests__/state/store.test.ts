@@ -35,6 +35,17 @@ describe("LocalStateStore", () => {
     expect("connectivity_tests_by_profile" in persisted).toBe(false);
   });
 
+  it("should persist global theme mode", async () => {
+    const store = await makeStore();
+    const state = defaultLocalState();
+    state.global_settings.theme_mode = "dark";
+
+    await store.save(state);
+    const loaded = await store.load();
+
+    expect(loaded.global_settings.theme_mode).toBe("dark");
+  });
+
   it("should enable inherited global capabilities by default for legacy state", async () => {
     const store = await makeStore();
     const rawPath = (store as unknown as { filePath: string }).filePath;

@@ -4,9 +4,11 @@ import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   encodeClaudeProjectPath,
+  importCodexSessionToRuntimeHome,
   type ListSessionsRequest,
   listClaudeSessions,
   listCodexSessions,
+  listCodexSessionsFromHomes,
   listSessionsForProvider,
 } from "../../services/session-service.js";
 
@@ -65,6 +67,40 @@ describe("session-service", () => {
       session_id: "session-a",
       cwd,
       preview: "修复 Profiles 启动逻辑",
+    });
+  });
+
+  it("keeps Claude project sessions when any historical cwd matches the requested cwd", async () => {
+    const claudeRoot = await createTempDir("skills-manager-claude-history-cwd-");
+    tempDirs.push(claudeRoot);
+    const cwd = "C:/workspace/project-a";
+    const subdir = "C:/workspace/project-a/subdir";
+    const encoded = encodeClaudeProjectPath(cwd);
+    const filePath = path.join(claudeRoot, "projects", encoded, "session-with-subdir.jsonl");
+    await writeJsonl(filePath, [
+      {
+        type: "user",
+        cwd,
+        message: { content: "从项目根目录开始" },
+      },
+      {
+        type: "user",
+        cwd: subdir,
+        message: { content: "后来切到子目录" },
+      },
+    ]);
+
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "project",
+      cwd,
+    }, claudeRoot);
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      session_id: "session-with-subdir",
+      cwd,
+      preview: "从项目根目录开始",
     });
   });
 
@@ -339,6 +375,268 @@ describe("session-service", () => {
       cwd: "C:/workspace/newer",
       preview: "较新 fallback 会话",
     });
+  });
+
+  it("merges app runtime and global Codex sessions with app runtime taking precedence", async () => {
+    const appHome = await createTempDir("skills-manager-codex-app-");
+    const globalHome = await createTempDir("skills-manager-codex-global-");
+    tempDirs.push(appHome, globalHome);
+
+    await writeFile(
+      path.join(appHome, "session_index.jsonl"),
+      [
+        JSON.stringify({
+          id: "shared-session",
+          thread_name: "App runtime wins",
+          updated_at: "2026-05-04T10:40:00.000Z",
+          cwd: "C:/workspace/app",
+        }),
+        JSON.stringify({
+          id: "app-only",
+          thread_name: "App only",
+          updated_at: "2026-05-04T10:20:00.000Z",
+          cwd: "C:/workspace/app",
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    await writeFile(
+      path.join(globalHome, "session_index.jsonl"),
+      [
+        JSON.stringify({
+          id: "shared-session",
+          thread_name: "Global duplicate",
+          updated_at: "2026-05-04T10:50:00.000Z",
+          cwd: "C:/workspace/global",
+        }),
+        JSON.stringify({
+          id: "global-only",
+          thread_name: "Global only",
+          updated_at: "2026-05-04T10:30:00.000Z",
+          cwd: "C:/workspace/global",
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+
+    const sessions = await listCodexSessionsFromHomes({
+      provider: "codex",
+      scope: "global_recent",
+    }, [
+      { kind: "app_runtime", home: appHome },
+      { kind: "global_codex", home: globalHome },
+    ]);
+
+    expect(sessions.map((session) => session.session_id)).toEqual([
+      "shared-session",
+      "global-only",
+      "app-only",
+    ]);
+    expect(sessions.find((session) => session.session_id === "shared-session")).toMatchObject({
+      preview: "App runtime wins",
+      source_kind: "app_runtime",
+      source_home: appHome,
+    });
+    expect(sessions.find((session) => session.session_id === "global-only")).toMatchObject({
+      preview: "Global only",
+      source_kind: "global_codex",
+      source_home: globalHome,
+    });
+  });
+
+  it("uses Codex session_index for global recent pagination without reading session files", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-index-fast-");
+    tempDirs.push(codexRoot);
+    await writeFile(
+      path.join(codexRoot, "session_index.jsonl"),
+      Array.from({ length: 25 }, (_, index) => JSON.stringify({
+        id: `indexed-${String(index + 1).padStart(2, "0")}`,
+        updated_at: `2026-05-04T10:${String(59 - index).padStart(2, "0")}:00.000Z`,
+        cwd: "C:/workspace/indexed",
+      })).join("\n") + "\n",
+      "utf-8",
+    );
+    await writeJsonl(
+      path.join(codexRoot, "sessions", "2026", "05", "04", "rollout-2026-05-04T10-59-00-indexed-01.jsonl"),
+      [
+        {
+          type: "session_meta",
+          payload: {
+            id: "indexed-01",
+            cwd: "C:/workspace/indexed",
+            thread_name: "Should not be read from jsonl",
+          },
+        },
+      ],
+    );
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+      limit: 20,
+      offset: 0,
+    }, codexRoot);
+
+    expect(sessions).toHaveLength(20);
+    expect(sessions[0]).toMatchObject({
+      session_id: "indexed-01",
+      preview: "indexed-01",
+    });
+    expect(sessions.map((session) => session.session_id)).not.toContain("indexed-21");
+  });
+
+  it("applies offset after merging Codex app runtime and global homes", async () => {
+    const appHome = await createTempDir("skills-manager-codex-app-page-");
+    const globalHome = await createTempDir("skills-manager-codex-global-page-");
+    tempDirs.push(appHome, globalHome);
+    await writeFile(
+      path.join(appHome, "session_index.jsonl"),
+      Array.from({ length: 15 }, (_, index) => JSON.stringify({
+        id: `app-${String(index + 1).padStart(2, "0")}`,
+        thread_name: `App ${index + 1}`,
+        updated_at: `2026-05-04T11:${String(59 - index).padStart(2, "0")}:00.000Z`,
+        cwd: "C:/workspace/app",
+      })).join("\n") + "\n",
+      "utf-8",
+    );
+    await writeFile(
+      path.join(globalHome, "session_index.jsonl"),
+      Array.from({ length: 15 }, (_, index) => JSON.stringify({
+        id: `global-${String(index + 1).padStart(2, "0")}`,
+        thread_name: `Global ${index + 1}`,
+        updated_at: `2026-05-04T10:${String(59 - index).padStart(2, "0")}:00.000Z`,
+        cwd: "C:/workspace/global",
+      })).join("\n") + "\n",
+      "utf-8",
+    );
+
+    const sessions = await listCodexSessionsFromHomes({
+      provider: "codex",
+      scope: "global_recent",
+      limit: 20,
+      offset: 20,
+    }, [
+      { kind: "app_runtime", home: appHome },
+      { kind: "global_codex", home: globalHome },
+    ]);
+
+    expect(sessions).toHaveLength(10);
+    expect(sessions[0]?.session_id).toBe("global-06");
+  });
+
+  it("filters merged Codex homes by cwd in project scope", async () => {
+    const appHome = await createTempDir("skills-manager-codex-app-project-");
+    const globalHome = await createTempDir("skills-manager-codex-global-project-");
+    tempDirs.push(appHome, globalHome);
+
+    await writeFile(
+      path.join(appHome, "session_index.jsonl"),
+      `${JSON.stringify({
+        id: "app-match",
+        thread_name: "App match",
+        updated_at: "2026-05-04T10:20:00.000Z",
+        cwd: "C:/workspace/current",
+      })}\n`,
+      "utf-8",
+    );
+    await writeFile(
+      path.join(globalHome, "session_index.jsonl"),
+      [
+        JSON.stringify({
+          id: "global-match",
+          thread_name: "Global match",
+          updated_at: "2026-05-04T10:30:00.000Z",
+          cwd: "C:/workspace/current",
+        }),
+        JSON.stringify({
+          id: "global-other",
+          thread_name: "Global other",
+          updated_at: "2026-05-04T10:40:00.000Z",
+          cwd: "C:/workspace/other",
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+
+    const sessions = await listCodexSessionsFromHomes({
+      provider: "codex",
+      scope: "project",
+      cwd: "C:/workspace/current",
+    }, [
+      { kind: "app_runtime", home: appHome },
+      { kind: "global_codex", home: globalHome },
+    ]);
+
+    expect(sessions.map((session) => session.session_id)).toEqual([
+      "global-match",
+      "app-match",
+    ]);
+  });
+
+  it("imports a global Codex session into the runtime home before restore", async () => {
+    const runtimeHome = await createTempDir("skills-manager-codex-runtime-import-");
+    const globalHome = await createTempDir("skills-manager-codex-global-import-");
+    tempDirs.push(runtimeHome, globalHome);
+    await writeFile(
+      path.join(globalHome, "session_index.jsonl"),
+      `${JSON.stringify({
+        id: "global-session",
+        thread_name: "Global session",
+        updated_at: "2026-05-04T10:30:00.000Z",
+        cwd: "C:/workspace/global",
+      })}\n`,
+      "utf-8",
+    );
+    await writeJsonl(
+      path.join(globalHome, "sessions", "2026", "05", "04", "rollout-2026-05-04T10-30-00-global-session.jsonl"),
+      [
+        {
+          type: "session_meta",
+          payload: {
+            id: "global-session",
+            cwd: "C:/workspace/global",
+          },
+        },
+      ],
+    );
+
+    await importCodexSessionToRuntimeHome({
+      sessionId: "global-session",
+      sourceHome: globalHome,
+      runtimeHome,
+    });
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, runtimeHome);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      session_id: "global-session",
+      preview: "Global session",
+    });
+  });
+
+  it("rejects importing a global Codex session when the source jsonl file is missing", async () => {
+    const runtimeHome = await createTempDir("skills-manager-codex-runtime-missing-");
+    const globalHome = await createTempDir("skills-manager-codex-global-missing-");
+    tempDirs.push(runtimeHome, globalHome);
+    await writeFile(
+      path.join(globalHome, "session_index.jsonl"),
+      `${JSON.stringify({
+        id: "missing-file-session",
+        thread_name: "Missing file",
+        updated_at: "2026-05-04T10:30:00.000Z",
+        cwd: "C:/workspace/global",
+      })}\n`,
+      "utf-8",
+    );
+
+    await expect(importCodexSessionToRuntimeHome({
+      sessionId: "missing-file-session",
+      sourceHome: globalHome,
+      runtimeHome,
+    })).rejects.toThrow("全局 .codex 中未找到该会话文件，无法导入恢复。");
   });
 
   it("skips a bad JSONL file without affecting other sessions", async () => {

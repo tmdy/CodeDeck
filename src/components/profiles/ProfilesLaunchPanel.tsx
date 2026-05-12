@@ -1,7 +1,6 @@
 import { memo } from "react";
 import { LaunchControls } from "../launcher/LaunchControls.jsx";
 import { SessionPicker } from "../launcher/SessionPicker.jsx";
-import { CmdPreview } from "../launcher/CommandPreview.jsx";
 import type { SessionSummary } from "../../shared/services/session-service.js";
 import type { CommandPreview } from "../../shared/launcher/types.js";
 
@@ -10,6 +9,7 @@ interface ProfilesLaunchPanelProps {
   disabled?: boolean;
   resumeDisabled?: boolean;
   sessions: SessionSummary[];
+  sessionsLoading?: boolean;
   selectedSessionId?: string;
   onSelectSession: (sessionId: string) => void;
   onRefreshSessions: () => void;
@@ -25,6 +25,7 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
   disabled,
   resumeDisabled,
   sessions,
+  sessionsLoading,
   selectedSessionId,
   onSelectSession,
   onRefreshSessions,
@@ -48,12 +49,12 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
       />
       <SessionPicker
         sessions={sessions}
+        isLoading={sessionsLoading}
         selectedId={selectedSessionId}
         onSelect={onSelectSession}
         onRefresh={onRefreshSessions}
         disabled={disabled}
       />
-      <CmdPreview preview={preview} />
     </div>
   );
 });

@@ -54,19 +54,19 @@ describe("site-balance-sessions", () => {
     );
   });
 
-  it("resolves an implicit single session when the profile stays on auto", () => {
+  it("uses the profile api key in auto mode when the site has a single session", () => {
     const resolved = resolveBalanceAuth(makeProfile(), {
       "https://new-api.example.com": [makeSession("sess-a", "后台 A")],
     });
 
-    expect(resolved.kind).toBe("implicit_single_session");
-    if (resolved.kind !== "implicit_single_session") {
-      throw new Error("expected implicit_single_session");
+    expect(resolved.kind).toBe("none");
+    if (resolved.kind !== "none") {
+      throw new Error("expected profile api key auth");
     }
-    expect(resolved.session.label).toBe("账号1");
+    expect(resolved.reason).toBe("no_session");
   });
 
-  it("returns ambiguous_multiple_sessions when auto mode meets multiple site sessions", () => {
+  it("uses the profile api key in auto mode even when site sessions exist", () => {
     const resolved = resolveBalanceAuth(makeProfile(), {
       "https://new-api.example.com": [
         makeSession("sess-a", "后台 A"),
@@ -74,7 +74,11 @@ describe("site-balance-sessions", () => {
       ],
     });
 
-    expect(resolved.kind).toBe("ambiguous_multiple_sessions");
+    expect(resolved.kind).toBe("none");
+    if (resolved.kind !== "none") {
+      throw new Error("expected profile api key auth");
+    }
+    expect(resolved.reason).toBe("no_session");
   });
 
   it("keeps using the explicitly bound session after other sessions are added", () => {
@@ -130,7 +134,7 @@ describe("site-balance-sessions", () => {
     expect(resolved.session.label).toBe("账号2");
   });
 
-  it("warns when auto mode meets multiple site sessions", () => {
+  it("does not warn about sessions in auto mode", () => {
     const hint = describeBalanceSessionHint(
       makeProfile(),
       {
@@ -141,7 +145,7 @@ describe("site-balance-sessions", () => {
       },
     );
 
-    expect(hint).toBe("未选择后台会话");
+    expect(hint).toBe("");
   });
 
   it("explains when an explicitly bound session has been deleted", () => {
@@ -168,7 +172,7 @@ describe("site-balance-sessions", () => {
     ).toEqual(["codex::Root", "codex::Completions"]);
   });
 
-  it("shares an explicit session with auto mode when the site has a single session", () => {
+  it("does not share an explicit session with auto api-key profiles", () => {
     const profiles: Profile[] = [
       makeProfile({ name: "Bound", balance_session_id: "sess-a" }),
       makeProfile({ name: "Auto" }),
@@ -178,7 +182,7 @@ describe("site-balance-sessions", () => {
       resolveSharedBalanceProfileKeys(profiles, "codex::Bound", {
         "https://new-api.example.com": [makeSession("sess-a", "后台 A")],
       }),
-    ).toEqual(["codex::Bound", "codex::Auto"]);
+    ).toEqual(["codex::Bound"]);
   });
 
   it("keeps different explicit sessions isolated on the same site", () => {

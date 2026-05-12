@@ -51,8 +51,10 @@ function parseLenientFrontmatter(markdown: string): { data: Record<string, unkno
   const [, rawFrontmatter, body] = match;
   const data: Record<string, unknown> = {};
   let currentArrayKey: string | null = null;
+  const lines = rawFrontmatter.split(/\r?\n/);
 
-  for (const rawLine of rawFrontmatter.split(/\r?\n/)) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const line = rawLine.trimEnd();
     if (!line.trim()) {
       continue;
@@ -73,6 +75,23 @@ function parseLenientFrontmatter(markdown: string): { data: Record<string, unkno
     }
 
     const [, key, rawValue] = keyValueMatch;
+    if (["|", "|-", "|+", ">", ">-", ">+"].includes(rawValue.trim())) {
+      const blockLines: string[] = [];
+      while (index + 1 < lines.length) {
+        const nextLine = lines[index + 1];
+        if (nextLine.trim() && !/^\s/.test(nextLine)) {
+          break;
+        }
+        blockLines.push(nextLine.replace(/^\s{2}/, ""));
+        index += 1;
+      }
+      data[key] = rawValue.trim().startsWith(">")
+        ? blockLines.map((item) => item.trim()).filter(Boolean).join(" ")
+        : blockLines.join("\n").trim();
+      currentArrayKey = null;
+      continue;
+    }
+
     if (!rawValue) {
       data[key] = [];
       currentArrayKey = key;

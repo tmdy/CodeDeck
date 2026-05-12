@@ -83,6 +83,14 @@ describe("SettingsStateService", () => {
     });
   });
 
+  it("should normalize invalid global theme mode to system", async () => {
+    await service.updateGlobalSettings({
+      theme_mode: "invalid" as never,
+    });
+
+    expect(accessor.get().global_settings.theme_mode).toBe("system");
+  });
+
   it("should normalize sessions tab project scope to global_recent", async () => {
     await service.updateSessionsTabState("codex", { scope: "project" });
 

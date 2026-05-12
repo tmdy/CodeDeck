@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AdvancedModelMapping, Profile, ProfileKey, GlobalSettings, LaunchMode } from "./shared/profile/types.js";
 import type { LocalState } from "./shared/state/local-state.js";
 import type { CommandPreview } from "./shared/launcher/types.js";
+import type { LaunchSessionSource } from "./shared/launcher/types.js";
 import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
 import type {
@@ -47,6 +48,7 @@ import {
   normalizeBalanceBaseUrl,
   type SiteBalanceSessionsByBaseUrl,
 } from "./shared/balance/site-balance-sessions.js";
+import { normalizeThemeMode, resolveEffectiveTheme } from "./shared/theme.js";
 
 type TabId = "skills" | "profiles" | "sessions" | "settings";
 type SettingsSubTab = "global" | "parameters";
@@ -72,6 +74,7 @@ type ModelCatalogFetchState = {
 
 const EMPTY_MODEL_OPTIONS: string[] = [];
 const DRAFT_PREVIEW_DEBOUNCE_MS = 300;
+const HISTORY_PAGE_SIZE = 20;
 
 function useEventCallback<T extends (...args: never[]) => unknown>(callback: T): T {
   const callbackRef = useRef(callback);
@@ -96,6 +99,16 @@ function emptyPreview(): CommandPreview {
     cwd: "",
     env: [],
     valid: false,
+  };
+}
+
+function sessionSourceFromSummary(session?: SessionSummary): LaunchSessionSource | undefined {
+  if (!session?.source_kind && !session?.source_home) {
+    return undefined;
+  }
+  return {
+    source_kind: session.source_kind,
+    source_home: session.source_home,
   };
 }
 
@@ -148,7 +161,9 @@ function sameSessionRequest(left: ListSessionsRequest | null, right: ListSession
   return left?.provider === right.provider
     && left.scope === right.scope
     && (left.cwd ?? "") === (right.cwd ?? "")
-    && (left.profile_key ?? "") === (right.profile_key ?? "");
+    && (left.profile_key ?? "") === (right.profile_key ?? "")
+    && (left.limit ?? 0) === (right.limit ?? 0)
+    && (left.offset ?? 0) === (right.offset ?? 0);
 }
 
 function App() {
@@ -182,7 +197,6 @@ function App() {
   const [draftCommandBase, setDraftCommandBase] = useState("");
   const [draftSettingsFile, setDraftSettingsFile] = useState("");
   const [draftArgs, setDraftArgs] = useState("");
-  const [draftMode, setDraftMode] = useState<LaunchMode>("new");
   const [draftExcludeUser, setDraftExcludeUser] = useState(true);
   const [editorBaseline, setEditorBaseline] = useState<ProfileEditorDraft | null>(null);
   const [modelCatalogByBaseUrl, setModelCatalogByBaseUrl] = useState<Record<string, ModelCatalogCacheEntry>>({});
@@ -196,11 +210,21 @@ function App() {
   // 会话
   const [profilesSessions, setProfilesSessions] = useState<SessionSummary[]>([]);
   const [profilesSelectedSessionId, setProfilesSelectedSessionId] = useState<string>("");
+  const [profilesSessionsLoading, setProfilesSessionsLoading] = useState(false);
   const [historySessions, setHistorySessions] = useState<SessionSummary[]>([]);
   const [historySelectedSessionId, setHistorySelectedSessionId] = useState<string>("");
   const [historyPreview, setHistoryPreview] = useState<CommandPreview>(emptyPreview());
+  const [historyIsLoading, setHistoryIsLoading] = useState(false);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyPrefetchedSessions, setHistoryPrefetchedSessions] = useState<SessionSummary[]>([]);
+  const [historyPrefetchedHasMore, setHistoryPrefetchedHasMore] = useState(false);
+  const [historyIsPrefetching, setHistoryIsPrefetching] = useState(false);
   const latestHistoryRequestRef = useRef<ListSessionsRequest | null>(null);
+  const latestHistoryPrefetchRequestRef = useRef<ListSessionsRequest | null>(null);
+  const latestProfilesSessionsRequestRef = useRef<ListSessionsRequest | null>(null);
+  const historyPrefetchedOffsetRef = useRef<number | null>(null);
   const historyRequestSeqRef = useRef(0);
+  const profilesSessionsRequestSeqRef = useRef(0);
   const previewRequestSeqRef = useRef(0);
 
   // 设置
@@ -208,6 +232,11 @@ function App() {
   const [isBusy, setIsBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : false,
+  );
 
   const activeProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
   const historyRestoreProfileKey = resolveHistoryRestoreProfileKey(state, profiles, activeProvider);
@@ -264,6 +293,24 @@ function App() {
       document.body.classList.remove("unlock-route");
     };
   }, [isUnlockWindow]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => setSystemPrefersDark(media.matches);
+    handleChange();
+    media.addEventListener?.("change", handleChange);
+    return () => {
+      media.removeEventListener?.("change", handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const themeMode = normalizeThemeMode(state?.global_settings?.theme_mode);
+    const effectiveTheme = resolveEffectiveTheme(themeMode, systemPrefersDark);
+    document.documentElement.dataset.theme = effectiveTheme;
+    document.documentElement.dataset.themeMode = themeMode;
+  }, [state?.global_settings?.theme_mode, systemPrefersDark]);
 
   // 监听 profile state 变更事件
   useEffect(() => {
@@ -360,7 +407,7 @@ function App() {
       cwd: draftCwd,
       command_base: draftCommandBase,
       settings_file: draftSettingsFile,
-      launch_mode: draftMode,
+      launch_mode: "new" as const,
       extra_args: draftArgs,
       exclude_user_settings: draftExcludeUser,
     };
@@ -378,7 +425,6 @@ function App() {
     setDraftCwd(draft.cwd);
     setDraftCommandBase(draft.command_base);
     setDraftSettingsFile(draft.settings_file);
-    setDraftMode(draft.launch_mode);
     setDraftArgs(draft.extra_args);
     setDraftExcludeUser(draft.exclude_user_settings);
   }
@@ -456,7 +502,7 @@ function App() {
         },
         buildRuntimeSettingsFromDraft(draft),
         undefined,
-        draft.launch_mode === "resume_selected" ? profilesSelectedSessionId : undefined,
+        undefined,
       )) as CommandPreview;
       if (requestSeq === previewRequestSeqRef.current) {
         setPreview(nextPreview);
@@ -487,9 +533,7 @@ function App() {
     draftCommandBase,
     draftSettingsFile,
     draftArgs,
-    draftMode,
     draftExcludeUser,
-    profilesSelectedSessionId,
   ]);
 
   async function saveCurrentProfile(options: {
@@ -605,6 +649,21 @@ function App() {
     setHistorySessions([]);
     setHistorySelectedSessionId("");
     setHistoryPreview(emptyPreview());
+    setHistoryIsLoading(false);
+    setHistoryHasMore(false);
+    setHistoryPrefetchedSessions([]);
+    setHistoryPrefetchedHasMore(false);
+    setHistoryIsPrefetching(false);
+    latestHistoryPrefetchRequestRef.current = null;
+    historyPrefetchedOffsetRef.current = null;
+  }
+
+  function clearProfilesSessionsState(options: { loading?: boolean } = {}) {
+    profilesSessionsRequestSeqRef.current += 1;
+    latestProfilesSessionsRequestRef.current = null;
+    setProfilesSessions([]);
+    setProfilesSelectedSessionId("");
+    setProfilesSessionsLoading(options.loading ?? false);
   }
 
   async function resolveUnsavedProfileChanges(): Promise<boolean> {
@@ -652,6 +711,8 @@ function App() {
     }
     if (activeTab === "sessions") {
       clearHistoryState();
+    } else if (activeTab === "profiles") {
+      clearProfilesSessionsState({ loading: true });
     }
     await window.profileManager.selectProfile(state.selected_provider, key);
     const data = await refreshAll(true);
@@ -745,6 +806,8 @@ function App() {
     }
     if (activeTab === "sessions") {
       clearHistoryState();
+    } else if (activeTab === "profiles") {
+      clearProfilesSessionsState({ loading: true });
     }
     await window.profileManager.activateProvider(provider);
     const data = await refreshAll(true);
@@ -759,7 +822,12 @@ function App() {
   }
 
   // ---- 启动操作 ----
-  async function handleLaunch(mode: LaunchMode, sessionId?: string, permissionOverride?: PermissionPreset) {
+  async function handleLaunch(
+    mode: LaunchMode,
+    sessionId?: string,
+    permissionOverride?: PermissionPreset,
+    sessionSource?: LaunchSessionSource,
+  ) {
     if (!window.profileManager || !state || !state.selected_profile_key) return;
     if (mode === "resume_selected" && !sessionId) {
       setErrorMessage("请先选择会话");
@@ -811,6 +879,7 @@ function App() {
       provider: launchState.selected_provider,
       runtime_settings: { ...launchRuntime, launch_mode: mode },
       session_id: sessionId,
+      session_source: sessionSource,
       permission_override: permissionOverride,
     };
 
@@ -859,15 +928,13 @@ function App() {
   // ---- 会话 ----
   async function handleLoadProfilesSessions(nextState: LocalState | null = state, cwdOverride?: string) {
     if (!window.profileManager || !nextState?.selected_profile_key) {
-      setProfilesSessions([]);
-      setProfilesSelectedSessionId("");
+      clearProfilesSessionsState();
       return;
     }
     const runtime = nextState.runtime_by_profile[nextState.selected_profile_key];
     const cwd = cwdOverride ?? (draftCwd.trim() || runtime?.cwd.trim() || defaultWorkingDirectory);
     if (!cwd.trim()) {
-      setProfilesSessions([]);
-      setProfilesSelectedSessionId("");
+      clearProfilesSessionsState();
       return;
     }
 
@@ -876,48 +943,139 @@ function App() {
       scope: "project",
       cwd,
       profile_key: nextState.selected_profile_key,
+      limit: HISTORY_PAGE_SIZE,
+      offset: 0,
     };
+    const requestSeq = ++profilesSessionsRequestSeqRef.current;
+    latestProfilesSessionsRequestRef.current = request;
+    setProfilesSessions([]);
+    setProfilesSelectedSessionId("");
+    setProfilesSessionsLoading(true);
 
     try {
       const result = await window.profileManager.listSessions(request);
+      if (
+        requestSeq !== profilesSessionsRequestSeqRef.current
+        || !sameSessionRequest(latestProfilesSessionsRequestRef.current, request)
+      ) {
+        return;
+      }
       const nextSessions = result as SessionSummary[];
       setProfilesSessions(nextSessions);
       setProfilesSelectedSessionId((current) => (
         current && !nextSessions.some((session) => session.session_id === current) ? "" : current
       ));
+      setProfilesSessionsLoading(false);
     } catch (err) {
+      if (
+        requestSeq !== profilesSessionsRequestSeqRef.current
+        || !sameSessionRequest(latestProfilesSessionsRequestRef.current, request)
+      ) {
+        return;
+      }
       setProfilesSessions([]);
       setProfilesSelectedSessionId("");
+      setProfilesSessionsLoading(false);
       setErrorMessage(err instanceof Error ? err.message : "加载会话失败");
     }
   }
 
-  async function handleLoadHistorySessions(nextState: LocalState | null = state) {
+  function buildHistorySessionsRequest(nextState: LocalState, offset: number): ListSessionsRequest {
+    return {
+      provider: nextState.selected_provider,
+      scope: "global_recent",
+      profile_key: nextState.selected_profile_key,
+      limit: HISTORY_PAGE_SIZE,
+      offset,
+    };
+  }
+
+  function clearHistoryPrefetchState() {
+    setHistoryPrefetchedSessions([]);
+    setHistoryPrefetchedHasMore(false);
+    setHistoryIsPrefetching(false);
+    latestHistoryPrefetchRequestRef.current = null;
+    historyPrefetchedOffsetRef.current = null;
+  }
+
+  async function prefetchHistorySessions(nextState: LocalState | null = state, offset = historySessions.length) {
+    if (!window.profileManager || !nextState || offset <= 0) {
+      return;
+    }
+    if (historyPrefetchedOffsetRef.current === offset) {
+      return;
+    }
+
+    const request = buildHistorySessionsRequest(nextState, offset);
+    if (historyIsPrefetching && sameSessionRequest(latestHistoryPrefetchRequestRef.current, request)) {
+      return;
+    }
+    latestHistoryPrefetchRequestRef.current = request;
+    setHistoryIsPrefetching(true);
+
+    try {
+      const result = await window.profileManager.listSessions(request);
+      if (!sameSessionRequest(latestHistoryPrefetchRequestRef.current, request)) {
+        return;
+      }
+      const nextSessions = (result as SessionSummary[]).filter((session) => session.provider === request.provider);
+      setHistoryPrefetchedSessions(nextSessions);
+      setHistoryPrefetchedHasMore(nextSessions.length >= HISTORY_PAGE_SIZE);
+      setHistoryHasMore(nextSessions.length > 0);
+      setHistoryIsPrefetching(false);
+      historyPrefetchedOffsetRef.current = offset;
+    } catch {
+      if (!sameSessionRequest(latestHistoryPrefetchRequestRef.current, request)) {
+        return;
+      }
+      setHistoryPrefetchedSessions([]);
+      setHistoryPrefetchedHasMore(false);
+      setHistoryIsPrefetching(false);
+      historyPrefetchedOffsetRef.current = null;
+    }
+  }
+
+  async function handleLoadHistorySessions(
+    nextState: LocalState | null = state,
+    options: { append?: boolean; refresh?: boolean } = {},
+  ) {
     if (!window.profileManager || !nextState) {
       setHistorySessions([]);
       setHistorySelectedSessionId("");
+      setHistoryIsLoading(false);
+      setHistoryHasMore(false);
       return;
     }
 
     const provider = nextState.selected_provider;
-    const request: ListSessionsRequest = {
-      provider,
-      scope: "global_recent",
-      profile_key: nextState.selected_profile_key,
-    };
+    const previousSessions = options.append ? historySessions : [];
+    const request = buildHistorySessionsRequest(nextState, previousSessions.length);
     const requestSeq = ++historyRequestSeqRef.current;
     latestHistoryRequestRef.current = request;
+    if (!options.append) {
+      clearHistoryPrefetchState();
+    }
+    setHistoryIsLoading(true);
 
     try {
+      if (options.refresh) {
+        await window.profileManager.refreshSessions(provider);
+      }
       const result = await window.profileManager.listSessions(request);
       if (requestSeq !== historyRequestSeqRef.current || !sameSessionRequest(latestHistoryRequestRef.current, request)) {
         return;
       }
       const nextSessions = (result as SessionSummary[]).filter((session) => session.provider === provider);
-      setHistorySessions(nextSessions);
+      const combinedSessions = [...previousSessions, ...nextSessions];
+      setHistorySessions(combinedSessions);
+      setHistoryHasMore(nextSessions.length >= HISTORY_PAGE_SIZE);
       setHistorySelectedSessionId((current) => (
-        current && !nextSessions.some((session) => session.session_id === current) ? "" : current
+        current && !combinedSessions.some((session) => session.session_id === current) ? "" : current
       ));
+      setHistoryIsLoading(false);
+      if (nextSessions.length >= HISTORY_PAGE_SIZE) {
+        void prefetchHistorySessions(nextState, combinedSessions.length);
+      }
     } catch (err) {
       if (requestSeq !== historyRequestSeqRef.current || !sameSessionRequest(latestHistoryRequestRef.current, request)) {
         return;
@@ -925,8 +1083,31 @@ function App() {
       setHistorySessions([]);
       setHistorySelectedSessionId("");
       setHistoryPreview(emptyPreview());
+      setHistoryIsLoading(false);
+      setHistoryHasMore(false);
+      clearHistoryPrefetchState();
       setErrorMessage(err instanceof Error ? err.message : "加载会话失败");
     }
+  }
+
+  async function handleLoadMoreHistorySessions(nextState: LocalState | null = state) {
+    if (!nextState) {
+      return;
+    }
+    if (historyPrefetchedSessions.length > 0) {
+      const combinedSessions = [...historySessions, ...historyPrefetchedSessions];
+      setHistorySessions(combinedSessions);
+      setHistoryHasMore(historyPrefetchedHasMore);
+      setHistoryPrefetchedSessions([]);
+      setHistoryPrefetchedHasMore(false);
+      historyPrefetchedOffsetRef.current = null;
+      latestHistoryPrefetchRequestRef.current = null;
+      if (historyPrefetchedHasMore) {
+        void prefetchHistorySessions(nextState, combinedSessions.length);
+      }
+      return;
+    }
+    await handleLoadHistorySessions(nextState, { append: true });
   }
 
   async function handleHistoryRestoreProfileChange(profileKey: ProfileKey) {
@@ -1006,6 +1187,7 @@ function App() {
         launch_mode: "resume_selected" as const,
       },
       session_id: selectedHistorySession.session_id,
+      session_source: sessionSourceFromSummary(selectedHistorySession),
     };
 
     try {
@@ -1204,14 +1386,13 @@ function App() {
     command_base: draftCommandBase,
     settings_file: draftSettingsFile,
     extra_args: draftArgs,
-    launch_mode: draftMode,
+    launch_mode: "new" as const,
     exclude_user_settings: draftExcludeUser,
   }), [
     draftArgs,
     draftCommandBase,
     draftCwd,
     draftExcludeUser,
-    draftMode,
     draftSettingsFile,
   ]);
   const globalPermissions = useMemo(
@@ -1288,7 +1469,6 @@ function App() {
       case "command_base": setDraftCommandBase(val as string); break;
       case "settings_file": setDraftSettingsFile(val as string); break;
       case "extra_args": setDraftArgs(val as string); break;
-      case "launch_mode": setDraftMode(val as LaunchMode); break;
       case "exclude_user_settings": setDraftExcludeUser(val as boolean); break;
     }
   }, []);
@@ -1317,6 +1497,7 @@ function App() {
   const stableHandleLoadProfilesSessions = useEventCallback(handleLoadProfilesSessions);
   const stableHandleLaunch = useEventCallback(handleLaunch);
   const stableHandleLoadHistorySessions = useEventCallback(handleLoadHistorySessions);
+  const stableHandleLoadMoreHistorySessions = useEventCallback(handleLoadMoreHistorySessions);
   const stableHandleHistoryRestoreProfileChange = useEventCallback(handleHistoryRestoreProfileChange);
   const stableHandleHistoryRestoreLaunch = useEventCallback(handleHistoryRestoreLaunch);
   const stableHandleGlobalSettingsChange = useEventCallback(handleGlobalSettingsChange);
@@ -1352,8 +1533,13 @@ function App() {
   const stableDirectLaunchAction = useCallback(() => void stableHandleLaunch("new"), [stableHandleLaunch]);
   const stableContinueLaunchAction = useCallback(() => void stableHandleLaunch("continue_last"), [stableHandleLaunch]);
   const stableResumeLaunchAction = useCallback(
-    () => void stableHandleLaunch("resume_selected", profilesSelectedSessionId),
-    [profilesSelectedSessionId, stableHandleLaunch],
+    () => void stableHandleLaunch(
+      "resume_selected",
+      profilesSelectedSessionId,
+      undefined,
+      sessionSourceFromSummary(profilesSessions.find((session) => session.session_id === profilesSelectedSessionId)),
+    ),
+    [profilesSelectedSessionId, profilesSessions, stableHandleLaunch],
   );
   const stableTemporaryReadonlyLaunchAction = useCallback(
     () => void stableHandleLaunch("new", undefined, "readonly"),
@@ -1364,7 +1550,14 @@ function App() {
       void stableHandleLaunch("new", undefined, "full_access");
     }
   }, [stableHandleLaunch]);
-  const stableRefreshHistorySessionsAction = useCallback(() => void stableHandleLoadHistorySessions(), [stableHandleLoadHistorySessions]);
+  const stableRefreshHistorySessionsAction = useCallback(
+    () => void stableHandleLoadHistorySessions(state, { refresh: true }),
+    [stableHandleLoadHistorySessions, state],
+  );
+  const stableLoadMoreHistorySessionsAction = useCallback(
+    () => void stableHandleLoadMoreHistorySessions(state),
+    [stableHandleLoadMoreHistorySessions, state],
+  );
   const stableHistoryRestoreProfileChangeAction = useCallback(
     (profileKey: ProfileKey) => void stableHandleHistoryRestoreProfileChange(profileKey),
     [stableHandleHistoryRestoreProfileChange],
@@ -1472,6 +1665,16 @@ function App() {
             onDelete: stableHandleDeleteProfile,
             disabled: isBusy,
           }}
+          siteBalanceSessionProps={{
+            siteBalanceSessions: draftSiteBalanceSessions,
+            balanceSessionSelection: draftBalanceSessionSelection,
+            balanceSessionDraft: draftBalanceSession,
+            onBalanceSessionSelectionChange: handleBalanceSessionSelectionChange,
+            onBalanceSessionDraftChange: handleBalanceSessionDraftChange,
+            onSaveBalanceSession: stableSaveBalanceSessionAction,
+            onDeleteSiteBalanceSession: stableDeleteSiteBalanceSessionAction,
+            disabled: isBusy,
+          }}
           balanceTestProps={{
             state: balanceState,
             onTest: stableHandleTestBalance,
@@ -1481,9 +1684,6 @@ function App() {
           profileEditProps={{
             draft: profileDraft,
             globalPermissions,
-            siteBalanceSessions: draftSiteBalanceSessions,
-            balanceSessionSelection: draftBalanceSessionSelection,
-            balanceSessionDraft: draftBalanceSession,
             runtime: profileRuntime,
             provider: selectedProvider,
             modelOptions,
@@ -1492,10 +1692,6 @@ function App() {
             modelFetchError,
             modelFetchSuccess,
             onChange: handleProfileDraftChange,
-            onBalanceSessionSelectionChange: handleBalanceSessionSelectionChange,
-            onBalanceSessionDraftChange: handleBalanceSessionDraftChange,
-            onSaveBalanceSession: stableSaveBalanceSessionAction,
-            onDeleteSiteBalanceSession: stableDeleteSiteBalanceSessionAction,
             onAdvancedModelMappingChange: setDraftAdvancedModelMapping,
             onPermissionsChange: setDraftPermissions,
             onDraftCommit: stableDraftCommitAction,
@@ -1513,6 +1709,7 @@ function App() {
             disabled: isBusy || !state?.selected_profile_key,
             resumeDisabled: !profilesSelectedSessionId,
             sessions: profilesSessions,
+            sessionsLoading: profilesSessionsLoading,
             selectedSessionId: profilesSelectedSessionId,
             onSelectSession: setProfilesSelectedSessionId,
             onRefreshSessions: stableRefreshProfilesSessionsAction,
@@ -1553,9 +1750,12 @@ function App() {
             preview: historyPreview,
             onSelect: setHistorySelectedSessionId,
             onRefresh: stableRefreshHistorySessionsAction,
+            onLoadMore: stableLoadMoreHistorySessionsAction,
             onSelectRestoreProfile: stableHistoryRestoreProfileChangeAction,
             onRestore: stableHistoryRestoreLaunchAction,
             disabled: isBusy,
+            isLoading: historyIsLoading,
+            hasMoreSessions: historyHasMore,
           }}
         />
       )}

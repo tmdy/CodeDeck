@@ -34,7 +34,9 @@ app-data/runtime-overlays/
 app-data/codex-profiles/
 app-data/backups/
 app-data/operations/
+app-data/logs/
 app-data/*.log
+app-data/**/*.log
 app-data/**/*.sqlite
 app-data/**/*.sqlite-*
 app-data/**/history.jsonl

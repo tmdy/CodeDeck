@@ -32,6 +32,41 @@ describe("GlobalSettingsPanel", () => {
     expect(html).toContain("允许联网");
   });
 
+  it("should render and update the application theme mode", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <GlobalSettingsPanel
+          settings={defaultGlobalSettings()}
+          onChange={onChange}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("外观模式");
+    expect(container.textContent).toContain("跟随系统");
+    expect(container.textContent).toContain("日间");
+    expect(container.textContent).toContain("夜间");
+
+    const darkButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "夜间",
+    );
+    await act(async () => {
+      darkButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith({ theme_mode: "dark" });
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("should require confirmation when selecting full access", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

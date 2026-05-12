@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ProfilesLaunchPanel } from "../../../components/profiles/ProfilesLaunchPanel.jsx";
 
 describe("ProfilesLaunchPanel", () => {
-  it("renders launch controls before session picker and command preview without model mapping", () => {
+  it("renders launch controls before session picker without command preview or model mapping", () => {
     const html = renderToStaticMarkup(
       <ProfilesLaunchPanel
         preview={{
@@ -40,14 +40,11 @@ describe("ProfilesLaunchPanel", () => {
     );
 
     expect(html.indexOf("直接启动")).toBeLessThan(html.indexOf("恢复会话"));
-    expect(html.indexOf("恢复会话")).toBeLessThan(html.indexOf("命令预览"));
-    expect(html).toContain('codex resume &quot;session-1&quot;');
-    expect(html).toContain("C:/repo");
-    expect(html).toContain("CODEX_SITE_API_KEY");
-    expect(html).toContain("[已设置]");
+    expect(html).not.toContain("命令预览");
+    expect(html).not.toContain('codex resume &quot;session-1&quot;');
+    expect(html).not.toContain("CODEX_SITE_API_KEY");
     expect(html).toContain("将以以下权限启动");
     expect(html).toContain("Codex: workspace-write + on-request");
-    expect(html).toContain("继承全局 MCP/Skills");
     expect(html).toContain("临时只读");
     expect(html).toContain("临时全权限");
     expect(html).not.toContain("模型映射");

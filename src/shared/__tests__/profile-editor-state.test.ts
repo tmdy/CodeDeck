@@ -9,7 +9,10 @@ import {
   hasOnlyProfileDraftSelectedModelIdChange,
   type ProfileEditorDraft,
 } from "../profile-editor-state.js";
-import type { Profile } from "../profile/types.js";
+import {
+  shouldRecommendClaudeSingleModelCompatibility,
+  type Profile,
+} from "../profile/types.js";
 
 const claudeProfile: Profile = {
   provider: "claude",
@@ -35,6 +38,7 @@ function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDr
         sonnetTarget: "",
         haikuTarget: "",
         subagentTarget: "",
+        deepseekReasoningEffort: "default",
       },
       codex: {
         commandLineModelOverride: "",
@@ -92,6 +96,7 @@ describe("profile-editor-state", () => {
           sonnetTarget: "",
           haikuTarget: "",
           subagentTarget: "",
+          deepseekReasoningEffort: "default",
         },
         codex: {
           commandLineModelOverride: "",
@@ -107,7 +112,7 @@ describe("profile-editor-state", () => {
       cwd: "C:/repo",
       command_base: "claude-dev",
       settings_file: "C:/Users/test/.claude/settings.local.json",
-      launch_mode: "continue_last",
+      launch_mode: "new",
       extra_args: "--debug",
       exclude_user_settings: false,
     });
@@ -144,6 +149,13 @@ describe("profile-editor-state", () => {
 
     expect(draft.advancedModelMapping.enabled).toBe(false);
     expect(draft.advancedModelMapping.claude?.aliasMode).toBe("none");
+  });
+
+  it("should not recommend single-model compatibility for official Claude model ids on third-party gateways", () => {
+    expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "claude-opus-4-7")).toBe(false);
+    expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "claude-sonnet-4-5")).toBe(false);
+    expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "claude-haiku-4-5")).toBe(false);
+    expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "glm-5.1")).toBe(true);
   });
 
   it("should detect unsaved changes including selectedModelId, command_base, and session binding", () => {

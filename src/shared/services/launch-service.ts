@@ -6,6 +6,7 @@ import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND,
   PROVIDER_CLAUDE,
+  normalizeDeepSeekReasoningEffort,
   normalizeRuntimeSettings,
   resolveClaudeModelAliasMode,
   type LaunchMode,
@@ -289,6 +290,12 @@ export class LaunchService {
         if (advancedClaude?.subagentTarget?.trim()) env.CLAUDE_CODE_SUBAGENT_MODEL = advancedClaude.subagentTarget.trim();
       }
     }
+    const deepseekReasoningEffort = normalizeDeepSeekReasoningEffort(
+      profile.advancedModelMapping?.claude?.deepseekReasoningEffort,
+    );
+    if (deepseekReasoningEffort !== "default") {
+      env.CLAUDE_CODE_EFFORT_LEVEL = deepseekReasoningEffort;
+    }
 
     return {
       commandExecutable: commandBase,
@@ -509,6 +516,7 @@ export class LaunchService {
     const targetModel = options.targetModel.trim();
     const codexPermissions = toCodexPermissionConfig(options.permissions.preset);
     const profileHeader = `profiles.${JSON.stringify(options.profileName)}`;
+    const webSearchMode = options.permissions.common.allowNetwork ? "live" : "disabled";
     const workspaceLines = codexPermissions.sandboxMode === "workspace-write"
       ? [
           `[${profileHeader}.sandbox_workspace_write]`,
@@ -524,14 +532,14 @@ export class LaunchService {
           `model_provider = ${JSON.stringify(options.providerId)}`,
           `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
           `approval_policy = ${JSON.stringify(codexPermissions.approvalPolicy)}`,
-          `web_search = ${options.permissions.common.allowNetwork ? "true" : "false"}`,
+          `web_search = ${JSON.stringify(webSearchMode)}`,
           "",
         ]
       : [
           `[${profileHeader}]`,
           `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
           `approval_policy = ${JSON.stringify(codexPermissions.approvalPolicy)}`,
-          `web_search = ${options.permissions.common.allowNetwork ? "true" : "false"}`,
+          `web_search = ${JSON.stringify(webSearchMode)}`,
           "",
         ];
     const globalMcpToml = options.globalMcpToml?.trim() ? `${options.globalMcpToml.trim()}\n` : "";

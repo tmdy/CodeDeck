@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -30,13 +30,17 @@ import {
   type SiteBalanceSessionsByBaseUrl,
 } from "../src/shared/balance/site-balance-sessions.js";
 import { pickDirectoryPath } from "../src/shared/electron/dialog-helpers.js";
-import { createDebugLogWriter } from "../src/shared/electron/debug-log.js";
+import { createAppLogger, createIpcHandlerLogger } from "../src/shared/electron/debug-log.js";
 import { executeLaunchPlan, type ExternalTerminalLaunchSpec } from "../src/shared/electron/launch-runtime.js";
 import { resolveBaseUrlExternalTarget } from "../src/shared/electron/open-url.js";
 import {
+  importCodexSessionToRuntimeHome,
+  invalidateCodexSessionCache,
   listClaudeSessions,
   listCodexSessions,
+  listCodexSessionsFromHomes,
   listSessionsForProvider,
+  type CodexSessionHome,
   type ListSessionsRequest,
 } from "../src/shared/services/session-service.js";
 import {
@@ -57,6 +61,7 @@ import {
 } from "../src/shared/balance/types.js";
 import type { ParameterSettings } from "../src/shared/parameter/types.js";
 import type { ModelMappingsState } from "../src/shared/model-mapping/config-types.js";
+import { normalizeThemeMode } from "../src/shared/theme.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -86,16 +91,29 @@ let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
 let mainWindow: BrowserWindow | null = null;
 let isTransitioningFromUnlock = false;
-const debugLogWriter = createDebugLogWriter({
-  getDirectory: () => path.join(projectRoot || process.cwd(), "app-data"),
+const appLogger = createAppLogger({
+  getDirectory: () => path.join(projectRoot || process.cwd(), "app-data", "logs"),
 });
-
-function writeDebugLog(message: string): void {
-  debugLogWriter.write(message);
-}
+const handleIpc = createIpcHandlerLogger(appLogger, (channel, handler) => {
+  ipcMain.handle(channel, (event, ...args) => handler(event, ...args));
+});
 
 function getDefaultWorkingDirectory(): string {
   return app.getPath("downloads").replace(/\\/g, "/");
+}
+
+function applyNativeThemeMode(mode: unknown): void {
+  nativeTheme.themeSource = normalizeThemeMode(mode);
+}
+
+function resolveWindowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? "#111827" : "#f2efe7";
+}
+
+async function syncNativeThemeFromLocalState(): Promise<void> {
+  if (!localStateStore) return;
+  const state = await localStateStore.load();
+  applyNativeThemeMode(state.global_settings.theme_mode);
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -107,6 +125,12 @@ if (!gotSingleInstanceLock) {
 // ---- Skills 服务 ----
 
 async function initSkillsService(): Promise<void> {
+  appLogger.info("app", "workspace_init_start", "Initializing skills workspace", {
+    context: {
+      isPackaged: app.isPackaged,
+      hasEnvProjectRoot: !!process.env.SKILLS_MANAGER_PROJECT_ROOT?.trim(),
+    },
+  });
   const layout = resolveWorkspaceLayout({
     cwd: process.cwd(),
     envProjectRoot: process.env.SKILLS_MANAGER_PROJECT_ROOT,
@@ -117,6 +141,12 @@ async function initSkillsService(): Promise<void> {
   await initializeWorkspace(layout);
   projectRoot = layout.workspaceRoot;
   skillsService = new SkillsManagerService(resolveDefaultPaths(projectRoot));
+  appLogger.info("app", "workspace_init_success", "Skills workspace initialized", {
+    context: {
+      workspaceRoot: projectRoot,
+      hasSeedRoot: !!layout.seedRoot,
+    },
+  });
 }
 
 function getSkillsService(): SkillsManagerService {
@@ -166,6 +196,44 @@ async function resolveCodexSessionHome(request: ListSessionsRequest): Promise<st
   return getModelMappingConfigService().ensureCodexRuntimeHome();
 }
 
+async function resolveCodexSessionHomes(request: ListSessionsRequest): Promise<CodexSessionHome[]> {
+  const appRuntimeHome = await resolveCodexSessionHome(request);
+  if (!appRuntimeHome) {
+    return [];
+  }
+  const globalHome = path.join(os.homedir(), ".codex");
+  const homes: CodexSessionHome[] = [
+    { kind: "app_runtime", home: appRuntimeHome },
+  ];
+  if (path.resolve(globalHome) !== path.resolve(appRuntimeHome)) {
+    homes.push({ kind: "global_codex", home: globalHome });
+  }
+  return homes;
+}
+
+async function importExternalCodexSessionIfNeeded(request: LaunchRequest): Promise<void> {
+  if (request.provider.trim().toLowerCase() !== "codex") {
+    return;
+  }
+  if (request.session_source?.source_kind !== "global_codex") {
+    return;
+  }
+  const sessionId = request.session_id?.trim() ?? "";
+  if (!sessionId) {
+    throw new Error("恢复指定会话时必须提供 sessionId。");
+  }
+  const runtimeHome = await getModelMappingConfigService().ensureCodexRuntimeHome();
+  const sourceHome = request.session_source.source_home?.trim() || path.join(os.homedir(), ".codex");
+  if (path.resolve(sourceHome) === path.resolve(runtimeHome)) {
+    return;
+  }
+  await importCodexSessionToRuntimeHome({
+    sessionId,
+    sourceHome,
+    runtimeHome,
+  });
+}
+
 function getProfileStateAccessor(): StateAccessor {
   if (!profileStateAccessor) throw new Error("Profile 状态访问器尚未初始化。");
   return profileStateAccessor;
@@ -180,6 +248,14 @@ function currentModelMappingsState(): ModelMappingsState {
     throw new Error("Model mappings state 尚未初始化。");
   }
   return modelMappingsStateCache;
+}
+
+function safeUrlHost(value: string): string {
+  try {
+    return new URL(value).host;
+  } catch {
+    return value.trim();
+  }
 }
 
 async function directoryExists(targetPath: string): Promise<boolean> {
@@ -310,6 +386,7 @@ async function loadProfilesAndState(
 
   const config = await encryptedStore.load(passphrase);
   const state = await localStateStore.load();
+  applyNativeThemeMode(state.global_settings.theme_mode);
 
   return {
     profiles: config.profiles,
@@ -356,6 +433,7 @@ async function saveAndEmitBalanceState(profileKeys: ProfileKey[], nextState: Bal
 }
 
 async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
+  const startedAt = Date.now();
   const profiles = getProfileService().getProfiles();
   const profile = profiles.find((item) => itemKey(item) === profileKey);
   if (!profile) {
@@ -371,6 +449,15 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
     profile,
     siteBalanceSessionsByBaseUrl,
   );
+  appLogger.info("balance", "balance_check_start", "Balance check started", {
+    context: {
+      profileKey,
+      provider: profile.provider,
+      baseUrlHost: safeUrlHost(normalizeBalanceBaseUrl(profile.url)),
+      authKind: resolvedAuth.kind,
+      sharedProfileCount: sharedProfileKeys.length,
+    },
+  });
 
   const runningState: BalanceCheckState = {
     ...defaultBalanceCheckState(),
@@ -388,18 +475,7 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
     const timeoutMs = getSettingsStateService().getParameterSettings().connectivity_test_timeout_ms;
     let finalState: BalanceCheckState;
 
-    if (resolvedAuth.kind === "ambiguous_multiple_sessions") {
-      finalState = {
-        ...defaultBalanceCheckState(),
-        provider: profile.provider,
-        profile_name: profile.name,
-        base_url: normalizeBalanceBaseUrl(profile.url),
-        supported: true,
-        success: false,
-        message: "同站点存在多套后台会话，请先选择要使用的会话",
-        endpoint: `${resolvedAuth.base_url}/api/user/self`,
-      };
-    } else if (resolvedAuth.kind === "none" && resolvedAuth.reason === "missing_bound_session") {
+    if (resolvedAuth.kind === "none" && resolvedAuth.reason === "missing_bound_session") {
       finalState = {
         ...defaultBalanceCheckState(),
         provider: profile.provider,
@@ -414,7 +490,7 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
       finalState = await getBalanceService().query(
         profile,
         timeoutMs,
-        resolvedAuth.kind === "explicit_session" || resolvedAuth.kind === "implicit_single_session"
+        resolvedAuth.kind === "explicit_session"
           ? resolvedAuth.session
           : null,
       );
@@ -423,6 +499,19 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
       ...finalState,
       running: false,
       finished_at_display: new Date().toLocaleString(),
+    });
+    appLogger.info("balance", "balance_check_finished", "Balance check finished", {
+      durationMs: Date.now() - startedAt,
+      context: {
+        profileKey,
+        provider: profile.provider,
+        baseUrlHost: safeUrlHost(normalizeBalanceBaseUrl(profile.url)),
+        authKind: resolvedAuth.kind,
+        sharedProfileCount: sharedProfileKeys.length,
+        supported: finalState.supported,
+        success: finalState.success,
+        message: finalState.message,
+      },
     });
   } catch (error) {
     await saveAndEmitBalanceState(sharedProfileKeys, {
@@ -434,6 +523,17 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
       success: false,
       message: error instanceof Error ? error.message : "网络错误 / 超时",
       finished_at_display: new Date().toLocaleString(),
+    });
+    appLogger.error("balance", "balance_check_error", "Balance check failed", {
+      durationMs: Date.now() - startedAt,
+      context: {
+        profileKey,
+        provider: profile.provider,
+        baseUrlHost: safeUrlHost(normalizeBalanceBaseUrl(profile.url)),
+        authKind: resolvedAuth.kind,
+        sharedProfileCount: sharedProfileKeys.length,
+      },
+      error,
     });
   }
 }
@@ -507,7 +607,7 @@ function getPreloadPath(): string {
 
 async function createUnlockWindow(): Promise<string> {
   return new Promise((resolve) => {
-    writeDebugLog("createUnlockWindow: open");
+    appLogger.info("window", "unlock_window_open", "Opening unlock window");
     const unlockWin = new BrowserWindow({
       width: 760,
       height: 560,
@@ -515,7 +615,7 @@ async function createUnlockWindow(): Promise<string> {
       minHeight: 480,
       resizable: false,
       frame: false,
-      backgroundColor: "#f2efe7",
+      backgroundColor: resolveWindowBackgroundColor(),
       icon: resolveWindowIconPath(),
       webPreferences: {
         preload: getPreloadPath(),
@@ -527,14 +627,22 @@ async function createUnlockWindow(): Promise<string> {
 
     // 处理解锁请求
     const unlockHandler = async (_event: Electron.IpcMainInvokeEvent, passphrase: string) => {
-      writeDebugLog(`profile:unlock invoked, passphrase_length=${passphrase?.length ?? 0}`);
+      appLogger.info("auth", "unlock_start", "Profile unlock started", {
+        context: {
+          passphrase_length: passphrase?.length ?? 0,
+        },
+      });
       try {
         if (!encryptedStore || !localStateStore) {
           await initProfileServices();
-          writeDebugLog("profile:unlock initProfileServices completed");
+          appLogger.info("auth", "unlock_profile_services_ready", "Profile services initialized during unlock");
         }
         const { profiles, state, siteBalanceSessionsByBaseUrl } = await loadProfilesAndState(passphrase!);
-        writeDebugLog(`profile:unlock loaded profiles=${profiles.length}`);
+        appLogger.info("auth", "unlock_profiles_loaded", "Profiles loaded during unlock", {
+          context: {
+            profileCount: profiles.length,
+          },
+        });
         currentPassphrase = passphrase!;
 
         // 创建 Profile 服务
@@ -555,21 +663,21 @@ async function createUnlockWindow(): Promise<string> {
         settingsStateService = new SettingsStateService(stateAccessor);
 
         isTransitioningFromUnlock = true;
-        writeDebugLog("profile:unlock success, closing unlock window");
+        appLogger.info("auth", "unlock_success", "Profile unlock succeeded");
         unlockWin.close();
         resolve(passphrase!);
       } catch (err: any) {
-        writeDebugLog(`profile:unlock failed: ${err?.stack || err?.message || String(err)}`);
+        appLogger.error("auth", "unlock_error", "Profile unlock failed", { error: err });
         // 密码错误，通知渲染进程
         unlockWin.webContents.send("profile:unlock-error", err.message || "解锁失败");
       }
     };
 
-    ipcMain.handle("profile:unlock", unlockHandler);
+    handleIpc("profile:unlock", unlockHandler, { includeArgs: false });
 
-    ipcMain.handle("profile:check-encrypted-config", () => {
+    handleIpc("profile:check-encrypted-config", () => {
       return encryptedStore?.exists() ?? false;
-    });
+    }, { level: "debug" });
 
     const devServerUrl = process.env.VITE_DEV_SERVER_URL;
     if (devServerUrl) {
@@ -583,13 +691,13 @@ async function createUnlockWindow(): Promise<string> {
 }
 
 async function createMainWindow(): Promise<void> {
-  writeDebugLog("createMainWindow: start");
+  appLogger.info("window", "main_window_start", "Opening main window");
   const browserWindow = new BrowserWindow({
     width: 1520,
     height: 920,
     minWidth: 1200,
     minHeight: 760,
-    backgroundColor: "#f2efe7",
+    backgroundColor: resolveWindowBackgroundColor(),
     icon: resolveWindowIconPath(),
     webPreferences: {
       preload: getPreloadPath(),
@@ -601,10 +709,10 @@ async function createMainWindow(): Promise<void> {
   mainWindow = browserWindow;
   isTransitioningFromUnlock = false;
   browserWindow.webContents.on("did-finish-load", () => {
-    writeDebugLog("createMainWindow: did-finish-load");
+    appLogger.info("window", "main_window_did_finish_load", "Main window finished loading");
   });
   browserWindow.on("ready-to-show", () => {
-    writeDebugLog("createMainWindow: ready-to-show");
+    appLogger.info("window", "main_window_ready_to_show", "Main window is ready to show");
   });
 
   browserWindow.on("closed", () => {
@@ -626,19 +734,19 @@ async function createMainWindow(): Promise<void> {
 
 function registerAllIpcHandlers(): void {
   // ============ Skills Manager IPC（保持不变） ============
-  ipcMain.handle("skills-manager:scan", async () => getSkillsService().scanEnvironment());
-  ipcMain.handle("skills-manager:load-cached-snapshot", async () =>
+  handleIpc("skills-manager:scan", async () => getSkillsService().scanEnvironment());
+  handleIpc("skills-manager:load-cached-snapshot", async () =>
     getSkillsService().loadCachedSnapshot(),
   );
-  ipcMain.handle("skills-manager:refresh-snapshot", async () =>
+  handleIpc("skills-manager:refresh-snapshot", async () =>
     getSkillsService().refreshSnapshot(),
   );
-  ipcMain.handle(
+  handleIpc(
     "skills-manager:update-skill-user-tags",
     async (_event, skillId: string, tags: string[]) =>
       getSkillsService().updateSkillUserTags(skillId, tags),
   );
-  ipcMain.handle("skills-manager:pick-project-directory", async () => {
+  handleIpc("skills-manager:pick-project-directory", async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
     return browserWindow
       ? pickDirectoryPath(
@@ -650,44 +758,78 @@ function registerAllIpcHandlers(): void {
           "选择项目文件夹",
         );
   });
-  ipcMain.handle("skills-manager:select-project", async (_event, projectPath: string) =>
+  handleIpc("skills-manager:select-project", async (_event, projectPath: string) =>
     getSkillsService().selectProject(projectPath),
   );
-  ipcMain.handle("skills-manager:clear-current-project-selection", async () =>
+  handleIpc("skills-manager:clear-current-project-selection", async () =>
     getSkillsService().clearCurrentProjectSelection(),
   );
-  ipcMain.handle(
+  handleIpc(
     "skills-manager:scan-project",
     async (_event, projectPath?: string) =>
       getSkillsService().scanProjectSkills(projectPath),
   );
-  ipcMain.handle(
+  handleIpc(
     "skills-manager:preview",
     async (_event, action: PreviewAction, skillIds: string[]) =>
       getSkillsService().createPreview(action, skillIds),
   );
-  ipcMain.handle(
+  handleIpc(
     "skills-manager:execute",
-    async (_event, action: PreviewAction, skillIds: string[]) =>
-      getSkillsService().executeBatch(action, skillIds),
+    async (_event, action: PreviewAction, skillIds: string[]) => {
+      appLogger.info("skills", "batch_execute_start", "Skills batch execution started", {
+        context: { action, skillCount: skillIds.length },
+      });
+      const result = await getSkillsService().executeBatch(action, skillIds);
+      appLogger.info("skills", "batch_execute_finished", "Skills batch execution finished", {
+        context: {
+          action,
+          skillCount: skillIds.length,
+          successCount: result.results.filter((item) => item.success).length,
+          failureCount: result.results.filter((item) => !item.success).length,
+        },
+      });
+      return result;
+    },
   );
-  ipcMain.handle(
+  handleIpc(
     "skills-manager:project-preview",
     async (_event, host: SkillHost, skillIds: string[], action: ProjectBatchAction) =>
       getSkillsService().createProjectPreview(host, skillIds, action),
   );
-  ipcMain.handle(
+  handleIpc(
     "skills-manager:project-execute",
-    async (_event, host: SkillHost, skillIds: string[], action: ProjectBatchAction) =>
-      getSkillsService().executeProjectBatch(host, skillIds, action),
+    async (_event, host: SkillHost, skillIds: string[], action: ProjectBatchAction) => {
+      appLogger.info("skills", "project_batch_execute_start", "Project skills batch execution started", {
+        context: { host, action, skillCount: skillIds.length },
+      });
+      const result = await getSkillsService().executeProjectBatch(host, skillIds, action);
+      appLogger.info("skills", "project_batch_execute_finished", "Project skills batch execution finished", {
+        context: {
+          host,
+          action,
+          skillCount: skillIds.length,
+          successCount: result.results.filter((item) => item.success).length,
+          failureCount: result.results.filter((item) => !item.success).length,
+        },
+      });
+      return result;
+    },
   );
-  ipcMain.handle("skills-manager:rollback-last-batch", async () =>
-    getSkillsService().rollbackLastSuccessfulBatch(),
-  );
+  handleIpc("skills-manager:rollback-last-batch", async () => {
+    const result = await getSkillsService().rollbackLastSuccessfulBatch();
+    appLogger.info("skills", "batch_rollback_finished", "Last successful skills batch rollback finished", {
+      context: {
+        successCount: result.results.filter((item) => item.success).length,
+        failureCount: result.results.filter((item) => !item.success).length,
+      },
+    });
+    return result;
+  });
 
   // ============ Profile IPC ============
 
-  ipcMain.handle(
+  handleIpc(
     "profile:initialize-encryption",
     async (_event, passphrase: string) => {
       if (!encryptedStore || !localStateStore) {
@@ -707,9 +849,10 @@ function registerAllIpcHandlers(): void {
       settingsStateService = new SettingsStateService(stateAccessor);
       return { success: true };
     },
+    { includeArgs: false },
   );
 
-  ipcMain.handle(
+  handleIpc(
     "profile:change-passphrase",
     async (_event, currentPassword: string, nextPassword: string) => {
       if (!encryptedStore || !localStateStore) {
@@ -729,10 +872,11 @@ function registerAllIpcHandlers(): void {
       currentPassphrase = nextPassword;
       return { success: true };
     },
+    { includeArgs: false },
   );
 
   // Profile CRUD
-  ipcMain.handle("profile:list", () => {
+  handleIpc("profile:list", () => {
     const svc = getProfileService();
     return {
       profiles: svc.getProfiles(),
@@ -740,9 +884,9 @@ function registerAllIpcHandlers(): void {
       siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
       defaultWorkingDirectory: getDefaultWorkingDirectory(),
     };
-  });
+  }, { level: "debug" });
 
-  ipcMain.handle(
+  handleIpc(
     "profile:save",
     async (
       _event,
@@ -754,50 +898,50 @@ function registerAllIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle("profile:delete", async (_event, key: ProfileKey) => {
+  handleIpc("profile:delete", async (_event, key: ProfileKey) => {
     await getProfileService().deleteProfile(key);
   });
 
-  ipcMain.handle(
+  handleIpc(
     "profile:clone",
     async (_event, sourceKey: ProfileKey, targetProvider: string) => {
       return getProfileService().cloneProfileToProvider(sourceKey, targetProvider);
     },
   );
 
-  ipcMain.handle(
+  handleIpc(
     "profile:select",
     async (_event, provider: string, key: ProfileKey) => {
       await getProfileService().selectProfile(provider, key);
     },
   );
 
-  ipcMain.handle(
+  handleIpc(
     "profile:reorder",
     async (_event, provider: string, orderedKeys: ProfileKey[]) => {
       await getProfileService().reorderProfiles(provider, orderedKeys);
     },
   );
 
-  ipcMain.handle(
+  handleIpc(
     "profile:activate-provider",
     async (_event, provider: string) => {
       await getProfileService().activateProvider(provider);
     },
   );
-  ipcMain.handle(
+  handleIpc(
     "profile:save-site-balance-session",
     async (_event, baseUrl: string, draft: SiteBalanceSessionDraft) => {
       return getProfileService().saveSiteBalanceSession(baseUrl, draft);
     },
   );
-  ipcMain.handle(
+  handleIpc(
     "profile:delete-site-balance-session",
     async (_event, baseUrl: string, sessionId: string) => {
       await getProfileService().deleteSiteBalanceSession(baseUrl, sessionId);
     },
   );
-  ipcMain.handle("profile:pick-working-directory", async () => {
+  handleIpc("profile:pick-working-directory", async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
     return browserWindow
       ? pickDirectoryPath(
@@ -809,12 +953,12 @@ function registerAllIpcHandlers(): void {
           "选择工作目录",
         );
   });
-  ipcMain.handle("profile:open-base-url", async (_event, baseUrl: string) => {
+  handleIpc("profile:open-base-url", async (_event, baseUrl: string) => {
     await shell.openExternal(resolveBaseUrlExternalTarget(baseUrl));
   });
 
   // Launcher
-  ipcMain.handle(
+  handleIpc(
     "launcher:preview-for-draft",
     (
       _event,
@@ -826,9 +970,10 @@ function registerAllIpcHandlers(): void {
       const svc = getLaunchService();
       return svc.buildPreview(draft, runtime, mappingsState, sessionId);
     },
+    { level: "debug" },
   );
 
-  ipcMain.handle(
+  handleIpc(
     "launcher:preview-for-profile",
     (_event, profileKey: ProfileKey): CommandPreview => {
       const svc = getLaunchService();
@@ -848,17 +993,31 @@ function registerAllIpcHandlers(): void {
       const runtime = state.runtime_by_profile[profileKey] ?? defaultRuntimeSettings(profile.provider);
       return svc.buildPreview(profile, runtime);
     },
+    { level: "debug" },
   );
 
-  ipcMain.handle("launcher:launch", async (_event, request: LaunchRequest) => {
+  handleIpc("launcher:launch", async (_event, request: LaunchRequest) => {
+    const startedAt = Date.now();
     const capability_overlay = await prepareCapabilityOverlay(request);
     const plan = getLaunchService().buildExecutionPlan({
       ...request,
       capability_overlay,
     });
+    appLogger.info("launcher", "launch_plan_created", "Launch plan created", {
+      context: {
+        provider: request.provider,
+        profileKey: request.profile_key,
+        launchMode: plan.launchMode,
+        cwd: plan.cwd,
+        valid: plan.valid,
+        commandExecutable: plan.commandExecutable,
+        hasCodexConfig: !!plan.codexConfig,
+      },
+    });
     if (!plan.valid) {
       throw new Error(plan.error || "无法生成启动命令");
     }
+    await importExternalCodexSessionIfNeeded(request);
     if (plan.codexConfig) {
       await getModelMappingConfigService().writeCodexProfile({
         profileId: request.profile_key,
@@ -870,6 +1029,14 @@ function registerAllIpcHandlers(): void {
         targetModel: plan.codexConfig.targetModel,
         content: plan.codexConfig.content,
       });
+      appLogger.info("launcher", "codex_config_written", "Codex profile config written", {
+        context: {
+          provider: request.provider,
+          profileKey: request.profile_key,
+          providerId: plan.codexConfig.providerId,
+          baseUrlHost: safeUrlHost(plan.codexConfig.baseUrl),
+        },
+      });
     }
 
     await executeLaunchPlan(plan, {
@@ -877,62 +1044,107 @@ function registerAllIpcHandlers(): void {
       commandExists,
       spawnExternalTerminal,
     });
+    appLogger.info("launcher", "launch_success", "Launch command executed", {
+      durationMs: Date.now() - startedAt,
+      context: {
+        provider: request.provider,
+        profileKey: request.profile_key,
+        launchMode: plan.launchMode,
+        cwd: plan.cwd,
+        commandExecutable: plan.commandExecutable,
+        hasCodexConfig: !!plan.codexConfig,
+      },
+    });
   });
 
   // Sessions
-  ipcMain.handle(
+  handleIpc(
     "session:list",
     async (_event, request: ListSessionsRequest) => {
-      const codexHome = await resolveCodexSessionHome(request);
-      return listSessionsForProvider(request, {
+      const codexHomes = await resolveCodexSessionHomes(request);
+      const sessions = await listSessionsForProvider(request, {
         listClaudeSessions,
-        listCodexSessions: (sessionRequest) => listCodexSessions(sessionRequest, codexHome),
+        listCodexSessions: (sessionRequest) => codexHomes.length > 0
+          ? listCodexSessionsFromHomes(sessionRequest, codexHomes)
+          : listCodexSessions(sessionRequest),
       });
+      appLogger.info("sessions", "session_list_finished", "Session list loaded", {
+        context: {
+          provider: request.provider,
+          scope: request.scope,
+          codexHomeCount: codexHomes.length,
+          sessionCount: sessions.length,
+        },
+      });
+      return sessions;
     },
   );
 
-  ipcMain.handle("session:refresh", async (_event, _provider: string) => {
-    // 异步刷新会话索引
-  });
+  handleIpc("session:refresh", async (_event, provider: string) => {
+    if (provider.trim().toLowerCase() === "codex") {
+      invalidateCodexSessionCache();
+    }
+  }, { level: "debug" });
 
-  ipcMain.handle(
+  handleIpc(
     "session:update-tab-state",
     async (_event, provider: string, patch: SessionsTabStatePatch) => {
       await getSettingsStateService().updateSessionsTabState(provider, patch);
     },
   );
 
-  ipcMain.handle("balance:test", async (_event, profileKey: ProfileKey) => {
+  handleIpc("balance:test", async (_event, profileKey: ProfileKey) => {
     void runBalanceCheck(profileKey);
   });
 
-  ipcMain.handle(
+  handleIpc(
     "balance:get-state",
     (_event, profileKey: ProfileKey): BalanceCheckState => {
       const state = getProfileService().getState();
       return state.balance_checks_by_profile[profileKey] ?? defaultBalanceCheckState();
     },
+    { level: "debug" },
   );
 
-  ipcMain.handle("model-mapping-config:get", async () => currentModelMappingsState());
-  ipcMain.handle("model-mapping-config:save", async (_event, state: ModelMappingsState) => {
+  handleIpc("model-mapping-config:get", async () => currentModelMappingsState(), { level: "debug" });
+  handleIpc("model-mapping-config:save", async (_event, state: ModelMappingsState) => {
     const saved = await getModelMappingConfigService().save(state);
     modelMappingsStateCache = saved;
     return saved;
   });
-  ipcMain.handle("model-mapping-config:fetch-site-models", async (_event, draft: Pick<Profile, "url" | "key">) => {
-    return getModelCatalogService().fetch({
-      baseUrl: draft.url,
-      apiKey: draft.key,
-    });
+  handleIpc("model-mapping-config:fetch-site-models", async (_event, draft: Pick<Profile, "url" | "key">) => {
+    const startedAt = Date.now();
+    try {
+      const result = await getModelCatalogService().fetch({
+        baseUrl: draft.url,
+        apiKey: draft.key,
+      });
+      appLogger.info("model_catalog", "fetch_site_models_success", "Site models fetched", {
+        durationMs: Date.now() - startedAt,
+        context: {
+          baseUrlHost: safeUrlHost(draft.url),
+          modelCount: result.models.length,
+        },
+      });
+      return result;
+    } catch (error) {
+      appLogger.error("model_catalog", "fetch_site_models_error", "Site models fetch failed", {
+        durationMs: Date.now() - startedAt,
+        context: {
+          baseUrlHost: safeUrlHost(draft.url),
+        },
+        error,
+      });
+      throw error;
+    }
   });
 
   // Parameter Settings
-  ipcMain.handle("parameter:get", (): ParameterSettings => {
+  handleIpc("parameter:get", (): ParameterSettings => {
     return getSettingsStateService().getParameterSettings();
-  });
+  }, { level: "debug" });
 
-  ipcMain.handle(
+  handleIpc(
     "parameter:update",
     async (_event, settings: Partial<ParameterSettings>) => {
       return getSettingsStateService().updateParameterSettings(settings);
@@ -940,18 +1152,23 @@ function registerAllIpcHandlers(): void {
   );
 
   // Global Settings
-  ipcMain.handle("settings:get-global", (): GlobalSettings => {
+  handleIpc("settings:get-global", (): GlobalSettings => {
     return getSettingsStateService().getGlobalSettings();
-  });
+  }, { level: "debug" });
 
-  ipcMain.handle(
+  handleIpc(
     "settings:update-global",
     async (_event, settings: Partial<GlobalSettings>) => {
-      return getSettingsStateService().updateGlobalSettings(settings);
+      const updated = await getSettingsStateService().updateGlobalSettings(settings);
+      applyNativeThemeMode(updated.theme_mode);
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.setBackgroundColor(resolveWindowBackgroundColor());
+      }
+      return updated;
     },
   );
 
-  ipcMain.handle("dialog:unsaved-profile-action", async () => {
+  handleIpc("dialog:unsaved-profile-action", async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
     const result = browserWindow
       ? await dialog.showMessageBox(browserWindow, {
@@ -976,7 +1193,7 @@ function registerAllIpcHandlers(): void {
     return ["save", "discard", "cancel"][result.response] as "save" | "discard" | "cancel";
   });
 
-  ipcMain.handle("dialog:launch-unsaved-profile", async () => {
+  handleIpc("dialog:launch-unsaved-profile", async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
     const result = browserWindow
       ? await dialog.showMessageBox(browserWindow, {
@@ -1023,26 +1240,27 @@ if (gotSingleInstanceLock) {
 }
 
 app.whenReady().then(async () => {
-  writeDebugLog("app.whenReady: start");
+  appLogger.info("app", "ready_start", "Electron app ready handler started");
   // 1. 初始化 Skills 工作区
   await initSkillsService();
-  writeDebugLog("app.whenReady: initSkillsService done");
+  appLogger.info("app", "skills_service_ready", "Skills service initialized");
 
   // 2. 初始化 Profile 存储
   await initProfileServices();
-  writeDebugLog("app.whenReady: initProfileServices done");
+  appLogger.info("app", "profile_services_ready", "Profile storage services initialized");
+  await syncNativeThemeFromLocalState();
 
   // 3. 始终先经过解锁/设口令窗口
   await createUnlockWindow();
-  writeDebugLog("app.whenReady: createUnlockWindow resolved");
+  appLogger.info("app", "unlock_window_resolved", "Unlock window resolved");
 
   // 4. 注册所有 IPC 处理器
   registerAllIpcHandlers();
-  writeDebugLog("app.whenReady: registerAllIpcHandlers done");
+  appLogger.info("app", "ipc_handlers_registered", "IPC handlers registered");
 
   // 5. 创建主窗口
   await createMainWindow();
-  writeDebugLog("app.whenReady: createMainWindow done");
+  appLogger.info("app", "main_window_created", "Main window created");
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -1052,7 +1270,11 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  writeDebugLog(`window-all-closed: transitioning=${isTransitioningFromUnlock}`);
+  appLogger.info("app", "window_all_closed", "All windows closed", {
+    context: {
+      transitioningFromUnlock: isTransitioningFromUnlock,
+    },
+  });
   if (isTransitioningFromUnlock) {
     return;
   }
@@ -1062,9 +1284,9 @@ app.on("window-all-closed", () => {
 });
 
 process.on("uncaughtException", (error) => {
-  writeDebugLog(`uncaughtException: ${error?.stack || error?.message || String(error)}`);
+  appLogger.error("process", "uncaught_exception", "Uncaught exception", { error });
 });
 
 process.on("unhandledRejection", (reason) => {
-  writeDebugLog(`unhandledRejection: ${String(reason)}`);
+  appLogger.error("process", "unhandled_rejection", "Unhandled rejection", { error: reason });
 });
