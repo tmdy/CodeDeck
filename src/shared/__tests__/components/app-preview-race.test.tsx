@@ -8,6 +8,7 @@ import type { CommandPreview } from "../../launcher/types.js";
 import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
 import { itemKey } from "../../profile/keys-internal.js";
 import type { Profile, RuntimeSettings } from "../../profile/types.js";
+import type { SessionSummary } from "../../services/session-service.js";
 import { defaultLocalState, type LocalState } from "../../state/local-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -142,6 +143,184 @@ function createProfileManagerFixture(options: { initialCwd?: string } = {}) {
   return { manager, firstPreview, secondPreview };
 }
 
+function cloneLocalStateForTest(state: LocalState): LocalState {
+  return {
+    ...state,
+    selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+    profile_order_by_provider: { ...state.profile_order_by_provider },
+    runtime_by_profile: { ...state.runtime_by_profile },
+    balance_checks_by_profile: { ...state.balance_checks_by_profile },
+    sessions_tab_scope_by_provider: { ...state.sessions_tab_scope_by_provider },
+    sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
+  };
+}
+
+function createSession(profileKey: string, cwd: string, preview: string): SessionSummary {
+  return {
+    provider: "claude",
+    session_id: `${profileKey}-session`,
+    cwd,
+    updated_at: "2026-05-07T10:00:00.000Z",
+    preview,
+  };
+}
+
+function createProfileSessionSwitchFixture(options: { delayAlpha?: boolean; delayBeta?: boolean } = {}) {
+  const alphaProfile: Profile = {
+    provider: "claude",
+    name: "Alpha",
+    url: "https://alpha.example.com/v1",
+    key: "sk-alpha",
+  };
+  const betaProfile: Profile = {
+    provider: "claude",
+    name: "Beta",
+    url: "https://beta.example.com/v1",
+    key: "sk-beta",
+  };
+  const profiles = [alphaProfile, betaProfile];
+  const alphaKey = itemKey(alphaProfile);
+  const betaKey = itemKey(betaProfile);
+  const alphaRuntime = {
+    cwd: "C:/workspace/alpha",
+    command_base: "claude",
+    model: "",
+    settings_file: "",
+    launch_mode: "new" as const,
+    extra_args: "",
+    exclude_user_settings: true,
+  };
+  const betaRuntime = {
+    ...alphaRuntime,
+    cwd: "C:/workspace/beta",
+  };
+  const alphaSession = createSession(alphaKey, alphaRuntime.cwd, "Alpha project session");
+  const betaSession = createSession(betaKey, betaRuntime.cwd, "Beta project session");
+  const alphaSessions = createDeferred<SessionSummary[]>();
+  const betaSessions = createDeferred<SessionSummary[]>();
+  let state: LocalState = {
+    ...defaultLocalState(),
+    selected_provider: "claude",
+    selected_profile_key: alphaKey,
+    selected_profile_key_by_provider: {
+      claude: alphaKey,
+    },
+    profile_order_by_provider: {
+      claude: [alphaKey, betaKey],
+    },
+    runtime_by_profile: {
+      [alphaKey]: alphaRuntime,
+      [betaKey]: betaRuntime,
+    },
+  };
+
+  const listSessions = vi.fn((request) => {
+    if (request.profile_key === alphaKey && options.delayAlpha) {
+      return alphaSessions.promise;
+    }
+    if (request.profile_key === betaKey && options.delayBeta) {
+      return betaSessions.promise;
+    }
+    return Promise.resolve(request.profile_key === betaKey ? [betaSession] : [alphaSession]);
+  });
+
+  const manager: MockProfileManager = {
+    checkEncryptedConfig: vi.fn(async () => false),
+    unlock: vi.fn(async () => ({ success: true })),
+    initializeEncryption: vi.fn(async () => ({ success: true })),
+    changePassphrase: vi.fn(async () => ({ success: true })),
+    listProfiles: vi.fn(async () => ({
+      profiles: profiles.map((profile) => ({ ...profile })),
+      state: cloneLocalStateForTest(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
+    })),
+    saveProfile: vi.fn(async (_targetKey, draft, runtimeDraft) => {
+      state = {
+        ...state,
+        runtime_by_profile: {
+          ...state.runtime_by_profile,
+          [_targetKey]: runtimeDraft,
+        },
+      };
+      return draft;
+    }),
+    deleteProfile: vi.fn(async () => undefined),
+    cloneProfile: vi.fn(async () => ({ ...alphaProfile })),
+    selectProfile: vi.fn(async (_provider, key) => {
+      state = {
+        ...state,
+        selected_profile_key: key,
+        selected_profile_key_by_provider: {
+          ...state.selected_profile_key_by_provider,
+          claude: key,
+        },
+      };
+    }),
+    reorderProfiles: vi.fn(async () => undefined),
+    activateProvider: vi.fn(async () => undefined),
+    saveSiteBalanceSession: vi.fn(async (_baseUrl, draft) => ({
+      id: draft.id ?? "site-session-1",
+      label: draft.label,
+      base_url: _baseUrl,
+      access_token: draft.access_token,
+      user_id: draft.user_id,
+      updated_at: "2026-05-07T10:00:00.000Z",
+    })),
+    deleteSiteBalanceSession: vi.fn(async () => undefined),
+    pickWorkingDirectory: vi.fn(async () => undefined),
+    openBaseUrl: vi.fn(async () => undefined),
+    previewForDraft: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
+    previewForProfile: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
+    launch: vi.fn(async () => undefined),
+    listSessions,
+    refreshSessions: vi.fn(async () => undefined),
+    updateSessionsTabState: vi.fn(async () => undefined),
+    testBalance: vi.fn(async () => undefined),
+    getBalanceState: vi.fn(async () => ({
+      provider: "claude",
+      profile_name: "Alpha",
+      base_url: "https://alpha.example.com",
+      running: false,
+      supported: true,
+      success: false,
+      message: "",
+      items: [],
+      endpoint: "",
+      finished_at_display: "",
+    })),
+    getModelMappings: vi.fn(async () => createDefaultModelMappingsState()),
+    saveModelMappings: vi.fn(async (value) => value),
+    fetchSiteModels: vi.fn(async () => ({ models: [] })),
+    getGlobalSettings: vi.fn(async () => state.global_settings),
+    updateGlobalSettings: vi.fn(async (patch) => ({ ...state.global_settings, ...patch })),
+    getParameterSettings: vi.fn(async () => state.parameter_settings),
+    updateParameterSettings: vi.fn(async (patch) => ({ ...state.parameter_settings, ...patch })),
+    promptUnsavedProfileAction: vi.fn(async () => "discard" as const),
+    promptLaunchWithUnsavedChanges: vi.fn(async () => "save_and_launch" as const),
+    onStateChanged: vi.fn(() => () => undefined),
+    onBalanceProgress: vi.fn(() => () => undefined),
+    onUnlockError: vi.fn(() => () => undefined),
+  };
+
+  return {
+    manager,
+    listSessions,
+    alphaKey,
+    betaKey,
+    alphaSession,
+    betaSession,
+    alphaSessions,
+    betaSessions,
+  };
+}
+
+async function flushAsyncWork(times = 4) {
+  for (let index = 0; index < times; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 describe("App command preview", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -228,6 +407,120 @@ describe("App command preview", () => {
     container.remove();
   });
 
+  it("clears stale profile sessions while loading sessions for the selected profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ delayBeta: true });
+    window.profileManager = fixture.manager;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+      await flushAsyncWork();
+    });
+
+    expect(container.textContent).toContain("Alpha project session");
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/beta",
+      profile_key: fixture.betaKey,
+      limit: 20,
+      offset: 0,
+    });
+    expect(container.textContent).toContain("正在加载会话...");
+    expect(container.textContent).not.toContain("Alpha project session");
+    expect(container.textContent).not.toContain("当前工作目录未找到会话。");
+
+    await act(async () => {
+      fixture.betaSessions.resolve([fixture.betaSession]);
+      await flushAsyncWork();
+    });
+
+    expect(container.textContent).toContain("Beta project session");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("ignores late profile session responses from a previously selected profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ delayAlpha: true, delayBeta: true });
+    window.profileManager = fixture.manager;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+      await flushAsyncWork();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/alpha",
+      profile_key: fixture.alphaKey,
+      limit: 20,
+      offset: 0,
+    });
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/beta",
+      profile_key: fixture.betaKey,
+      limit: 20,
+      offset: 0,
+    });
+
+    await act(async () => {
+      fixture.alphaSessions.resolve([fixture.alphaSession]);
+      await flushAsyncWork();
+    });
+
+    expect(container.textContent).toContain("正在加载会话...");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      fixture.betaSessions.resolve([fixture.betaSession]);
+      await flushAsyncWork();
+    });
+
+    expect(container.textContent).toContain("Beta project session");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("uses the downloads directory as the visible cwd when saved runtime cwd is empty", async () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture({ initialCwd: "" });
@@ -253,6 +546,8 @@ describe("App command preview", () => {
       scope: "project",
       cwd: DEFAULT_DOWNLOADS_CWD,
       profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
     });
 
     await act(async () => {
@@ -361,6 +656,8 @@ describe("App command preview", () => {
       scope: "project",
       cwd: "C:/workspace/initial",
       profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
     });
 
     const cwdInput = Array.from(container.querySelectorAll("input")).find(
@@ -392,6 +689,8 @@ describe("App command preview", () => {
       scope: "project",
       cwd: "C:/workspace/draft",
       profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
     });
 
     await act(async () => {
@@ -436,6 +735,8 @@ describe("App command preview", () => {
       scope: "project",
       cwd: "C:/workspace/picked",
       profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
     });
 
     await act(async () => {

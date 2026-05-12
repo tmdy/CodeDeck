@@ -170,6 +170,96 @@ function createProviderRaceFixture() {
   return { manager, listSessions, codexResolvers };
 }
 
+function createSession(index: number): SessionSummary {
+  return {
+    provider: "codex",
+    session_id: `codex-session-${index}`,
+    cwd: `C:/repo-codex-${index}`,
+    updated_at: `2026-05-06T${String(index % 24).padStart(2, "0")}:00:00.000Z`,
+    preview: `Codex session ${index}`,
+  };
+}
+
+function createPrefetchFixture() {
+  const codexProfile: Profile = {
+    provider: "codex",
+    name: "Codex AI",
+    url: "https://codex.example.com/v1",
+    key: "sk-codex",
+  };
+  const codexKey = itemKey(codexProfile);
+  const state: LocalState = {
+    ...defaultLocalState(),
+    selected_provider: "codex",
+    selected_profile_key: codexKey,
+    selected_profile_key_by_provider: {
+      codex: codexKey,
+    },
+    profile_order_by_provider: {
+      codex: [codexKey],
+    },
+    runtime_by_profile: {
+      [codexKey]: runtime("C:/repo-codex", "codex"),
+    },
+  };
+  const sessions = Array.from({ length: 60 }, (_, index) => createSession(index + 1));
+  const listSessions = vi.fn(async (request) => {
+    const offset = request.offset ?? 0;
+    const limit = request.limit ?? 20;
+    return sessions.slice(offset, offset + limit);
+  });
+  const manager: MockProfileManager = {
+    checkEncryptedConfig: vi.fn(async () => false),
+    unlock: vi.fn(async () => ({ success: true })),
+    initializeEncryption: vi.fn(async () => ({ success: true })),
+    changePassphrase: vi.fn(async () => ({ success: true })),
+    listProfiles: vi.fn(async () => ({
+      profiles: [{ ...codexProfile }],
+      state: cloneState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+    })),
+    saveProfile: vi.fn(async (_targetKey, draft) => draft),
+    deleteProfile: vi.fn(async () => undefined),
+    cloneProfile: vi.fn(async () => ({ ...codexProfile })),
+    selectProfile: vi.fn(async () => undefined),
+    reorderProfiles: vi.fn(async () => undefined),
+    activateProvider: vi.fn(async () => undefined),
+    saveSiteBalanceSession: vi.fn(async (_baseUrl, draft) => ({
+      id: draft.id ?? "site-session-1",
+      label: draft.label,
+      base_url: _baseUrl,
+      access_token: draft.access_token,
+      user_id: draft.user_id,
+      updated_at: "2026-05-06T02:00:00.000Z",
+    })),
+    deleteSiteBalanceSession: vi.fn(async () => undefined),
+    pickWorkingDirectory: vi.fn(async () => undefined),
+    openBaseUrl: vi.fn(async () => undefined),
+    previewForDraft: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
+    previewForProfile: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
+    launch: vi.fn(async () => undefined),
+    listSessions,
+    refreshSessions: vi.fn(async () => undefined),
+    updateSessionsTabState: vi.fn(async () => undefined),
+    testBalance: vi.fn(async () => undefined),
+    getBalanceState: vi.fn(async () => defaultBalanceCheckState()),
+    getModelMappings: vi.fn(async () => createDefaultModelMappingsState()),
+    saveModelMappings: vi.fn(async (value) => value),
+    fetchSiteModels: vi.fn(async () => ({ models: [] })),
+    getGlobalSettings: vi.fn(async () => state.global_settings),
+    updateGlobalSettings: vi.fn(async (settings) => ({ ...state.global_settings, ...settings })),
+    getParameterSettings: vi.fn(async () => state.parameter_settings),
+    updateParameterSettings: vi.fn(async (settings) => ({ ...state.parameter_settings, ...settings })),
+    promptUnsavedProfileAction: vi.fn(async () => "discard" as const),
+    promptLaunchWithUnsavedChanges: vi.fn(async () => "launch_saved" as const),
+    onStateChanged: vi.fn(() => () => undefined),
+    onBalanceProgress: vi.fn(() => () => undefined),
+    onUnlockError: vi.fn(() => () => undefined),
+  };
+  return { manager, listSessions };
+}
+
 describe("App session history provider switching", () => {
   afterEach(() => {
     delete window.profileManager;
@@ -199,6 +289,8 @@ describe("App session history provider switching", () => {
       provider: "codex",
       scope: "global_recent",
       profile_key: "codex::Codex AI",
+      limit: 20,
+      offset: 0,
     });
 
     const claudeButton = Array.from(container.querySelectorAll("button")).find(
@@ -231,5 +323,74 @@ describe("App session history provider switching", () => {
     expect(container.textContent).toContain("Claude current project");
     expect(container.textContent).not.toContain("Body Data Sync");
     expect(container.textContent).not.toContain("codex-session-1");
+  });
+
+  it("prefetches the next Codex history page and uses it when loading more", async () => {
+    const fixture = createPrefetchFixture();
+    window.profileManager = fixture.manager;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    const sessionsTab = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "会话",
+    );
+    expect(sessionsTab).toBeDefined();
+
+    await act(async () => {
+      sessionsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "codex",
+      scope: "global_recent",
+      profile_key: "codex::Codex AI",
+      limit: 20,
+      offset: 0,
+    });
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "codex",
+      scope: "global_recent",
+      profile_key: "codex::Codex AI",
+      limit: 20,
+      offset: 20,
+    });
+    expect(container.textContent).toContain("Codex session 1");
+    expect(container.textContent).not.toContain("Codex session 21");
+
+    const callsBeforeLoadMore = fixture.listSessions.mock.calls.length;
+    const loadMoreButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "加载更多 20 条",
+    );
+    expect(loadMoreButton).toBeDefined();
+
+    await act(async () => {
+      loadMoreButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const offset20Calls = fixture.listSessions.mock.calls.filter(([request]) => request.offset === 20);
+    expect(offset20Calls).toHaveLength(1);
+    expect(fixture.listSessions.mock.calls.length).toBeGreaterThan(callsBeforeLoadMore);
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "codex",
+      scope: "global_recent",
+      profile_key: "codex::Codex AI",
+      limit: 20,
+      offset: 40,
+    });
+    expect(container.textContent).toContain("Codex session 21");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 });

@@ -5,6 +5,7 @@ import { GlassCard } from "../common/GlassCard.jsx";
 import type { GlobalSettings } from "../../shared/profile/types.js";
 import { normalizeProfilePermissions } from "../../shared/profile/permissions.js";
 import { PermissionSettingsCard } from "../permissions/PermissionSettingsCard.jsx";
+import { normalizeThemeMode, type ThemeMode } from "../../shared/theme.js";
 
 interface GlobalSettingsPanelProps {
   settings: GlobalSettings;
@@ -19,6 +20,8 @@ export function GlobalSettingsPanel({
   onChangePassphrase,
   disabled,
 }: GlobalSettingsPanelProps) {
+  const themeMode = normalizeThemeMode(settings.theme_mode);
+
   function handlePasswordSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!onChangePassphrase) return;
@@ -37,6 +40,26 @@ export function GlobalSettingsPanel({
   return (
     <>
       <GlassCard title="全局设置">
+        <div className="theme-mode-field">
+          <span>外观模式</span>
+          <div className="segmented-control" role="group" aria-label="外观模式">
+            {([
+              ["system", "跟随系统"],
+              ["light", "日间"],
+              ["dark", "夜间"],
+            ] as const).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                className={themeMode === mode ? "active" : ""}
+                onClick={() => onChange({ theme_mode: mode as ThemeMode })}
+                disabled={disabled}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <label>
           全局代理
           <input

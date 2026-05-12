@@ -79,7 +79,7 @@ export const PermissionSettingsCard = memo(function PermissionSettingsCard({
   }, [normalized.common, update]);
 
   return (
-    <GlassCard title={title} subtitle={inheritedSummary}>
+    <GlassCard title={title} subtitle={inheritedSummary} className="permission-settings-card">
       {onInheritChange && (
         <div className="segmented-control" role="group" aria-label="权限继承方式">
           <button

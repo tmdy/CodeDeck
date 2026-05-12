@@ -128,7 +128,7 @@ export interface SkillScanCacheEntry {
 }
 
 export interface ScanCache {
-  version: 1;
+  version: 1 | 2;
   entries: Record<string, SkillScanCacheEntry>;
 }
 

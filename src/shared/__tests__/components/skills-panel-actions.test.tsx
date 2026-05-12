@@ -7,7 +7,7 @@ import {
   resetSkillsPanelSnapshotCacheForTests,
   SkillsPanel,
 } from "../../../components/skills/SkillsPanel.jsx";
-import type { PreviewResult, ScanResult, SkillsSnapshotResult } from "../../skills-service.js";
+import type { PreviewResult, ProjectScanResult, ScanResult, SkillsSnapshotResult } from "../../skills-service.js";
 import type { BatchExecutionResult, SkillRecord } from "../../types.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,26 +41,39 @@ function createRecord(overrides: Partial<SkillRecord> = {}): SkillRecord {
 }
 
 function createSnapshot(record: SkillRecord = createRecord()): SkillsSnapshotResult {
+  return createSnapshotWithRecords([record]);
+}
+
+function createSnapshotWithRecords(records: SkillRecord[]): SkillsSnapshotResult {
   const scan: ScanResult = {
     scannedAt: "2026-05-06T01:00:00.000Z",
-    records: [record],
+    records,
     overview: [
       {
         host: "codex",
         counts: {
-          active: record.status === "active" ? 1 : 0,
-          inactive: record.status === "inactive" ? 1 : 0,
-          readonly: record.status === "readonly" ? 1 : 0,
-          conflict: record.status === "conflict" ? 1 : 0,
+          active: records.filter((record) => record.host === "codex" && record.status === "active").length,
+          inactive: records.filter((record) => record.host === "codex" && record.status === "inactive").length,
+          readonly: records.filter((record) => record.host === "codex" && record.status === "readonly").length,
+          conflict: records.filter((record) => record.host === "codex" && record.status === "conflict").length,
         },
-        totalBytes: record.sizeTotalBytes,
-        readonlyBytes: record.status === "readonly" ? record.sizeTotalBytes : 0,
+        totalBytes: records.filter((record) => record.host === "codex").reduce((sum, record) => sum + record.sizeTotalBytes, 0),
+        readonlyBytes: records
+          .filter((record) => record.host === "codex" && record.status === "readonly")
+          .reduce((sum, record) => sum + record.sizeTotalBytes, 0),
       },
       {
         host: "claude",
-        counts: { active: 0, inactive: 0, readonly: 0, conflict: 0 },
-        totalBytes: 0,
-        readonlyBytes: 0,
+        counts: {
+          active: records.filter((record) => record.host === "claude" && record.status === "active").length,
+          inactive: records.filter((record) => record.host === "claude" && record.status === "inactive").length,
+          readonly: records.filter((record) => record.host === "claude" && record.status === "readonly").length,
+          conflict: records.filter((record) => record.host === "claude" && record.status === "conflict").length,
+        },
+        totalBytes: records.filter((record) => record.host === "claude").reduce((sum, record) => sum + record.sizeTotalBytes, 0),
+        readonlyBytes: records
+          .filter((record) => record.host === "claude" && record.status === "readonly")
+          .reduce((sum, record) => sum + record.sizeTotalBytes, 0),
       },
     ],
     manifestPath: "C:/app-data/manifest.json",
@@ -71,6 +84,36 @@ function createSnapshot(record: SkillRecord = createRecord()): SkillsSnapshotRes
     source: "fresh",
     scan,
     projectScan: null,
+  };
+}
+
+function createSnapshotWithProject(record: SkillRecord = createRecord()): SkillsSnapshotResult {
+  const snapshot = createSnapshot(record);
+  const projectScan: ProjectScanResult = {
+    currentProject: {
+      projectId: "project-1",
+      projectName: "workspace",
+      projectPath: "C:/workspace",
+      createdAt: "2026-05-06T00:00:00.000Z",
+      lastUsedAt: "2026-05-06T01:00:00.000Z",
+    },
+    hostStates: {
+      codex: { skillIds: [], managedSkillIds: [] },
+      claude: { skillIds: [], managedSkillIds: [] },
+    },
+    records: snapshot.scan.records.map((item) => ({
+      ...item,
+      projectStatus: {
+        isEnabledInProject: false,
+        projectTargetPath: `C:/workspace/.agents/skills/${item.directoryName}`,
+        projectConflict: false,
+      },
+    })),
+  };
+
+  return {
+    ...snapshot,
+    projectScan,
   };
 }
 
@@ -227,6 +270,22 @@ describe("SkillsPanel environment action controls", () => {
     await cleanup(container, root);
   });
 
+  it("surfaces project refresh errors from the service", async () => {
+    const scanProject = vi.fn().mockRejectedValue(new Error("请先刷新全局 Skills 后再刷新项目状态。"));
+    const onError = vi.fn();
+    const manager = createSkillsManager(createSnapshotWithProject(), { scanProject });
+    const { container, root } = await renderPanel(manager, { onError });
+
+    await act(async () => {
+      findButton(container, "扫描项目").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(scanProject).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith("请先刷新全局 Skills 后再刷新项目状态。");
+
+    await cleanup(container, root);
+  });
+
   it("disables environment action buttons until at least one skill is selected", async () => {
     const manager = createSkillsManager(createSnapshot());
     const { container, root } = await renderPanel(manager);
@@ -253,6 +312,66 @@ describe("SkillsPanel environment action controls", () => {
     await cleanup(container, root);
   });
 
+  it("selects only environment-actionable skills when selecting the current list", async () => {
+    const readonlyRecord = createRecord({
+      directoryName: "_shared",
+      displayName: "Shared",
+      status: "readonly",
+      location: "readonly",
+      isSpecialDir: true,
+    });
+    const snapshot = createSnapshotWithRecords([createRecord(), readonlyRecord]);
+    const createPreview = vi.fn().mockResolvedValue(createEnvironmentPreview("enable"));
+    const manager = createSkillsManager(snapshot, { createPreview });
+    const { container, root } = await renderPanel(manager);
+
+    await act(async () => {
+      findButton(container, "全选当前列表").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButton(container, "启用选中").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("已选择 1 项");
+    expect(createPreview).toHaveBeenCalledWith("enable", ["codex:workflow-plan"]);
+
+    await cleanup(container, root);
+  });
+
+  it("keeps readonly-only rows unselectable and disables environment actions", async () => {
+    const readonlyRecord = createRecord({
+      directoryName: "_shared",
+      displayName: "Shared",
+      status: "readonly",
+      location: "readonly",
+      isSpecialDir: true,
+    });
+    const manager = createSkillsManager(createSnapshotWithRecords([readonlyRecord]));
+    const { container, root } = await renderPanel(manager);
+    const readonlyToggle = Array.from(container.querySelectorAll("input[type='checkbox']"))
+      .find((input) => input.parentElement?.textContent?.includes("仅看系统/只读项")) as HTMLInputElement | undefined;
+    expect(readonlyToggle).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      readonlyToggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const rowCheckbox = container.querySelector(".skills-row input[type='checkbox']") as HTMLInputElement | null;
+    expect(rowCheckbox).toBeInstanceOf(HTMLInputElement);
+    expect(rowCheckbox?.disabled).toBe(true);
+    expect(findButton(container, "全选当前列表").disabled).toBe(true);
+    expect(findButton(container, "启用选中").disabled).toBe(true);
+    expect(findButton(container, "停用选中").disabled).toBe(true);
+
+    await act(async () => {
+      rowCheckbox?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("已选择 0 项");
+
+    await cleanup(container, root);
+  });
+
   it("creates a disable preview for selected skills", async () => {
     const createPreview = vi.fn().mockResolvedValue(createEnvironmentPreview("disable"));
     const manager = createSkillsManager(createSnapshot(), { createPreview });
@@ -264,6 +383,38 @@ describe("SkillsPanel environment action controls", () => {
     });
 
     expect(createPreview).toHaveBeenCalledWith("disable", ["codex:workflow-plan"]);
+
+    await cleanup(container, root);
+  });
+
+  it("saves user tags by applying a local overlay without refreshing the snapshot", async () => {
+    const snapshot = createSnapshot();
+    const refreshSnapshot = vi.fn().mockResolvedValue(snapshot);
+    const updateSkillUserTags = vi.fn().mockResolvedValue(undefined);
+    const onSuccess = vi.fn();
+    const manager = createSkillsManager(snapshot, {
+      refreshSnapshot,
+      updateSkillUserTags,
+    });
+    const { container, root } = await renderPanel(manager, { onSuccess });
+    const tagInput = container.querySelector("input[placeholder='例如：科研写作, 自动化']") as HTMLInputElement | null;
+    expect(tagInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(tagInput, "科研写作, 自动化, 科研写作");
+      tagInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      findButton(container, "保存标签").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(updateSkillUserTags).toHaveBeenCalledWith("codex:workflow-plan", ["科研写作", "自动化"]);
+    expect(refreshSnapshot).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("科研写作");
+    expect(container.textContent).toContain("自动化");
+    expect(container.textContent).not.toContain("暂无用户标签");
+    expect(onSuccess).toHaveBeenCalledWith("已更新 Workflow Plan 的用户标签。");
 
     await cleanup(container, root);
   });

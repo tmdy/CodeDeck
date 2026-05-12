@@ -2,7 +2,6 @@ import type {
   AdvancedModelMapping,
   Profile,
   RuntimeSettings,
-  LaunchMode,
 } from "./profile/types.js";
 import {
   defaultRuntimeSettings,
@@ -26,7 +25,7 @@ export interface ProfileEditorDraft {
   cwd: string;
   command_base: string;
   settings_file: string;
-  launch_mode: LaunchMode;
+  launch_mode: "new";
   extra_args: string;
   exclude_user_settings: boolean;
 }
@@ -58,7 +57,7 @@ export function buildSelectedProfileDraft(
     cwd: baseRuntime.cwd,
     command_base: baseRuntime.command_base,
     settings_file: baseRuntime.settings_file ?? "",
-    launch_mode: baseRuntime.launch_mode,
+    launch_mode: "new",
     extra_args: baseRuntime.extra_args,
     exclude_user_settings: baseRuntime.exclude_user_settings,
   };
@@ -91,7 +90,7 @@ export function buildNewProfileDraft(provider: string, initial?: { url?: string;
     cwd: runtime.cwd,
     command_base: runtime.command_base,
     settings_file: runtime.settings_file ?? "",
-    launch_mode: runtime.launch_mode,
+    launch_mode: "new",
     extra_args: runtime.extra_args,
     exclude_user_settings: runtime.exclude_user_settings,
   };
@@ -130,12 +129,15 @@ export function hasProfileDraftChanges(
       current.advancedModelMapping.claude?.sonnetTarget ||
       current.advancedModelMapping.claude?.haikuTarget ||
       current.advancedModelMapping.claude?.subagentTarget ||
+      (
+        current.advancedModelMapping.claude?.deepseekReasoningEffort
+        && current.advancedModelMapping.claude.deepseekReasoningEffort !== "default"
+      ) ||
       current.advancedModelMapping.codex?.commandLineModelOverride ||
       current.cwd ||
       current.command_base ||
       current.settings_file ||
       current.extra_args ||
-      current.launch_mode !== "new" ||
       current.exclude_user_settings !== true,
     );
   }
@@ -152,7 +154,6 @@ export function hasProfileDraftChanges(
     current.cwd !== baseline.cwd ||
     current.command_base !== baseline.command_base ||
     current.settings_file !== baseline.settings_file ||
-    current.launch_mode !== baseline.launch_mode ||
     current.extra_args !== baseline.extra_args ||
     current.exclude_user_settings !== baseline.exclude_user_settings
   );
@@ -215,6 +216,7 @@ function advancedModelMappingsEqual(left: AdvancedModelMapping, right: AdvancedM
     && (left.claude?.sonnetTarget ?? "") === (right.claude?.sonnetTarget ?? "")
     && (left.claude?.haikuTarget ?? "") === (right.claude?.haikuTarget ?? "")
     && (left.claude?.subagentTarget ?? "") === (right.claude?.subagentTarget ?? "")
+    && (left.claude?.deepseekReasoningEffort ?? "default") === (right.claude?.deepseekReasoningEffort ?? "default")
     && (left.codex?.commandLineModelOverride ?? "") === (right.codex?.commandLineModelOverride ?? "");
 }
 
@@ -266,6 +268,7 @@ function cloneAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedModelM
       sonnetTarget: value?.claude?.sonnetTarget ?? "",
       haikuTarget: value?.claude?.haikuTarget ?? "",
       subagentTarget: value?.claude?.subagentTarget ?? "",
+      deepseekReasoningEffort: value?.claude?.deepseekReasoningEffort ?? "default",
     },
     codex: {
       commandLineModelOverride: value?.codex?.commandLineModelOverride ?? "",

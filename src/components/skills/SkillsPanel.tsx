@@ -12,12 +12,16 @@ import type {
 import type {
   BatchExecutionResult,
   ProjectBatchAction,
+  ProjectSkillRecord,
   SkillHost,
+  SkillRecord,
   SkillStatus,
 } from "../../shared/types.js";
 import { formatSkillLocationLabel } from "../../shared/skill-location.js";
+import { normalizeUserTags } from "../../shared/record-search.js";
 import {
   buildSkillsViewState,
+  NO_USER_TAGS_FILTER_VALUE,
   type SkillsRowView,
   type SkillsViewFilters,
 } from "../../shared/skills-ui-state.js";
@@ -53,7 +57,7 @@ const INITIAL_FILTERS: SkillsViewFilters = {
   includeReadonlyOnly: false,
 };
 
-const SKILL_ROW_ESTIMATED_SIZE = 132;
+const SKILL_ROW_ESTIMATED_SIZE = 106;
 const SKILLS_LIST_FALLBACK_RECT: Rect = {
   width: 800,
   height: 720,
@@ -105,10 +109,47 @@ function uniqueHosts(hosts: SkillHost[]): SkillHost[] {
   return [...new Set(hosts)];
 }
 
+function applyUserTagsToRecord<T extends Pick<SkillRecord, "skillId" | "userTags" | "hasUserTags">>(
+  record: T,
+  skillId: string,
+  userTags: string[],
+): T {
+  if (record.skillId !== skillId) {
+    return record;
+  }
+  return {
+    ...record,
+    userTags,
+    hasUserTags: userTags.length > 0,
+  };
+}
+
+function applyUserTagsToScan(scan: ScanResult, skillId: string, userTags: string[]): ScanResult {
+  return {
+    ...scan,
+    records: scan.records.map((record) => applyUserTagsToRecord(record, skillId, userTags)),
+  };
+}
+
+function applyUserTagsToProjectScan(
+  projectScan: ProjectScanResult | null,
+  skillId: string,
+  userTags: string[],
+): ProjectScanResult | null {
+  if (!projectScan) {
+    return null;
+  }
+  return {
+    ...projectScan,
+    records: projectScan.records.map((record: ProjectSkillRecord) => applyUserTagsToRecord(record, skillId, userTags)),
+  };
+}
+
 interface SkillListRowProps {
   item: SkillsRowView;
   active: boolean;
   selected: boolean;
+  selectable: boolean;
   onSelect: (skillId: string) => void;
   onToggleSelected: (skillId: string) => void;
 }
@@ -117,6 +158,7 @@ const SkillListRow = memo(function SkillListRow({
   item,
   active,
   selected,
+  selectable,
   onSelect,
   onToggleSelected,
 }: SkillListRowProps) {
@@ -125,8 +167,11 @@ const SkillListRow = memo(function SkillListRow({
   }, [item.skillId, onSelect]);
 
   const handleToggleSelected = useCallback(() => {
+    if (!selectable) {
+      return;
+    }
     onToggleSelected(item.skillId);
-  }, [item.skillId, onToggleSelected]);
+  }, [item.skillId, onToggleSelected, selectable]);
 
   const handleCheckboxClick = useCallback((event: MouseEvent<HTMLInputElement>) => {
     event.stopPropagation();
@@ -141,6 +186,7 @@ const SkillListRow = memo(function SkillListRow({
       <input
         type="checkbox"
         checked={selected}
+        disabled={!selectable}
         onChange={handleToggleSelected}
         onClick={handleCheckboxClick}
       />
@@ -201,6 +247,10 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
     () => visibleRecords.filter((item) => selectedSkillIdSet.has(item.skillId)),
     [selectedSkillIdSet, visibleRecords],
   );
+  const selectableVisibleRecords = useMemo(
+    () => visibleRecords.filter((item) => item.actions.canEnable || item.actions.canDisable),
+    [visibleRecords],
+  );
   const selectedHosts = uniqueHosts(selectedRows.map((item) => item.host));
   const selectedProjectHost = selectedHosts.length === 1 ? selectedHosts[0] : null;
   const detailRow = useMemo(
@@ -230,6 +280,17 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   useEffect(() => {
     setPreviewState(null);
   }, [selectedSkillIds]);
+
+  useEffect(() => {
+    const selectableSkillIds = new Set(selectableVisibleRecords.map((item) => item.skillId));
+    setSelectedSkillIds((current) => {
+      const next = current.filter((skillId) => selectableSkillIds.has(skillId));
+      if (next.length === current.length) {
+        return current;
+      }
+      return next;
+    });
+  }, [selectableVisibleRecords]);
 
   useEffect(() => {
     if (!detailRow) {
@@ -313,8 +374,8 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }, []);
 
   const handleSelectAllVisible = useCallback(() => {
-    setSelectedSkillIds(visibleRecords.map((item) => item.skillId));
-  }, [visibleRecords]);
+    setSelectedSkillIds(selectableVisibleRecords.map((item) => item.skillId));
+  }, [selectableVisibleRecords]);
 
   const handleClearSelection = useCallback(() => {
     setSelectedSkillIds([]);
@@ -329,10 +390,22 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
     try {
       const nextTags = tagDraft
         .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
-      await window.skillsManager.updateSkillUserTags(detailRow.skillId, nextTags);
-      await reloadAll();
+        .map((item) => item.trim());
+      const normalizedTags = normalizeUserTags(nextTags);
+      await window.skillsManager.updateSkillUserTags(detailRow.skillId, normalizedTags);
+      const nextScan = scan ? applyUserTagsToScan(scan, detailRow.skillId, normalizedTags) : scan;
+      const nextProjectScan = applyUserTagsToProjectScan(projectScan, detailRow.skillId, normalizedTags);
+      setScan(nextScan);
+      setProjectScan(nextProjectScan);
+      setTagDraft(normalizedTags.join(", "));
+      if (nextScan) {
+        const nextSnapshot: SkillsSnapshotResult = {
+          scan: nextScan,
+          projectScan: nextProjectScan,
+          source: snapshotSource ?? lastSkillsSnapshot?.source ?? "fresh",
+        };
+        lastSkillsSnapshot = nextSnapshot;
+      }
       onSuccess(`已更新 ${detailRow.record.displayName} 的用户标签。`);
     } catch (error) {
       onError(error instanceof Error ? error.message : "保存标签失败。");
@@ -627,7 +700,11 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
             <input
               type="checkbox"
               checked={filters.onlyTagged}
-              onChange={(event) => setFilters((current) => ({ ...current, onlyTagged: event.target.checked }))}
+              onChange={(event) => setFilters((current) => ({
+                ...current,
+                onlyTagged: event.target.checked,
+                selectedTag: event.target.checked && current.selectedTag === NO_USER_TAGS_FILTER_VALUE ? "" : current.selectedTag,
+              }))}
             />
             <span>仅看带用户标签项</span>
           </label>
@@ -638,16 +715,24 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
               checked={filters.includeReadonlyOnly}
               onChange={(event) => setFilters((current) => ({ ...current, includeReadonlyOnly: event.target.checked }))}
             />
-            <span>仅看只读项</span>
+            <span>仅看系统/只读项</span>
           </label>
 
           <label className="field-label">
             <span>用户标签</span>
             <select
               value={filters.selectedTag}
-              onChange={(event) => setFilters((current) => ({ ...current, selectedTag: event.target.value }))}
+              onChange={(event) => {
+                const selectedTag = event.target.value;
+                setFilters((current) => ({
+                  ...current,
+                  selectedTag,
+                  onlyTagged: selectedTag === NO_USER_TAGS_FILTER_VALUE ? false : current.onlyTagged,
+                }));
+              }}
             >
               <option value="">全部用户标签</option>
+              <option value={NO_USER_TAGS_FILTER_VALUE}>无用户标签</option>
               {viewState.availableTags.map((tag) => (
                 <option key={tag} value={tag}>
                   {tag}
@@ -691,7 +776,7 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
                 type="button"
                 className="secondary-button small"
                 onClick={handleSelectAllVisible}
-                disabled={busy || visibleRecords.length === 0}
+                disabled={busy || selectableVisibleRecords.length === 0}
               >
                 全选当前列表
               </button>
@@ -726,7 +811,6 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
                 回滚上一次批次
               </button>
             </div>
-            <p className="helper-copy">启用/停用会移动 skill 目录；确认执行前会先生成本次预览。</p>
           </div>
 
           <div className="skills-list-body" ref={skillsListRef}>
@@ -752,6 +836,7 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
                         item={item}
                         active={detailRow?.skillId === item.skillId}
                         selected={selectedSkillIdSet.has(item.skillId)}
+                        selectable={item.actions.canEnable || item.actions.canDisable}
                         onSelect={handleSelectSkillDetail}
                         onToggleSelected={toggleSelectedSkill}
                       />

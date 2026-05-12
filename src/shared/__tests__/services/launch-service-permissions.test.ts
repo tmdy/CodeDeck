@@ -119,7 +119,7 @@ describe("LaunchService permissions", () => {
     expect(plan.permissionSummary).toBe("Codex: workspace-write + on-request");
     expect(plan.codexConfig?.content).toContain('sandbox_mode = "workspace-write"');
     expect(plan.codexConfig?.content).toContain('approval_policy = "on-request"');
-    expect(plan.codexConfig?.content).toContain("web_search = false");
+    expect(plan.codexConfig?.content).toContain('web_search = "disabled"');
     expect(plan.codexConfig?.content).toContain(".sandbox_workspace_write]");
     expect(plan.codexConfig?.content).toContain("network_access = false");
     expect(plan.codexConfig?.content).toContain('writable_roots = ["C:/shared"]');
@@ -144,5 +144,6 @@ describe("LaunchService permissions", () => {
     expect(plan.valid).toBe(true);
     expect(plan.codexConfig?.content).toContain('sandbox_mode = "read-only"');
     expect(plan.codexConfig?.content).toContain('approval_policy = "on-request"');
+    expect(plan.codexConfig?.content).toContain('web_search = "live"');
   });
 });

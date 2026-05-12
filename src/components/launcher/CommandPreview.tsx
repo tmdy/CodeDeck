@@ -18,7 +18,7 @@ export function CmdPreview({ preview }: CommandPreviewProps) {
 
   if (!preview.command && !preview.cwd && preview.env.length === 0) {
     return (
-      <GlassCard title="命令预览">
+      <GlassCard title="命令预览" className="command-preview-card">
         <p className="muted">选择 Profile 以预览命令</p>
       </GlassCard>
     );
@@ -28,6 +28,7 @@ export function CmdPreview({ preview }: CommandPreviewProps) {
     <GlassCard
       title="命令预览"
       subtitle={preview.valid ? "就绪" : (preview.error ?? "未就绪")}
+      className="command-preview-card"
     >
       <div className="command-preview-section">
         <p className="session-picker-heading">最终命令</p>

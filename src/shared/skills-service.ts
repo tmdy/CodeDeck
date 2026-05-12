@@ -95,6 +95,11 @@ interface SkillsManagerServiceOptions {
   copyDirectory?: typeof copyDirectory;
 }
 
+interface EnvironmentBaseSnapshot {
+  scannedAt: string;
+  records: SkillRecord[];
+}
+
 interface SkillScanCandidate {
   host: SkillHost;
   directoryName: string;
@@ -115,6 +120,12 @@ interface SkillScanItem {
 }
 
 const SKILL_SCAN_CONCURRENCY = 8;
+const SKILL_SCAN_CACHE_VERSION = 2;
+const SKILL_SIZE_SCAN_LIMITS = {
+  maxFiles: 5000,
+  maxDirectories: 1000,
+} as const;
+const SIZE_SCAN_TRUNCATED_NOTE = "目录体积统计达到扫描上限，显示值可能低于实际大小。";
 
 export function resolveDefaultPaths(projectRoot: string): AppPaths {
   const codexActive = path.join(os.homedir(), ".codex", "skills");
@@ -163,7 +174,10 @@ async function collectMetadata(
   const fallbackReadme = await readUtf8IfExists(readmePath);
   const hasSkillMd = typeof skillMd === "string";
   const isSpecialDir = !hasSkillMd || directoryName.startsWith(".") || directoryName.startsWith("_");
-  const stats = await computeDirectorySizeStats(sourcePath);
+  const stats = await computeDirectorySizeStats(sourcePath, SKILL_SIZE_SCAN_LIMITS);
+  if (stats.truncated) {
+    notes.push(SIZE_SCAN_TRUNCATED_NOTE);
+  }
 
   let displayName = directoryName;
   let description = "";
@@ -336,6 +350,8 @@ async function buildSkillScanSignature(candidate: SkillScanCandidate): Promise<S
 export class SkillsManagerService {
   private readonly moveDirectoryFn: typeof moveDirectory;
   private readonly copyDirectoryFn: typeof copyDirectory;
+  private inFlightEnvironmentScan: Promise<ScanResult> | null = null;
+  private recentEnvironmentBaseSnapshot: EnvironmentBaseSnapshot | null = null;
 
   constructor(
     private readonly paths: AppPaths,
@@ -346,12 +362,29 @@ export class SkillsManagerService {
   }
 
   async scanEnvironment(): Promise<ScanResult> {
+    if (this.inFlightEnvironmentScan) {
+      return this.inFlightEnvironmentScan;
+    }
+
+    const scanPromise = this.performEnvironmentScan();
+    this.inFlightEnvironmentScan = scanPromise;
+
+    try {
+      return await scanPromise;
+    } finally {
+      if (this.inFlightEnvironmentScan === scanPromise) {
+        this.inFlightEnvironmentScan = null;
+      }
+    }
+  }
+
+  private async performEnvironmentScan(): Promise<ScanResult> {
     await this.ensureRoots();
     const translations = await this.loadTranslations();
     const userTags = await this.loadUserTags();
     const manifest = await this.loadManifest();
     const manifestRecords = new Map((manifest?.records ?? []).map((record) => [record.skillId, record]));
-    const manifestCache = manifest?.scanCache?.version === 1 ? manifest.scanCache.entries : {};
+    const manifestCache = manifest?.scanCache?.version === SKILL_SCAN_CACHE_VERSION ? manifest.scanCache.entries : {};
 
     const candidates: SkillScanCandidate[] = [];
     const hostDirectoryLists = await Promise.all((["codex", "claude"] as const).map(async (host) => {
@@ -486,11 +519,15 @@ export class SkillsManagerService {
       lastSuccessfulOperationId: manifest?.lastSuccessfulOperationId,
       records: nextManifestRecords,
       scanCache: {
-        version: 1,
+        version: SKILL_SCAN_CACHE_VERSION,
         entries: scanCacheEntries,
       },
     };
     await writeJson(this.paths.manifestPath, nextManifest);
+    this.recentEnvironmentBaseSnapshot = {
+      scannedAt,
+      records: nextManifestRecords,
+    };
 
     return {
       scannedAt,
@@ -502,16 +539,12 @@ export class SkillsManagerService {
   }
 
   async loadCachedSnapshot(): Promise<SkillsSnapshotResult | null> {
-    const manifest = await this.loadManifest();
-    if (!this.isUsableManifest(manifest)) {
+    const scan = await this.loadRecentEnvironmentScan();
+    if (!scan) {
       return null;
     }
 
-    const translations = await this.loadTranslations();
-    const userTags = await this.loadUserTags();
-    const records = this.applyCurrentOverlays(manifest.records, translations, userTags);
-    const scan = this.buildScanResult(records, manifest.lastScannedAt);
-    const projectScan = await this.buildCachedProjectScanFromRecords(records);
+    const projectScan = await this.buildCachedProjectScanFromRecords(scan.records);
 
     return {
       scan,
@@ -609,7 +642,10 @@ export class SkillsManagerService {
     if (!project) {
       return null;
     }
-    const scan = await this.scanEnvironment();
+    const scan = await this.loadRecentEnvironmentScan();
+    if (!scan) {
+      throw new Error("请先刷新全局 Skills 后再刷新项目状态。");
+    }
     const projectsState = await this.loadProjectsState();
     const hostStates = await this.buildProjectHostState(project.projectPath, projectsState.hostStates[project.projectId]);
     await this.updateStoredProjectHostState(project.projectId, hostStates);
@@ -758,7 +794,7 @@ export class SkillsManagerService {
   }
 
   async createPreview(action: PreviewAction, skillIds: string[]): Promise<PreviewResult> {
-    const scan = await this.scanEnvironment();
+    const scan = await this.loadRecentEnvironmentScanOrScan();
     const selected = new Set(skillIds);
     const blockedSkillIds: string[] = [];
     const items: PreviewItem[] = [];
@@ -1088,6 +1124,37 @@ export class SkillsManagerService {
         Object.entries(stored.entries ?? {}).map(([skillId, tags]) => [skillId, normalizeUserTags(tags ?? [])]),
       ),
     };
+  }
+
+  private async loadRecentEnvironmentScan(): Promise<ScanResult | null> {
+    if (this.recentEnvironmentBaseSnapshot) {
+      return this.buildEnvironmentScanFromBaseSnapshot(this.recentEnvironmentBaseSnapshot);
+    }
+
+    const manifest = await this.loadManifest();
+    if (!this.isUsableManifest(manifest)) {
+      return null;
+    }
+
+    this.recentEnvironmentBaseSnapshot = {
+      scannedAt: manifest.lastScannedAt,
+      records: manifest.records,
+    };
+    return this.buildEnvironmentScanFromBaseSnapshot(this.recentEnvironmentBaseSnapshot);
+  }
+
+  private async loadRecentEnvironmentScanOrScan(): Promise<ScanResult> {
+    const recentScan = await this.loadRecentEnvironmentScan();
+    return recentScan ?? await this.scanEnvironment();
+  }
+
+  private async buildEnvironmentScanFromBaseSnapshot(snapshot: EnvironmentBaseSnapshot): Promise<ScanResult> {
+    const [translations, userTags] = await Promise.all([
+      this.loadTranslations(),
+      this.loadUserTags(),
+    ]);
+    const records = this.applyCurrentOverlays(snapshot.records, translations, userTags);
+    return this.buildScanResult(records, snapshot.scannedAt);
   }
 
   private async loadProjectsState(): Promise<ProjectSelectionState> {

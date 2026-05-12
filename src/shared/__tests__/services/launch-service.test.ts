@@ -77,6 +77,75 @@ describe("LaunchService", () => {
     expect(preview.env.some((item) => item.name === "ANTHROPIC_DEFAULT_OPUS_MODEL")).toBe(false);
     expect(preview.env.some((item) => item.name === "ANTHROPIC_DEFAULT_HAIKU_MODEL")).toBe(false);
     expect(preview.env.some((item) => item.name === "CLAUDE_CODE_SUBAGENT_MODEL")).toBe(false);
+    expect(preview.env.some((item) => item.name === "CLAUDE_CODE_EFFORT_LEVEL")).toBe(false);
+  });
+
+  it("should inject DeepSeek max effort for Claude profiles when configured", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "DeepSeek Pro",
+      url: "https://api.deepseek.com/anthropic",
+      key: "sk-ds",
+      selectedModelId: "deepseek-v4-pro[1m]",
+      advancedModelMapping: {
+        enabled: false,
+        claude: {
+          deepseekReasoningEffort: "max",
+        },
+      },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      parameter_settings: {
+        ...defaultLocalState().parameter_settings,
+        extra_env: {
+          CLAUDE_CODE_EFFORT_LEVEL: "high",
+        },
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime(),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.env.CLAUDE_CODE_EFFORT_LEVEL).toBe("max");
+    expect(plan.env.ANTHROPIC_MODEL).toBe("deepseek-v4-pro[1m]");
+  });
+
+  it("should inject DeepSeek high effort for Claude profiles when configured", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "DeepSeek Pro",
+      url: "https://api.deepseek.com/anthropic",
+      key: "sk-ds",
+      selectedModelId: "deepseek-v4-pro",
+      advancedModelMapping: {
+        enabled: false,
+        claude: {
+          deepseekReasoningEffort: "high",
+        },
+      },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime(),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.env.CLAUDE_CODE_EFFORT_LEVEL).toBe("high");
   });
 
   it("should only inject Claude family alias mapping when the profile explicitly enables it", () => {

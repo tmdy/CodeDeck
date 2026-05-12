@@ -56,6 +56,37 @@ describe("SessionList", () => {
     expect(html).toContain("claude --resume");
   });
 
+  it("renders Codex session source in selected session details", () => {
+    const html = renderToStaticMarkup(
+      <SessionList
+        provider="codex"
+        sessions={[
+          {
+            provider: "codex",
+            session_id: "global-session",
+            cwd: "C:/repo-global",
+            updated_at: "2026-05-05T07:00:00.000Z",
+            preview: "全局历史会话",
+            source_kind: "global_codex",
+            source_home: "C:/Users/99395/.codex",
+          },
+        ]}
+        selectedId="global-session"
+        restoreProfiles={[{ key: "codex::Official", label: "Official", cwd: "C:/repo-global" }]}
+        selectedRestoreProfileKey="codex::Official"
+        restoreDisabled={false}
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+        onSelectRestoreProfile={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("来源");
+    expect(html).toContain("全局 .codex");
+    expect(html).toContain("C:/Users/99395/.codex");
+  });
+
   it("shows an explicit provider-missing hint when there is no available restore profile", () => {
     const html = renderToStaticMarkup(
       <SessionList
@@ -127,12 +158,13 @@ describe("SessionList", () => {
   });
 
   it("renders only the first 20 sessions by default and shows a load-more summary", () => {
-    const sessions = Array.from({ length: 25 }, (_, index) => createSession(index + 1));
+    const sessions = Array.from({ length: 20 }, (_, index) => createSession(index + 1));
 
     const html = renderToStaticMarkup(
       <SessionList
         provider="codex"
         sessions={sessions}
+        hasMoreSessions
         restoreProfiles={[]}
         selectedRestoreProfileKey=""
         restoreDisabled
@@ -146,8 +178,28 @@ describe("SessionList", () => {
     expect(html).toContain("会话 1");
     expect(html).toContain("会话 20");
     expect(html).not.toContain("会话 21");
-    expect(html).toContain("已显示 20 / 25");
+    expect(html).toContain("已显示 20");
     expect(html).toContain("加载更多 20 条");
+  });
+
+  it("shows a loading message instead of an empty state while sessions are loading", () => {
+    const html = renderToStaticMarkup(
+      <SessionList
+        provider="codex"
+        sessions={[]}
+        isLoading
+        restoreProfiles={[]}
+        selectedRestoreProfileKey=""
+        restoreDisabled
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+        onSelectRestoreProfile={vi.fn()}
+        onRestore={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("正在加载会话");
+    expect(html).not.toContain("暂无会话记录");
   });
 
   it("keeps the selected session visible when it is outside the default visible range", () => {

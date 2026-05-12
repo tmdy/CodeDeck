@@ -5,6 +5,7 @@ import {
   normalizeLaunchMode as normalizeLaunchModeValue,
   type LaunchMode,
 } from "./launch-mode.js";
+import { normalizeThemeMode, type ThemeMode } from "../theme.js";
 import {
   normalizeProfilePermissions,
   permissionPresetFromLegacyLabel,
@@ -28,6 +29,7 @@ export type ProfilePermissionsInput = Partial<Omit<ProfilePermissions, "common">
 };
 
 export type ClaudeModelAliasMode = "none" | "single_model_compat" | "custom";
+export type DeepSeekReasoningEffort = "default" | "high" | "max";
 
 export interface ClaudeAdvancedModelMapping {
   aliasMode?: ClaudeModelAliasMode;
@@ -36,6 +38,7 @@ export interface ClaudeAdvancedModelMapping {
   sonnetTarget?: string;
   haikuTarget?: string;
   subagentTarget?: string;
+  deepseekReasoningEffort?: DeepSeekReasoningEffort;
 }
 
 export interface CodexAdvancedModelMapping {
@@ -72,6 +75,7 @@ export interface RuntimeSettings {
 
 export interface GlobalSettings {
   proxy: string;
+  theme_mode: ThemeMode;
   disable_telemetry: boolean;
   disable_error_reporting: boolean;
   disable_nonessential_traffic: boolean;
@@ -152,6 +156,7 @@ export function normalizeRuntimeSettings(settings: RuntimeSettings, providerID: 
 export function defaultGlobalSettings(): GlobalSettings {
   return {
     proxy: "",
+    theme_mode: "system",
     disable_telemetry: true,
     disable_error_reporting: true,
     disable_nonessential_traffic: true,
@@ -185,6 +190,7 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
     sonnetTarget: value.claude.sonnetTarget?.trim() || undefined,
     haikuTarget: value.claude.haikuTarget?.trim() || undefined,
     subagentTarget: value.claude.subagentTarget?.trim() || undefined,
+    deepseekReasoningEffort: normalizeDeepSeekReasoningEffort(value.claude.deepseekReasoningEffort),
   } : undefined;
   const codex = value.codex ? {
     commandLineModelOverride: value.codex.commandLineModelOverride?.trim() || undefined,
@@ -195,6 +201,13 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
     claude,
     codex,
   };
+}
+
+export function normalizeDeepSeekReasoningEffort(value?: string): DeepSeekReasoningEffort {
+  if (value === "high" || value === "max") {
+    return value;
+  }
+  return "default";
 }
 
 export function resolveClaudeModelAliasMode(value?: AdvancedModelMapping): ClaudeModelAliasMode {
@@ -224,13 +237,17 @@ export function isOfficialAnthropicBaseUrl(baseUrl: string): boolean {
   }
 }
 
+export function isOfficialClaudeModelId(selectedModelId: string): boolean {
+  return /^claude-(opus|sonnet|haiku)(?:[-.]|$)/.test(selectedModelId.trim().toLowerCase());
+}
+
 export function shouldRecommendClaudeSingleModelCompatibility(baseUrl: string, selectedModelId: string): boolean {
   const url = baseUrl.trim();
   const model = selectedModelId.trim().toLowerCase();
   if (!url || !model) {
     return false;
   }
-  return !(model.startsWith("claude-") && isOfficialAnthropicBaseUrl(url));
+  return !isOfficialClaudeModelId(model);
 }
 
 export function normalizeGlobalSettings(settings: GlobalSettings): GlobalSettings {
@@ -240,6 +257,7 @@ export function normalizeGlobalSettings(settings: GlobalSettings): GlobalSetting
     ?? normalizeProfilePermissions(defaults.permissions, DEFAULT_PROVIDER).preset;
   return {
     proxy: settings.proxy?.trim() ?? defaults.proxy,
+    theme_mode: normalizeThemeMode(settings.theme_mode),
     disable_telemetry: settings.disable_telemetry ?? defaults.disable_telemetry,
     disable_error_reporting: settings.disable_error_reporting ?? defaults.disable_error_reporting,
     disable_nonessential_traffic: settings.disable_nonessential_traffic ?? defaults.disable_nonessential_traffic,

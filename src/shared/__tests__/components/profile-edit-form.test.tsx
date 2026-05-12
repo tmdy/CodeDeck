@@ -7,7 +7,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ProfileEditForm } from "../../../components/profiles/ProfileEditForm.jsx";
 import { defaultProfilePermissions } from "../../profile/permissions.js";
 import type { AdvancedModelMapping } from "../../profile/types.js";
-import type { SiteBalanceSession } from "../../balance/site-balance-sessions.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,6 +21,7 @@ describe("ProfileEditForm", () => {
         sonnetTarget: "",
         haikuTarget: "",
         subagentTarget: "",
+        deepseekReasoningEffort: "default",
       },
       codex: {
         commandLineModelOverride: "",
@@ -29,16 +29,6 @@ describe("ProfileEditForm", () => {
     };
   }
 
-  function makeSiteSession(id: string, label: string): SiteBalanceSession {
-    return {
-      id,
-      label,
-      base_url: "https://new-api.example.com",
-      access_token: `token-${id}`,
-      user_id: "42",
-      updated_at: "2026-05-05T09:00:00.000Z",
-    };
-  }
 
   it("should render direct model-id controls instead of the old global mapping panel", () => {
     const html = renderToStaticMarkup(
@@ -54,27 +44,43 @@ describe("ProfileEditForm", () => {
         }}
         provider="claude"
         modelOptions={[]}
-        siteBalanceSessions={[]}
-        balanceSessionSelection="auto"
-        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         onChange={vi.fn()}
-        onBalanceSessionSelectionChange={vi.fn()}
-        onBalanceSessionDraftChange={vi.fn()}
-        onDeleteSiteBalanceSession={vi.fn()}
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
         onPickCwd={vi.fn()}
         onSave={vi.fn()}
         onCancel={vi.fn()}
+        commandPreview={<section>命令预览</section>}
       />,
     );
 
+    const mainGridIndex = html.indexOf("class=\"profile-edit-main-grid\"");
+    const primaryColumnIndex = html.indexOf("class=\"profile-edit-column profile-edit-column-primary\"");
+    const secondaryColumnIndex = html.indexOf("class=\"profile-edit-column profile-edit-column-secondary\"");
+    const profileCardIndex = html.indexOf("<h3>Profile 信息</h3>");
+    const modelCardIndex = html.indexOf("<h3>模型配置</h3>");
+    const permissionCardIndex = html.indexOf("<h3>权限</h3>");
+    const runtimeCardIndex = html.indexOf("<h3>当前配置专属运行时设置</h3>");
+    const commandPreviewIndex = html.indexOf("命令预览");
+    const claudeCompatCardIndex = html.indexOf("<h3>Claude 模型兼容设置</h3>");
+
+    expect(mainGridIndex).toBeGreaterThan(-1);
+    expect(primaryColumnIndex).toBeGreaterThan(mainGridIndex);
+    expect(secondaryColumnIndex).toBeGreaterThan(primaryColumnIndex);
+    expect(profileCardIndex).toBeGreaterThan(primaryColumnIndex);
+    expect(permissionCardIndex).toBeGreaterThan(profileCardIndex);
+    expect(claudeCompatCardIndex).toBeGreaterThan(permissionCardIndex);
+    expect(claudeCompatCardIndex).toBeLessThan(secondaryColumnIndex);
+    expect(modelCardIndex).toBeGreaterThan(secondaryColumnIndex);
+    expect(runtimeCardIndex).toBeGreaterThan(modelCardIndex);
+    expect(commandPreviewIndex).toBeGreaterThan(runtimeCardIndex);
     expect(html).toContain("命令基座");
     expect(html).toContain("当前配置专属");
     expect(html).toContain("当前模型 ID");
     expect(html).toContain("获取模型列表");
     expect(html).toContain("Claude 模型兼容设置");
+    expect(html).not.toContain("<datalist");
     expect(html).not.toContain("Claude Profile 需要当前 Base URL");
     expect(html).not.toContain(">代理<");
   });
@@ -100,13 +106,7 @@ describe("ProfileEditForm", () => {
         }}
         provider="claude"
         modelOptions={[]}
-        siteBalanceSessions={[]}
-        balanceSessionSelection="auto"
-        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         onChange={vi.fn()}
-        onBalanceSessionSelectionChange={vi.fn()}
-        onBalanceSessionDraftChange={vi.fn()}
-        onDeleteSiteBalanceSession={vi.fn()}
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
@@ -120,6 +120,8 @@ describe("ProfileEditForm", () => {
     expect(html).toContain("主会话模型");
     expect(html).toContain("glm-5.1");
     expect(html).toContain("第三方单模型兼容模式");
+    expect(html).toContain("DeepSeek 推理强度");
+    expect(html).toContain("用于 DeepSeek Claude Code 兼容接口，会注入 CLAUDE_CODE_EFFORT_LEVEL。");
     expect(html).not.toContain("将 Opus / Sonnet / Haiku / Subagent 全部指向当前模型");
     expect(html).not.toContain("ANTHROPIC_DEFAULT_OPUS_MODEL");
     expect(html).not.toContain("ANTHROPIC_DEFAULT_SONNET_MODEL");
@@ -142,13 +144,7 @@ describe("ProfileEditForm", () => {
         }}
         provider="codex"
         modelOptions={[]}
-        siteBalanceSessions={[]}
-        balanceSessionSelection="auto"
-        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         onChange={vi.fn()}
-        onBalanceSessionSelectionChange={vi.fn()}
-        onBalanceSessionDraftChange={vi.fn()}
-        onDeleteSiteBalanceSession={vi.fn()}
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
@@ -159,7 +155,10 @@ describe("ProfileEditForm", () => {
     );
 
     expect(html).not.toContain("Claude 模型兼容设置");
+    expect(html).not.toContain("DeepSeek 推理强度");
     expect(html).toContain("Codex 命令行模型覆盖");
+    expect(html.indexOf("<h3>高级选项</h3>")).toBeGreaterThan(html.indexOf("<h3>权限</h3>"));
+    expect(html.indexOf("<h3>高级选项</h3>")).toBeLessThan(html.indexOf("<h3>模型配置</h3>"));
   });
 
   it("should offer a recommended compatibility action for third-party Claude models", async () => {
@@ -182,13 +181,7 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={[]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="auto"
-          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={onAdvancedModelMappingChange}
           onRuntimeChange={vi.fn()}
           onFetchModels={vi.fn()}
@@ -220,7 +213,134 @@ describe("ProfileEditForm", () => {
     container.remove();
   });
 
-  it("should render model configuration before site balance sessions with model help beside the field title", () => {
+  it("should not recommend single-model compatibility after the user selects custom alias mapping", () => {
+    const mapping = makeAdvancedMapping();
+    mapping.enabled = true;
+    mapping.claude = {
+      ...mapping.claude,
+      aliasMode: "custom",
+      defaultTarget: "deepseek-v4-pro[1m]",
+      opusTarget: "deepseek-v4-pro[1m]",
+      sonnetTarget: "deepseek-v4-pro[1m]",
+      haikuTarget: "deepseek-v4-flash",
+      subagentTarget: "deepseek-v4-flash",
+    };
+
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "DeepSeek", url: "https://api.deepseek.com/anthropic", key: "sk", selectedModelId: "deepseek-v4-pro[1m]", advancedModelMapping: mapping }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        onChange={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Claude 模型兼容设置");
+    expect(html).toContain("高级自定义");
+    expect(html).toContain("deepseek-v4-flash");
+    expect(html).not.toContain("看起来是第三方模型");
+    expect(html).not.toContain("应用推荐设置");
+  });
+
+  it("should update Claude DeepSeek reasoning effort from the compatibility panel", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onAdvancedModelMappingChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "DeepSeek", url: "https://api.deepseek.com/anthropic", key: "sk", selectedModelId: "deepseek-v4-pro", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={onAdvancedModelMappingChange}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const effortSelect = Array.from(container.querySelectorAll("select")).find(
+      (select) => select.parentElement?.textContent?.includes("DeepSeek 推理强度"),
+    );
+    expect(effortSelect).toBeInstanceOf(HTMLSelectElement);
+
+    await act(async () => {
+      if (effortSelect) {
+        effortSelect.value = "max";
+        effortSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+
+    expect(onAdvancedModelMappingChange).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: false,
+      claude: expect.objectContaining({ deepseekReasoningEffort: "max" }),
+    }));
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("should not offer a recommended compatibility action for official Claude models on third-party gateways", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "Claude", url: "https://api.aicod.com", key: "sk", selectedModelId: "claude-opus-4-7", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        onChange={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Claude 模型兼容设置");
+    expect(html).toContain("claude-opus-4-7");
+    expect(html).not.toContain("看起来是第三方模型");
+    expect(html).not.toContain("应用推荐设置");
+  });
+
+  it("should render model configuration with model help beside the field title", () => {
     const html = renderToStaticMarkup(
       <ProfileEditForm
         draft={{ name: "", url: "", key: "", selectedModelId: "gpt-5.5", advancedModelMapping: makeAdvancedMapping() }}
@@ -234,13 +354,7 @@ describe("ProfileEditForm", () => {
         }}
         provider="claude"
         modelOptions={["gpt-5.5"]}
-        siteBalanceSessions={[]}
-        balanceSessionSelection="auto"
-        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         onChange={vi.fn()}
-        onBalanceSessionSelectionChange={vi.fn()}
-        onBalanceSessionDraftChange={vi.fn()}
-        onDeleteSiteBalanceSession={vi.fn()}
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
@@ -251,21 +365,22 @@ describe("ProfileEditForm", () => {
     );
 
     const modelCardIndex = html.indexOf("<h3>模型配置</h3>");
-    const balanceCardIndex = html.indexOf("<h3>站点后台会话</h3>");
+    const permissionCardIndex = html.indexOf("<h3>权限</h3>");
     const modelFieldIndex = html.indexOf("当前模型 ID");
     const modelHelpIndex = html.indexOf("当前模型 ID 可选。填写后会按原始 model id 启动 CLI");
     const inputIndex = html.indexOf("placeholder=\"可选：站点返回什么 model id，这里就填什么 model id\"");
     const fetchButtonIndex = html.indexOf("获取模型列表");
 
     expect(modelCardIndex).toBeGreaterThan(-1);
-    expect(balanceCardIndex).toBeGreaterThan(-1);
-    expect(modelCardIndex).toBeLessThan(balanceCardIndex);
+    expect(permissionCardIndex).toBeGreaterThan(-1);
+    expect(permissionCardIndex).toBeLessThan(modelCardIndex);
     expect(modelHelpIndex).toBeGreaterThan(modelFieldIndex);
     expect(modelHelpIndex).toBeLessThan(inputIndex);
     expect(modelHelpIndex).toBeLessThan(fetchButtonIndex);
     expect(html).toContain("class=\"field-help\"");
     expect(html).toContain("class=\"field-title-with-help\"");
     expect(html).not.toContain("除非开启高级别名映射，否则不会自动转换成 default / sonnet / opus / haiku");
+    expect(html).not.toContain("站点后台会话");
     expect(html).toContain("class=\"secondary-button small\">获取模型列表</button>");
   });
 
@@ -289,13 +404,7 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={[]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="auto"
-          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={onChange}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onFetchModels={vi.fn()}
@@ -362,14 +471,8 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={[]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="auto"
-          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
           onPermissionsChange={onPermissionsChange}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onFetchModels={vi.fn()}
@@ -420,15 +523,9 @@ describe("ProfileEditForm", () => {
         }}
         provider="claude"
         modelOptions={[]}
-        siteBalanceSessions={[]}
-        balanceSessionSelection="auto"
-        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         modelFetchedAt="2026/5/5 14:55:20"
         modelFetchSuccess="已获取2个模型"
         onChange={vi.fn()}
-        onBalanceSessionSelectionChange={vi.fn()}
-        onBalanceSessionDraftChange={vi.fn()}
-        onDeleteSiteBalanceSession={vi.fn()}
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
@@ -463,13 +560,7 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={[]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="auto"
-          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onFetchModels={vi.fn()}
@@ -524,13 +615,7 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={[]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="auto"
-          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onFetchModels={vi.fn()}
@@ -576,13 +661,7 @@ describe("ProfileEditForm", () => {
         }}
         provider="claude"
         modelOptions={[]}
-        siteBalanceSessions={[]}
-        balanceSessionSelection="auto"
-        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
         onChange={vi.fn()}
-        onBalanceSessionSelectionChange={vi.fn()}
-        onBalanceSessionDraftChange={vi.fn()}
-        onDeleteSiteBalanceSession={vi.fn()}
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
@@ -617,13 +696,7 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={[]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="auto"
-          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onRuntimeCommit={onRuntimeCommit}
@@ -679,13 +752,7 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={["old-model", "new-model"]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="auto"
-          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={vi.fn()}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onDraftCommit={onDraftCommit}
@@ -742,13 +809,7 @@ describe("ProfileEditForm", () => {
           }}
           provider="claude"
           modelOptions={["old-model", "new-model"]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="auto"
-          balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
           onChange={onChange}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
           onDraftCommit={onDraftCommit}
@@ -781,83 +842,7 @@ describe("ProfileEditForm", () => {
     container.remove();
   });
 
-  it("should render site balance session options without a manual remark field", () => {
-    const html = renderToStaticMarkup(
-      <ProfileEditForm
-        draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
-        runtime={{
-          cwd: "",
-          command_base: "claude",
-          settings_file: "",
-          extra_args: "",
-          launch_mode: "new",
-          exclude_user_settings: true,
-        }}
-        provider="claude"
-        modelOptions={[]}
-        siteBalanceSessions={[makeSiteSession("sess-a", "账号1")]}
-        balanceSessionSelection="sess-a"
-        balanceSessionDraft={{ label: "账号1", access_token: "token-a", user_id: "42" }}
-        onChange={vi.fn()}
-        onBalanceSessionSelectionChange={vi.fn()}
-        onBalanceSessionDraftChange={vi.fn()}
-        onDeleteSiteBalanceSession={vi.fn()}
-        onAdvancedModelMappingChange={vi.fn()}
-        onRuntimeChange={vi.fn()}
-        onFetchModels={vi.fn()}
-        onPickCwd={vi.fn()}
-        onSave={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-
-    expect(html).toContain("站点后台会话");
-    expect(html).toContain("仅用于管理面板类站点的余额检测");
-    expect(html).toContain(">自动<");
-    expect(html).toContain("账号1");
-    expect(html).toContain("新建会话");
-    expect(html).not.toContain("备注名");
-    expect(html).not.toContain("自动模式下：当前站点只有 1 套后台会话时会自动复用");
-    expect(html).toContain("保存会话");
-  });
-
-  it("should expose a visible create-session affordance even when no sessions exist yet", () => {
-    const html = renderToStaticMarkup(
-      <ProfileEditForm
-        draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
-        runtime={{
-          cwd: "",
-          command_base: "claude",
-          settings_file: "",
-          extra_args: "",
-          launch_mode: "new",
-          exclude_user_settings: true,
-        }}
-        provider="claude"
-        modelOptions={[]}
-        siteBalanceSessions={[]}
-        balanceSessionSelection="auto"
-        balanceSessionDraft={{ label: "", access_token: "", user_id: "" }}
-        onChange={vi.fn()}
-        onBalanceSessionSelectionChange={vi.fn()}
-        onBalanceSessionDraftChange={vi.fn()}
-        onDeleteSiteBalanceSession={vi.fn()}
-        onAdvancedModelMappingChange={vi.fn()}
-        onRuntimeChange={vi.fn()}
-        onFetchModels={vi.fn()}
-        onPickCwd={vi.fn()}
-        onSave={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-
-    expect(html).toContain("当前站点还没有后台会话");
-    expect(html).toContain("选择“新建会话”后填写 Access Token / Session 和 User ID");
-    expect(html).toContain(">新建会话<");
-    expect(html).not.toContain("<button type=\"button\" class=\"secondary-button\">新建会话</button>");
-  });
-
-  it("should render balance session save and delete actions as small buttons in one row", async () => {
+  it("should open a controlled searchable model picker and filter listed models", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -865,7 +850,13 @@ describe("ProfileEditForm", () => {
     await act(async () => {
       root.render(
         <ProfileEditForm
-          draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          draft={{
+            name: "",
+            url: "",
+            key: "",
+            selectedModelId: "gpt",
+            advancedModelMapping: makeAdvancedMapping(),
+          }}
           runtime={{
             cwd: "",
             command_base: "claude",
@@ -875,17 +866,11 @@ describe("ProfileEditForm", () => {
             exclude_user_settings: true,
           }}
           provider="claude"
-          modelOptions={[]}
-          siteBalanceSessions={[makeSiteSession("sess-a", "账号1")]}
-          balanceSessionSelection="sess-a"
-          balanceSessionDraft={{ label: "账号1", access_token: "token-a", user_id: "42" }}
+          modelOptions={["claude-opus-4-7", "gpt-5-high", "gpt-5-low"]}
           onChange={vi.fn()}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onSaveBalanceSession={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
+          onDraftCommit={vi.fn()}
           onFetchModels={vi.fn()}
           onPickCwd={vi.fn()}
           onSave={vi.fn()}
@@ -894,19 +879,21 @@ describe("ProfileEditForm", () => {
       );
     });
 
-    const actionRow = container.querySelector(".balance-session-actions");
-    const saveButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "保存会话",
-    );
-    const deleteButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "删除当前会话",
+    const modelInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.value === "gpt",
     );
 
-    expect(actionRow).toBeInstanceOf(HTMLDivElement);
-    expect(saveButton?.parentElement).toBe(actionRow);
-    expect(deleteButton?.parentElement).toBe(actionRow);
-    expect(saveButton?.className).toContain("small");
-    expect(deleteButton?.className).toContain("small");
+    expect(modelInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      modelInput?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+
+    const listbox = container.querySelector('[role="listbox"][aria-label="模型 ID 候选列表"]');
+    expect(listbox).toBeInstanceOf(HTMLElement);
+    expect(listbox?.textContent).toContain("gpt-5-high");
+    expect(listbox?.textContent).toContain("gpt-5-low");
+    expect(listbox?.textContent).not.toContain("claude-opus-4-7");
 
     await act(async () => {
       root.unmount();
@@ -914,16 +901,23 @@ describe("ProfileEditForm", () => {
     container.remove();
   });
 
-  it("should invoke onSaveBalanceSession when saving a new site session", async () => {
+  it("should commit selectedModelId when a model picker option is clicked", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    const onSaveBalanceSession = vi.fn();
+    const onChange = vi.fn();
+    const onDraftCommit = vi.fn();
 
     await act(async () => {
       root.render(
         <ProfileEditForm
-          draft={{ name: "", url: "https://new-api.example.com/v1", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          draft={{
+            name: "",
+            url: "",
+            key: "",
+            selectedModelId: "",
+            advancedModelMapping: makeAdvancedMapping(),
+          }}
           runtime={{
             cwd: "",
             command_base: "claude",
@@ -933,17 +927,11 @@ describe("ProfileEditForm", () => {
             exclude_user_settings: true,
           }}
           provider="claude"
-          modelOptions={[]}
-          siteBalanceSessions={[]}
-          balanceSessionSelection="new"
-          balanceSessionDraft={{ label: "后台 A", access_token: "token-a", user_id: "42" }}
-          onChange={vi.fn()}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onSaveBalanceSession={onSaveBalanceSession}
-          onDeleteSiteBalanceSession={vi.fn()}
+          modelOptions={["claude-opus-4-7", "gpt-5-high"]}
+          onChange={onChange}
           onAdvancedModelMappingChange={vi.fn()}
           onRuntimeChange={vi.fn()}
+          onDraftCommit={onDraftCommit}
           onFetchModels={vi.fn()}
           onPickCwd={vi.fn()}
           onSave={vi.fn()}
@@ -952,21 +940,84 @@ describe("ProfileEditForm", () => {
       );
     });
 
-    const saveButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "保存会话",
+    const modelInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder.includes("model id"),
     );
 
-    expect(saveButton).toBeDefined();
-
     await act(async () => {
-      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      modelInput?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
     });
 
-    expect(onSaveBalanceSession).toHaveBeenCalledTimes(1);
+    const option = Array.from(container.querySelectorAll('[role="option"]')).find(
+      (item) => item.textContent?.trim() === "gpt-5-high",
+    );
+    expect(option).toBeInstanceOf(HTMLElement);
+
+    await act(async () => {
+      option?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith("selectedModelId", "gpt-5-high");
+    expect(onDraftCommit).toHaveBeenCalledWith("selectedModelId", "gpt-5-high");
 
     await act(async () => {
       root.unmount();
     });
     container.remove();
   });
+
+  it("should keep the model picker closed while disabled", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{
+            name: "",
+            url: "",
+            key: "",
+            selectedModelId: "",
+            advancedModelMapping: makeAdvancedMapping(),
+          }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={["claude-opus-4-7", "gpt-5-high"]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={vi.fn()}
+          onDraftCommit={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+          disabled
+        />,
+      );
+    });
+
+    const modelInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder.includes("model id"),
+    );
+
+    await act(async () => {
+      modelInput?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+
+    expect(container.querySelector('[role="listbox"][aria-label="模型 ID 候选列表"]')).toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
 });

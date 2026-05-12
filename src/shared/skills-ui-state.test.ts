@@ -8,7 +8,7 @@ import type {
   SkillRecord,
   SkillStatus,
 } from "./types.js";
-import { buildSkillsViewState } from "./skills-ui-state.js";
+import { buildSkillsViewState, NO_USER_TAGS_FILTER_VALUE } from "./skills-ui-state.js";
 
 function createRecord(overrides: Partial<SkillRecord> = {}): SkillRecord {
   const host = overrides.host ?? "codex";
@@ -221,6 +221,87 @@ describe("buildSkillsViewState", () => {
     expect(readonlyState.visibleRecords.map((item) => item.skillId)).toEqual(["codex:_shared"]);
   });
 
+  it("filters records without user tags without adding a synthetic tag option", () => {
+    const tagged = createRecord({
+      host: "codex",
+      directoryName: "tagged",
+      displayName: "Tagged",
+      userTags: ["科研写作"],
+      hasUserTags: true,
+    });
+    const untagged = createRecord({
+      host: "claude",
+      directoryName: "untagged",
+      displayName: "Untagged",
+    });
+
+    const state = buildSkillsViewState({
+      scan: createScan([tagged, untagged]),
+      projectScan: null,
+      filters: {
+        host: "all",
+        statuses: [],
+        query: "",
+        selectedTag: NO_USER_TAGS_FILTER_VALUE,
+        onlyTagged: false,
+        includeReadonlyOnly: false,
+      },
+    });
+
+    expect(state.visibleRecords.map((item) => item.skillId)).toEqual(["claude:untagged"]);
+    expect(state.availableTags).toEqual(["科研写作"]);
+  });
+
+  it("hides special directories by default while keeping them available in readonly diagnostics", () => {
+    const writer = createRecord({
+      host: "codex",
+      directoryName: "writer",
+      displayName: "Writer",
+      status: "inactive",
+      userTags: ["科研写作"],
+      hasUserTags: true,
+    });
+    const shared = createRecord({
+      host: "codex",
+      directoryName: "_shared",
+      displayName: "Shared",
+      status: "readonly",
+      isSpecialDir: true,
+    });
+
+    const defaultState = buildSkillsViewState({
+      scan: createScan([writer, shared]),
+      projectScan: null,
+      filters: {
+        host: "all",
+        statuses: [],
+        query: "",
+        selectedTag: "",
+        onlyTagged: false,
+        includeReadonlyOnly: false,
+      },
+    });
+
+    expect(defaultState.visibleRecords.map((item) => item.skillId)).toEqual(["codex:writer"]);
+    expect(defaultState.availableTags).toEqual(["科研写作"]);
+    expect(defaultState.overview.find((item) => item.host === "codex")?.counts.readonly).toBe(1);
+
+    const readonlyState = buildSkillsViewState({
+      scan: createScan([writer, shared]),
+      projectScan: null,
+      filters: {
+        host: "all",
+        statuses: [],
+        query: "",
+        selectedTag: "",
+        onlyTagged: false,
+        includeReadonlyOnly: true,
+      },
+    });
+
+    expect(readonlyState.visibleRecords.map((item) => item.skillId)).toEqual(["codex:_shared"]);
+  });
+
   it("marks blocked environment and project actions for readonly, conflict and project-conflict items", () => {
     const readonlyItem = createRecord({
       host: "codex",
@@ -265,7 +346,7 @@ describe("buildSkillsViewState", () => {
 
     expect(state.selection.blockedEnvironmentSkillIds).toEqual(["claude:broken", "codex:_shared"]);
     expect(state.selection.blockedProjectSkillIds).toEqual(["claude:broken", "codex:_shared"]);
-    expect(state.visibleRecords.find((item) => item.skillId === "codex:_shared")?.actions.canEnable).toBe(false);
+    expect(state.visibleRecords.find((item) => item.skillId === "codex:_shared")).toBeUndefined();
     expect(state.visibleRecords.find((item) => item.skillId === "claude:broken")?.actions.canAddToProject).toBe(false);
   });
 
