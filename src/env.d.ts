@@ -117,6 +117,7 @@ declare global {
       onStateChanged: (callback: (state: LocalState) => void) => () => void;
       onBalanceProgress: (callback: (key: ProfileKey, state: BalanceCheckState) => void) => () => void;
       onUnlockError: (callback: (message: string) => void) => () => void;
+      logRendererEvent?: (event: string, message: string, context?: unknown) => void;
     };
   }
 }

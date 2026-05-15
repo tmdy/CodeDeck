@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AdvancedModelMapping, Profile, ProfileKey, GlobalSettings, LaunchMode } from "./shared/profile/types.js";
 import type { LocalState } from "./shared/state/local-state.js";
 import type { CommandPreview } from "./shared/launcher/types.js";
@@ -35,9 +35,6 @@ import {
 
 // Components
 import { ProfilesPage } from "./components/app/ProfilesPage.jsx";
-import { SessionsPage } from "./components/app/SessionsPage.jsx";
-import { SettingsPage } from "./components/app/SettingsPage.jsx";
-import { SkillsPanel } from "./components/skills/SkillsPanel.jsx";
 import {
   buildBalanceListEntry,
   getBalanceStateForProfile,
@@ -71,10 +68,67 @@ type ModelCatalogFetchState = {
   busy: boolean;
   error: string | null;
 };
+type StartupPhase = "checking" | "locked" | "ready";
 
 const EMPTY_MODEL_OPTIONS: string[] = [];
 const DRAFT_PREVIEW_DEBOUNCE_MS = 300;
 const HISTORY_PAGE_SIZE = 20;
+const LazySessionsPage = lazy(() =>
+  import("./components/app/SessionsPage.jsx").then((module) => ({ default: module.SessionsPage })),
+);
+const LazySettingsPage = lazy(() =>
+  import("./components/app/SettingsPage.jsx").then((module) => ({ default: module.SettingsPage })),
+);
+const LazySkillsPanel = lazy(() =>
+  import("./components/skills/SkillsPanel.jsx").then((module) => ({ default: module.SkillsPanel })),
+);
+
+type StartupCheckResult = {
+  hasEncryptedConfig: boolean;
+};
+
+let startupCheckPromise: Promise<StartupCheckResult> | null = null;
+let startupCheckResult: StartupCheckResult | null = null;
+let startupMilestonesLogged = new Set<string>();
+
+export function resetAppStartupStateForTests(): void {
+  startupCheckPromise = null;
+  startupCheckResult = null;
+  startupMilestonesLogged = new Set<string>();
+}
+
+function logRendererEvent(event: string, message: string, context?: unknown): void {
+  window.profileManager?.logRendererEvent?.(event, message, context);
+}
+
+function logRendererMilestoneOnce(event: string, message: string, context?: unknown): void {
+  if (startupMilestonesLogged.has(event)) {
+    return;
+  }
+  startupMilestonesLogged.add(event);
+  logRendererEvent(event, message, context);
+}
+
+async function resolveStartupCheckResult(): Promise<StartupCheckResult> {
+  if (startupCheckResult) {
+    return startupCheckResult;
+  }
+  if (!window.profileManager) {
+    throw new Error("当前环境未注入 Profile API，请通过 Electron 运行。");
+  }
+  if (!startupCheckPromise) {
+    startupCheckPromise = window.profileManager.checkEncryptedConfig()
+      .then((hasEncryptedConfig) => {
+        startupCheckResult = { hasEncryptedConfig };
+        return startupCheckResult;
+      })
+      .catch((error) => {
+        startupCheckPromise = null;
+        throw error;
+      });
+  }
+  return startupCheckPromise;
+}
 
 function useEventCallback<T extends (...args: never[]) => unknown>(callback: T): T {
   const callbackRef = useRef(callback);
@@ -167,8 +221,6 @@ function sameSessionRequest(left: ListSessionsRequest | null, right: ListSession
 }
 
 function App() {
-  const isUnlockWindow = window.location.hash.includes("/unlock");
-
   // ---- Tab 状态 ----
   const [activeTab, setActiveTab] = useState<TabId>("profiles");
 
@@ -178,9 +230,9 @@ function App() {
   const [siteBalanceSessionsByBaseUrl, setSiteBalanceSessionsByBaseUrl] = useState<SiteBalanceSessionsByBaseUrl>({});
   const [defaultWorkingDirectory, setDefaultWorkingDirectory] = useState("");
   const [isUnlocked, setIsUnlocked] = useState(false);
+  const [startupPhase, setStartupPhase] = useState<StartupPhase>("checking");
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
-  const [showUnlockInput, setShowUnlockInput] = useState(isUnlockWindow);
   const [hasEncryptedConfig, setHasEncryptedConfig] = useState(false);
 
   // 编辑状态
@@ -284,15 +336,20 @@ function App() {
 
   // ---- 初始化 ----
   useEffect(() => {
-    checkConfigAndInit();
+    let cancelled = false;
+    logRendererMilestoneOnce("root_mounted", "React root mounted");
+    void checkConfigAndInit(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    document.body.classList.toggle("unlock-route", isUnlockWindow);
+    document.body.classList.toggle("unlock-route", startupPhase !== "ready");
     return () => {
       document.body.classList.remove("unlock-route");
     };
-  }, [isUnlockWindow]);
+  }, [startupPhase]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -312,6 +369,16 @@ function App() {
     document.documentElement.dataset.themeMode = themeMode;
   }, [state?.global_settings?.theme_mode, systemPrefersDark]);
 
+  useEffect(() => {
+    if (startupPhase !== "ready") {
+      return;
+    }
+    logRendererMilestoneOnce("main_content_committed", "Main content committed", {
+      activeTab,
+      profileCount: profiles.length,
+    });
+  }, [activeTab, profiles.length, startupPhase]);
+
   // 监听 profile state 变更事件
   useEffect(() => {
     if (!window.profileManager) return;
@@ -321,26 +388,40 @@ function App() {
     return unsub;
   }, [isUnlocked]);
 
-  async function checkConfigAndInit() {
+  useEffect(() => {
+    if (!window.profileManager) return;
+    return window.profileManager.onUnlockError((message) => {
+      setUnlockError(message);
+      setIsBusy(false);
+    });
+  }, []);
+
+  async function checkConfigAndInit(isCancelled?: () => boolean) {
+    logRendererMilestoneOnce("startup_check_start", "checkConfigAndInit started");
     if (!window.profileManager) {
-      setErrorMessage("当前环境未注入 Profile API，请通过 Electron 运行。");
+      if (!isCancelled?.()) {
+        setUnlockError("当前环境未注入 Profile API，请通过 Electron 运行。");
+        setStartupPhase("locked");
+      }
       return;
     }
 
     try {
-      const hasConfig = await window.profileManager.checkEncryptedConfig();
-      setHasEncryptedConfig(hasConfig);
-      if (isUnlockWindow) {
-        setShowUnlockInput(true);
+      const result = await resolveStartupCheckResult();
+      if (isCancelled?.()) {
         return;
-      } else {
-        const data = await loadData();
-        syncEditorFromData(data);
-        setIsUnlocked(true);
-        setShowUnlockInput(false);
       }
+      setHasEncryptedConfig(result.hasEncryptedConfig);
+      setStartupPhase("locked");
+      logRendererMilestoneOnce("startup_check_complete", "checkConfigAndInit completed", {
+        hasEncryptedConfig: result.hasEncryptedConfig,
+      });
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "初始化失败");
+      if (isCancelled?.()) {
+        return;
+      }
+      setUnlockError(err instanceof Error ? err.message : "初始化失败");
+      setStartupPhase("locked");
     }
   }
 
@@ -348,15 +429,21 @@ function App() {
     if (!window.profileManager) return;
     setIsBusy(true);
     setUnlockError(null);
+    logRendererEvent("unlock_submit", "Unlock submitted", {
+      passphraseLength: passphrase.length,
+      hasEncryptedConfig,
+    });
     try {
       await window.profileManager.unlock(passphrase);
-      if (isUnlockWindow) {
-        return;
-      }
       const data = await loadData();
       syncEditorFromData(data);
       setIsUnlocked(true);
-      setShowUnlockInput(false);
+      setStartupPhase("ready");
+      setPassphrase("");
+      logRendererMilestoneOnce("unlock_success", "Unlock succeeded", {
+        hasEncryptedConfig,
+        profileCount: data.profiles.length,
+      });
     } catch (err) {
       setUnlockError(err instanceof Error ? err.message : "解锁失败");
     } finally {
@@ -506,6 +593,10 @@ function App() {
       )) as CommandPreview;
       if (requestSeq === previewRequestSeqRef.current) {
         setPreview(nextPreview);
+        logRendererMilestoneOnce("profile_preview_ready", "Profile preview ready", {
+          valid: nextPreview.valid,
+          cwd: nextPreview.cwd,
+        });
       }
     } catch {
       if (requestSeq === previewRequestSeqRef.current) {
@@ -966,6 +1057,10 @@ function App() {
         current && !nextSessions.some((session) => session.session_id === current) ? "" : current
       ));
       setProfilesSessionsLoading(false);
+      logRendererMilestoneOnce("profiles_sessions_ready", "Profiles sessions ready", {
+        count: nextSessions.length,
+        cwd,
+      });
     } catch (err) {
       if (
         requestSeq !== profilesSessionsRequestSeqRef.current
@@ -1581,8 +1676,19 @@ function App() {
     [stableHandleChangePassphrase],
   );
 
+  if (startupPhase === "checking") {
+    return (
+      <div className="startup-screen">
+        <div className="unlock-card">
+          <h1>Skills Manager</h1>
+          <p>正在准备解锁界面...</p>
+        </div>
+      </div>
+    );
+  }
+
   // ---- 解锁界面 ----
-  if (showUnlockInput) {
+  if (startupPhase === "locked") {
     return (
       <div className="unlock-screen">
         <div className="unlock-card">
@@ -1737,60 +1843,66 @@ function App() {
 
       {/* ===== SKILLS Tab ===== */}
       {activeTab === "skills" && (
-        <SkillsPanel
-          onError={stableSetErrorMessage}
-          onSuccess={stableSetSuccessMessage}
-          statusMessage={skillsStatusMessage}
-        />
+        <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载 Skills 页面...</p></div></div>}>
+          <LazySkillsPanel
+            onError={stableSetErrorMessage}
+            onSuccess={stableSetSuccessMessage}
+            statusMessage={skillsStatusMessage}
+          />
+        </Suspense>
       )}
 
       {/* ===== SESSIONS Tab ===== */}
       {activeTab === "sessions" && (
-        <SessionsPage
-          providerSwitchProps={{
-            activeProvider,
-            onSwitch: stableHandleProviderSwitch,
-            disabled: isBusy,
-          }}
-          sessionListProps={{
-            provider: activeProvider,
-            sessions: visibleHistorySessions,
-            selectedId: historySelectedSessionId,
-            restoreProfiles: historyRestoreProfiles,
-            selectedRestoreProfileKey: historyRestoreProfileKey,
-            restoreHint: historyRestoreHint,
-            restoreDisabled: historyRestoreDisabled,
-            preview: historyPreview,
-            onSelect: setHistorySelectedSessionId,
-            onRefresh: stableRefreshHistorySessionsAction,
-            onLoadMore: stableLoadMoreHistorySessionsAction,
-            onSelectRestoreProfile: stableHistoryRestoreProfileChangeAction,
-            onRestore: stableHistoryRestoreLaunchAction,
-            disabled: isBusy,
-            isLoading: historyIsLoading,
-            hasMoreSessions: historyHasMore,
-          }}
-        />
+        <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载会话页面...</p></div></div>}>
+          <LazySessionsPage
+            providerSwitchProps={{
+              activeProvider,
+              onSwitch: stableHandleProviderSwitch,
+              disabled: isBusy,
+            }}
+            sessionListProps={{
+              provider: activeProvider,
+              sessions: visibleHistorySessions,
+              selectedId: historySelectedSessionId,
+              restoreProfiles: historyRestoreProfiles,
+              selectedRestoreProfileKey: historyRestoreProfileKey,
+              restoreHint: historyRestoreHint,
+              restoreDisabled: historyRestoreDisabled,
+              preview: historyPreview,
+              onSelect: setHistorySelectedSessionId,
+              onRefresh: stableRefreshHistorySessionsAction,
+              onLoadMore: stableLoadMoreHistorySessionsAction,
+              onSelectRestoreProfile: stableHistoryRestoreProfileChangeAction,
+              onRestore: stableHistoryRestoreLaunchAction,
+              disabled: isBusy,
+              isLoading: historyIsLoading,
+              hasMoreSessions: historyHasMore,
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ===== SETTINGS Tab ===== */}
       {activeTab === "settings" && (
-        <SettingsPage
-          settingsSubTab={settingsSubTab}
-          onSelectGlobal={stableSetGlobalSettingsSubTab}
-          onSelectParameters={stableSetParameterSettingsSubTab}
-          globalSettingsProps={{
-            settings: state?.global_settings ?? {} as GlobalSettings,
-            onChange: stableHandleGlobalSettingsChange,
-            onChangePassphrase: stableChangePassphraseAction,
-            disabled: isBusy,
-          }}
-          parameterSettingsProps={{
-            settings: state?.parameter_settings ?? {} as ParameterSettings,
-            onChange: stableHandleParameterSettingsChange,
-            disabled: isBusy,
-          }}
-        />
+        <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载设置页面...</p></div></div>}>
+          <LazySettingsPage
+            settingsSubTab={settingsSubTab}
+            onSelectGlobal={stableSetGlobalSettingsSubTab}
+            onSelectParameters={stableSetParameterSettingsSubTab}
+            globalSettingsProps={{
+              settings: state?.global_settings ?? {} as GlobalSettings,
+              onChange: stableHandleGlobalSettingsChange,
+              onChangePassphrase: stableChangePassphraseAction,
+              disabled: isBusy,
+            }}
+            parameterSettingsProps={{
+              settings: state?.parameter_settings ?? {} as ParameterSettings,
+              onChange: stableHandleParameterSettingsChange,
+              disabled: isBusy,
+            }}
+          />
+        </Suspense>
       )}
     </div>
   );

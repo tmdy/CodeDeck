@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import App from "../../../App.jsx";
+import App, { resetAppStartupStateForTests } from "../../../App.jsx";
 import type { CommandPreview } from "../../launcher/types.js";
 import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
 import { itemKey } from "../../profile/keys-internal.js";
@@ -326,9 +326,55 @@ async function flushProfileSessionLoad() {
   await flushAsyncWork();
 }
 
+async function setInputValue(input: HTMLInputElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  await act(async () => {
+    valueSetter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+async function unlockAppIfNeeded(container: HTMLElement) {
+  const passwordInput = container.querySelector<HTMLInputElement>('input[type="password"]');
+  if (!passwordInput) {
+    return;
+  }
+  const unlockButton = Array.from(container.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === "创建并进入" || candidate.textContent?.trim() === "解锁",
+  );
+  expect(unlockButton).toBeInstanceOf(HTMLButtonElement);
+  await setInputValue(passwordInput, "test-passphrase");
+  await act(async () => {
+    unlockButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
+async function renderUnlockedApp(manager: MockProfileManager) {
+  window.profileManager = manager;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  await act(async () => {
+    root.render(<App />);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  await unlockAppIfNeeded(container);
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  return { container, root };
+}
+
 describe("App command preview", () => {
   afterEach(() => {
     vi.useRealTimers();
+    resetAppStartupStateForTests();
     delete window.profileManager;
     document.body.innerHTML = "";
   });
@@ -336,17 +382,7 @@ describe("App command preview", () => {
   it("debounces draft preview updates and keeps the latest response", async () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture();
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
@@ -415,15 +451,7 @@ describe("App command preview", () => {
   it("clears stale profile sessions while loading sessions for the selected profile", async () => {
     vi.useFakeTimers();
     const fixture = createProfileSessionSwitchFixture({ delayBeta: true });
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-      await flushAsyncWork();
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
       await flushProfileSessionLoad();
     });
@@ -472,15 +500,7 @@ describe("App command preview", () => {
   it("ignores late profile session responses from a previously selected profile", async () => {
     vi.useFakeTimers();
     const fixture = createProfileSessionSwitchFixture({ delayAlpha: true, delayBeta: true });
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-      await flushAsyncWork();
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
       await flushProfileSessionLoad();
     });
@@ -541,17 +561,7 @@ describe("App command preview", () => {
   it("uses the downloads directory as the visible cwd when saved runtime cwd is empty", async () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture({ initialCwd: "" });
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
       await flushProfileSessionLoad();
     });
@@ -579,17 +589,7 @@ describe("App command preview", () => {
   it("persists the downloads directory when saving a profile without a saved runtime cwd", async () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture({ initialCwd: "" });
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
 
     const saveButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "保存",
@@ -618,17 +618,7 @@ describe("App command preview", () => {
   it("uses the downloads directory when launching a saved profile whose runtime cwd is empty", async () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture({ initialCwd: "" });
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
 
     const launchButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "直接启动",
@@ -658,17 +648,7 @@ describe("App command preview", () => {
   it("does not reload profile sessions while editing cwd until the cwd is saved", async () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture();
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
       await flushProfileSessionLoad();
     });
@@ -728,17 +708,7 @@ describe("App command preview", () => {
   it("reloads profile sessions after picking and saving a cwd", async () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture();
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
       await flushProfileSessionLoad();
     });

@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import App from "../../../App.jsx";
+import App, { resetAppStartupStateForTests } from "../../../App.jsx";
 import { defaultBalanceCheckState } from "../../balance/types.js";
 import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
 import { itemKey } from "../../profile/keys-internal.js";
@@ -260,22 +260,91 @@ function createPrefetchFixture() {
   return { manager, listSessions };
 }
 
+async function setInputValue(input: HTMLInputElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  await act(async () => {
+    valueSetter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+async function unlockAppIfNeeded(container: HTMLElement) {
+  const passwordInput = container.querySelector<HTMLInputElement>('input[type="password"]');
+  if (!passwordInput) {
+    return;
+  }
+  const unlockButton = Array.from(container.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === "创建并进入" || candidate.textContent?.trim() === "解锁",
+  );
+  expect(unlockButton).toBeInstanceOf(HTMLButtonElement);
+  await setInputValue(passwordInput, "test-passphrase");
+  await act(async () => {
+    unlockButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
+async function renderUnlockedApp(manager: MockProfileManager) {
+  window.profileManager = manager;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  await act(async () => {
+    root.render(<App />);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  await unlockAppIfNeeded(container);
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  return { container, root };
+}
+
+async function waitForText(container: HTMLElement, text: string, attempts = 12) {
+  for (let index = 0; index < attempts; index += 1) {
+    if (container.textContent?.includes(text)) {
+      return;
+    }
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
+async function waitForButtonText(container: HTMLElement, text: string, attempts = 12) {
+  for (let index = 0; index < attempts; index += 1) {
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) => candidate.textContent?.trim() === text,
+    );
+    if (button) {
+      return button;
+    }
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+  return undefined;
+}
+
 describe("App session history provider switching", () => {
   afterEach(() => {
+    resetAppStartupStateForTests();
     delete window.profileManager;
     document.body.innerHTML = "";
   });
 
   it("does not let a delayed Codex session load overwrite the Claude session page", async () => {
     const fixture = createProviderRaceFixture();
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
 
     const sessionsTab = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "会话",
@@ -284,6 +353,10 @@ describe("App session history provider switching", () => {
 
     await act(async () => {
       sessionsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
     expect(fixture.listSessions).toHaveBeenCalledWith({
       provider: "codex",
@@ -293,15 +366,20 @@ describe("App session history provider switching", () => {
       offset: 0,
     });
 
-    const claudeButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "Claude",
-    );
+    const claudeButton = await waitForButtonText(container, "Claude");
     expect(claudeButton).toBeDefined();
 
     await act(async () => {
       claudeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
+    await waitForText(container, "当前 Provider：claude");
+    await waitForText(container, "Claude current project");
     expect(container.textContent).toContain("当前 Provider：claude");
     expect(container.textContent).toContain("Claude current project");
 
@@ -323,18 +401,16 @@ describe("App session history provider switching", () => {
     expect(container.textContent).toContain("Claude current project");
     expect(container.textContent).not.toContain("Body Data Sync");
     expect(container.textContent).not.toContain("codex-session-1");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 
   it("prefetches the next Codex history page and uses it when loading more", async () => {
     const fixture = createPrefetchFixture();
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
 
     const sessionsTab = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "会话",

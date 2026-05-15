@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import App from "../../../App.jsx";
+import App, { resetAppStartupStateForTests } from "../../../App.jsx";
 import type { SiteBalanceSessionsByBaseUrl } from "../../balance/site-balance-sessions.js";
 import type { BalanceCheckState } from "../../balance/types.js";
 import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
@@ -197,9 +197,35 @@ function createProfileManagerFixture(
 
 describe("App balance session autosave", () => {
   afterEach(() => {
+    resetAppStartupStateForTests();
     delete window.profileManager;
     document.body.innerHTML = "";
   });
+
+  async function setInputValue(input: HTMLInputElement, value: string) {
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      valueSetter?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  async function unlockAppIfNeeded(container: HTMLElement) {
+    const passwordInput = container.querySelector<HTMLInputElement>('input[type="password"]');
+    if (!passwordInput) {
+      return;
+    }
+    const unlockButton = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.trim() === "创建并进入" || candidate.textContent?.trim() === "解锁",
+    );
+    expect(unlockButton).toBeInstanceOf(HTMLButtonElement);
+    await setInputValue(passwordInput, "test-passphrase");
+    await act(async () => {
+      unlockButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+  }
 
   async function modelOptionValues(container: HTMLElement): Promise<string[]> {
     const modelInput = container.querySelector<HTMLInputElement>('input[role="combobox"]');
@@ -224,6 +250,10 @@ describe("App balance session autosave", () => {
     await act(async () => {
       root.render(<App />);
     });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await unlockAppIfNeeded(container);
     await act(async () => {
       await Promise.resolve();
     });
@@ -412,17 +442,7 @@ describe("App balance session autosave", () => {
 
   it("persists session-only changes before balance testing", async () => {
     const fixture = createProfileManagerFixture();
-    window.profileManager = fixture.manager;
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<App />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const { container, root } = await renderAppWithFixture(fixture);
 
     const balanceSessionSelect = Array.from(container.querySelectorAll("select")).find((select) =>
       Array.from(select.options).some((option) => option.value === "new" && option.textContent === "新建会话"),

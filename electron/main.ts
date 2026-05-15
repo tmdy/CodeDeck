@@ -90,7 +90,6 @@ let localStateStore: LocalStateStore | null = null;
 let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
 let mainWindow: BrowserWindow | null = null;
-let isTransitioningFromUnlock = false;
 let skillsInitPromise: Promise<void> | null = null;
 const appLogger = createAppLogger({
   getDirectory: () => path.join(projectRoot || process.cwd(), "app-data", "logs"),
@@ -637,91 +636,6 @@ function getPreloadPath(): string {
   }).preloadPath;
 }
 
-async function createUnlockWindow(): Promise<string> {
-  return new Promise((resolve) => {
-    appLogger.info("window", "unlock_window_open", "Opening unlock window");
-    const unlockWin = new BrowserWindow({
-      width: 760,
-      height: 560,
-      minWidth: 640,
-      minHeight: 480,
-      resizable: false,
-      frame: false,
-      backgroundColor: resolveWindowBackgroundColor(),
-      icon: resolveWindowIconPath(),
-      webPreferences: {
-        preload: getPreloadPath(),
-        sandbox: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-
-    // 处理解锁请求
-    const unlockHandler = async (_event: Electron.IpcMainInvokeEvent, passphrase: string) => {
-      appLogger.info("auth", "unlock_start", "Profile unlock started", {
-        context: {
-          passphrase_length: passphrase?.length ?? 0,
-        },
-      });
-      try {
-        if (!encryptedStore || !localStateStore) {
-          await initProfileServices();
-          appLogger.info("auth", "unlock_profile_services_ready", "Profile services initialized during unlock");
-        }
-        const { profiles, state, siteBalanceSessionsByBaseUrl } = await loadProfilesAndState(passphrase!);
-        appLogger.info("auth", "unlock_profiles_loaded", "Profiles loaded during unlock", {
-          context: {
-            profileCount: profiles.length,
-          },
-        });
-        currentPassphrase = passphrase!;
-
-        // 创建 Profile 服务
-        const stateAccessor = new StateAccessor(localStateStore!, state);
-        profileStateAccessor = stateAccessor;
-        const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase());
-        profileService = new ProfileService(
-          profiles,
-          stateAccessor,
-          syncStore,
-          siteBalanceSessionsByBaseUrl,
-        );
-        launchService = new LaunchService(profileService, {
-          getModelMappingsState: () => currentModelMappingsState(),
-          codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
-          codexRuntimeHome: getModelMappingConfigService().getCodexRuntimeHome(),
-        });
-        settingsStateService = new SettingsStateService(stateAccessor);
-
-        isTransitioningFromUnlock = true;
-        appLogger.info("auth", "unlock_success", "Profile unlock succeeded");
-        unlockWin.close();
-        resolve(passphrase!);
-      } catch (err: any) {
-        appLogger.error("auth", "unlock_error", "Profile unlock failed", { error: err });
-        // 密码错误，通知渲染进程
-        unlockWin.webContents.send("profile:unlock-error", err.message || "解锁失败");
-      }
-    };
-
-    handleIpc("profile:unlock", unlockHandler, { includeArgs: false });
-
-    handleIpc("profile:check-encrypted-config", () => {
-      return encryptedStore?.exists() ?? false;
-    }, { level: "debug" });
-
-    const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-    if (devServerUrl) {
-      unlockWin.loadURL(`${devServerUrl}#/unlock`);
-    } else {
-      unlockWin.loadFile(resolveDistIndexPath(), {
-        hash: "/unlock",
-      });
-    }
-  });
-}
-
 async function createMainWindow(): Promise<void> {
   appLogger.info("window", "main_window_start", "Opening main window");
   const browserWindow = new BrowserWindow({
@@ -739,7 +653,6 @@ async function createMainWindow(): Promise<void> {
     },
   });
   mainWindow = browserWindow;
-  isTransitioningFromUnlock = false;
   browserWindow.webContents.on("did-finish-load", () => {
     appLogger.info("window", "main_window_did_finish_load", "Main window finished loading");
   });
@@ -867,7 +780,74 @@ function registerAllIpcHandlers(): void {
     return result;
   });
 
+  ipcMain.on("app:renderer-log", (_event, payload: unknown) => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const record = payload as { event?: unknown; message?: unknown; context?: unknown };
+    if (typeof record.event !== "string" || typeof record.message !== "string") {
+      return;
+    }
+    appLogger.info("renderer", record.event, record.message, {
+      context: record.context,
+    });
+  });
+
   // ============ Profile IPC ============
+
+  handleIpc("profile:check-encrypted-config", () => {
+    return encryptedStore?.exists() ?? false;
+  }, { level: "debug" });
+
+  handleIpc(
+    "profile:unlock",
+    async (_event, passphrase: string) => {
+      appLogger.info("auth", "unlock_start", "Profile unlock started", {
+        context: {
+          passphrase_length: passphrase?.length ?? 0,
+        },
+      });
+      try {
+        if (!encryptedStore || !localStateStore) {
+          await initProfileServices();
+          appLogger.info("auth", "unlock_profile_services_ready", "Profile services initialized during unlock");
+        }
+        const { profiles, state, siteBalanceSessionsByBaseUrl } = await loadProfilesAndState(passphrase);
+        appLogger.info("auth", "unlock_profiles_loaded", "Profiles loaded during unlock", {
+          context: {
+            profileCount: profiles.length,
+          },
+        });
+        currentPassphrase = passphrase;
+
+        const stateAccessor = new StateAccessor(localStateStore!, state);
+        profileStateAccessor = stateAccessor;
+        const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase());
+        profileService = new ProfileService(
+          profiles,
+          stateAccessor,
+          syncStore,
+          siteBalanceSessionsByBaseUrl,
+        );
+        launchService = new LaunchService(profileService, {
+          getModelMappingsState: () => currentModelMappingsState(),
+          codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
+          codexRuntimeHome: getModelMappingConfigService().getCodexRuntimeHome(),
+        });
+        settingsStateService = new SettingsStateService(stateAccessor);
+
+        appLogger.info("auth", "unlock_success", "Profile unlock succeeded");
+        return { success: true };
+      } catch (err: any) {
+        appLogger.error("auth", "unlock_error", "Profile unlock failed", { error: err });
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send("profile:unlock-error", err?.message || "解锁失败");
+        }
+        throw err;
+      }
+    },
+    { includeArgs: false },
+  );
 
   handleIpc(
     "profile:initialize-encryption",
@@ -1289,15 +1269,11 @@ app.whenReady().then(async () => {
   appLogger.info("app", "profile_services_ready", "Profile storage services initialized");
   await syncNativeThemeFromLocalState();
 
-  // 3. 始终先经过解锁/设口令窗口
-  await createUnlockWindow();
-  appLogger.info("app", "unlock_window_resolved", "Unlock window resolved");
-
-  // 4. 注册所有 IPC 处理器
+  // 3. 注册所有 IPC 处理器
   registerAllIpcHandlers();
   appLogger.info("app", "ipc_handlers_registered", "IPC handlers registered");
 
-  // 5. 创建主窗口
+  // 4. 创建主窗口
   await createMainWindow();
   appLogger.info("app", "main_window_created", "Main window created");
   void ensureSkillsServiceReady();
@@ -1310,14 +1286,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  appLogger.info("app", "window_all_closed", "All windows closed", {
-    context: {
-      transitioningFromUnlock: isTransitioningFromUnlock,
-    },
-  });
-  if (isTransitioningFromUnlock) {
-    return;
-  }
+  appLogger.info("app", "window_all_closed", "All windows closed");
   if (process.platform !== "darwin") {
     app.quit();
   }
