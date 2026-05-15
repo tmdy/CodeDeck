@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import path from "node:path";
+import { promises as fs } from "node:fs";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -45,6 +46,7 @@ import {
   type ListSessionsRequest,
 } from "../src/shared/services/session-service.js";
 import {
+  type BootstrapResult,
   type LocalState,
 } from "../src/shared/state/local-state.js";
 import {
@@ -92,6 +94,7 @@ let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
 let mainWindow: BrowserWindow | null = null;
 let skillsInitPromise: Promise<void> | null = null;
+let profileStoresInitPromise: Promise<void> | null = null;
 const sessionListCache = createSessionListCache({ ttlMs: 5_000 });
 const appLogger = createAppLogger({
   getDirectory: () => path.join(projectRoot || process.cwd(), "app-data", "logs"),
@@ -106,6 +109,47 @@ function getDefaultWorkingDirectory(): string {
 
 function applyNativeThemeMode(mode: unknown): void {
   nativeTheme.themeSource = normalizeThemeMode(mode);
+}
+
+function profileStoresReady(): boolean {
+  return Boolean(
+    encryptedStore
+    && localStateStore
+    && modelMappingConfigService
+    && capabilityOverlayService
+    && modelCatalogService
+    && balanceService
+    && modelMappingsStateCache,
+  );
+}
+
+async function ensureProfileStoresReady(): Promise<void> {
+  if (profileStoresReady()) {
+    return;
+  }
+  if (!profileStoresInitPromise) {
+    profileStoresInitPromise = initProfileServices().catch((error: unknown) => {
+      profileStoresInitPromise = null;
+      throw error;
+    });
+  }
+  await profileStoresInitPromise;
+}
+
+async function fileExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function hasEncryptedConfigFile(): Promise<boolean> {
+  if (encryptedStore) {
+    return encryptedStore.exists();
+  }
+  return fileExists(path.join(projectRoot, "app-data", ENCRYPTED_DATA_FILE));
 }
 
 function resolveWindowBackgroundColor(): string {
@@ -384,6 +428,9 @@ async function prepareCapabilityOverlay(request: LaunchRequest): Promise<LaunchR
 // ---- 初始化 Profile 服务 ----
 
 async function initProfileServices(): Promise<void> {
+  if (profileStoresReady()) {
+    return;
+  }
   const appDataDir = path.join(projectRoot, "app-data");
 
   // 加密配置存储
@@ -425,6 +472,25 @@ async function loadProfilesAndState(
     profiles: config.profiles,
     state,
     siteBalanceSessionsByBaseUrl: config.site_balance_sessions_by_base_url,
+  };
+}
+
+function buildProfileBootstrapPayload(): BootstrapResult {
+  const svc = getProfileService();
+  const state = svc.getState();
+  return {
+    profiles: svc.getProfiles(),
+    state: {
+      selected_provider: state.selected_provider,
+      selected_profile_key: state.selected_profile_key,
+      selected_profile_key_by_provider: state.selected_profile_key_by_provider,
+      profile_order_by_provider: state.profile_order_by_provider,
+      runtime_by_profile: state.runtime_by_profile,
+      balance_checks_by_profile: state.balance_checks_by_profile,
+      global_settings: state.global_settings,
+    },
+    siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
+    defaultWorkingDirectory: getDefaultWorkingDirectory(),
   };
 }
 
@@ -797,8 +863,8 @@ function registerAllIpcHandlers(): void {
 
   // ============ Profile IPC ============
 
-  handleIpc("profile:check-encrypted-config", () => {
-    return encryptedStore?.exists() ?? false;
+  handleIpc("profile:check-encrypted-config", async () => {
+    return hasEncryptedConfigFile();
   }, { level: "debug" });
 
   handleIpc(
@@ -810,10 +876,8 @@ function registerAllIpcHandlers(): void {
         },
       });
       try {
-        if (!encryptedStore || !localStateStore) {
-          await initProfileServices();
-          appLogger.info("auth", "unlock_profile_services_ready", "Profile services initialized during unlock");
-        }
+        await ensureProfileStoresReady();
+        appLogger.info("auth", "unlock_profile_services_ready", "Profile storage services ready during unlock");
         const { profiles, state, siteBalanceSessionsByBaseUrl } = await loadProfilesAndState(passphrase);
         appLogger.info("auth", "unlock_profiles_loaded", "Profiles loaded during unlock", {
           context: {
@@ -839,7 +903,10 @@ function registerAllIpcHandlers(): void {
         settingsStateService = new SettingsStateService(stateAccessor);
 
         appLogger.info("auth", "unlock_success", "Profile unlock succeeded");
-        return { success: true };
+        return {
+          success: true,
+          bootstrap: buildProfileBootstrapPayload(),
+        };
       } catch (err: any) {
         appLogger.error("auth", "unlock_error", "Profile unlock failed", { error: err });
         for (const win of BrowserWindow.getAllWindows()) {
@@ -854,9 +921,7 @@ function registerAllIpcHandlers(): void {
   handleIpc(
     "profile:initialize-encryption",
     async (_event, passphrase: string) => {
-      if (!encryptedStore || !localStateStore) {
-        await initProfileServices();
-      }
+      await ensureProfileStoresReady();
       currentPassphrase = passphrase;
       const state = await localStateStore!.load();
       const stateAccessor = new StateAccessor(localStateStore!, state);
@@ -877,9 +942,7 @@ function registerAllIpcHandlers(): void {
   handleIpc(
     "profile:change-passphrase",
     async (_event, currentPassword: string, nextPassword: string) => {
-      if (!encryptedStore || !localStateStore) {
-        await initProfileServices();
-      }
+      await ensureProfileStoresReady();
       if (!currentPassword) {
         throw new Error("当前密码不能为空");
       }
@@ -899,22 +962,7 @@ function registerAllIpcHandlers(): void {
 
   // Profile CRUD
   handleIpc("profile:bootstrap", () => {
-    const svc = getProfileService();
-    const state = svc.getState();
-    return {
-      profiles: svc.getProfiles(),
-      state: {
-        selected_provider: state.selected_provider,
-        selected_profile_key: state.selected_profile_key,
-        selected_profile_key_by_provider: state.selected_profile_key_by_provider,
-        profile_order_by_provider: state.profile_order_by_provider,
-        runtime_by_profile: state.runtime_by_profile,
-        balance_checks_by_profile: state.balance_checks_by_profile,
-        global_settings: state.global_settings,
-      },
-      siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
-      defaultWorkingDirectory: getDefaultWorkingDirectory(),
-    };
+    return buildProfileBootstrapPayload();
   }, { level: "debug" });
 
   handleIpc("profile:list", () => {
@@ -1291,18 +1339,22 @@ app.whenReady().then(async () => {
   // 1. 先确定工作区根目录，但不执行 Skills 工作区初始化
   resolveProjectRoot();
 
-  // 2. 初始化 Profile 存储
-  await initProfileServices();
-  appLogger.info("app", "profile_services_ready", "Profile storage services initialized");
-  await syncNativeThemeFromLocalState();
-
-  // 3. 注册所有 IPC 处理器
+  // 2. 先注册 IPC，再开窗；Profile 存储改为后台预热，不阻塞解锁页出现。
   registerAllIpcHandlers();
   appLogger.info("app", "ipc_handlers_registered", "IPC handlers registered");
 
-  // 4. 创建主窗口
+  // 3. 创建主窗口
   await createMainWindow();
   appLogger.info("app", "main_window_created", "Main window created");
+
+  void ensureProfileStoresReady()
+    .then(async () => {
+      appLogger.info("app", "profile_services_ready", "Profile storage services initialized");
+      await syncNativeThemeFromLocalState();
+    })
+    .catch((error: unknown) => {
+      appLogger.error("app", "profile_services_ready_error", "Profile storage warmup failed", { error });
+    });
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -56,7 +56,7 @@ declare global {
     profileManager?: {
       // Auth
       checkEncryptedConfig: () => Promise<boolean>;
-      unlock: (passphrase: string) => Promise<{ success: boolean }>;
+      unlock: (passphrase: string) => Promise<{ success: boolean; bootstrap?: BootstrapResult }>;
       bootstrap: () => Promise<BootstrapResult>;
       initializeEncryption: (passphrase: string) => Promise<{ success: boolean }>;
       changePassphrase: (currentPassphrase: string, nextPassphrase: string) => Promise<{ success: boolean }>;

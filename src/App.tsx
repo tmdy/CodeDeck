@@ -35,7 +35,6 @@ import {
 } from "./shared/profile-editor-state.js";
 
 // Components
-import { ProfilesPage } from "./components/app/ProfilesPage.jsx";
 import {
   buildBalanceListEntry,
   getBalanceStateForProfile,
@@ -75,6 +74,31 @@ const EMPTY_MODEL_OPTIONS: string[] = [];
 const DRAFT_PREVIEW_DEBOUNCE_MS = 300;
 const INITIAL_DEFERRED_PREVIEW_DELAY_MS = 600;
 const HISTORY_PAGE_SIZE = 20;
+let profilesPagePreloadPromise: Promise<typeof import("./components/app/ProfilesPage.jsx")> | null = null;
+
+function preloadProfilesPageModule() {
+  profilesPagePreloadPromise ??= import("./components/app/ProfilesPage.jsx");
+  return profilesPagePreloadPromise;
+}
+
+const eagerAppPages = import.meta.env.MODE === "test"
+  ? await Promise.all([
+      import("./components/app/ProfilesPage.jsx"),
+      import("./components/app/SessionsPage.jsx"),
+      import("./components/app/SettingsPage.jsx"),
+      import("./components/skills/SkillsPanel.jsx"),
+    ])
+  : null;
+const EagerProfilesPage = eagerAppPages?.[0].ProfilesPage ?? null;
+const EagerSessionsPage = eagerAppPages?.[1].SessionsPage ?? null;
+const EagerSettingsPage = eagerAppPages?.[2].SettingsPage ?? null;
+const EagerSkillsPanel = eagerAppPages?.[3].SkillsPanel ?? null;
+
+// App bundle 加载后立刻预热 Profiles 页 chunk，避免解锁完成后首次进入主界面仍停在 Suspense fallback。
+void preloadProfilesPageModule();
+const LazyProfilesPage = lazy(() =>
+  preloadProfilesPageModule().then((module) => ({ default: module.ProfilesPage })),
+);
 const LazySessionsPage = lazy(() =>
   import("./components/app/SessionsPage.jsx").then((module) => ({ default: module.SessionsPage })),
 );
@@ -84,6 +108,10 @@ const LazySettingsPage = lazy(() =>
 const LazySkillsPanel = lazy(() =>
   import("./components/skills/SkillsPanel.jsx").then((module) => ({ default: module.SkillsPanel })),
 );
+const ProfilesPageComponent = EagerProfilesPage ?? LazyProfilesPage;
+const SessionsPageComponent = EagerSessionsPage ?? LazySessionsPage;
+const SettingsPageComponent = EagerSettingsPage ?? LazySettingsPage;
+const SkillsPanelComponent = EagerSkillsPanel ?? LazySkillsPanel;
 
 type StartupCheckResult = {
   hasEncryptedConfig: boolean;
@@ -360,6 +388,22 @@ function App() {
   }, [startupPhase]);
 
   useEffect(() => {
+    if (startupPhase !== "locked") {
+      return;
+    }
+
+    const preload = () => {
+      void preloadProfilesPageModule();
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(preload, { timeout: 2000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(preload, 1000);
+    return () => window.clearTimeout(id);
+  }, [startupPhase]);
+
+  useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const handleChange = () => setSystemPrefersDark(media.matches);
@@ -442,9 +486,12 @@ function App() {
       hasEncryptedConfig,
     });
     try {
-      await window.profileManager.unlock(passphrase);
+      const unlockResult = await window.profileManager.unlock(passphrase);
       logRendererMilestoneOnce("bootstrap_start", "Bootstrap hydration started");
-      const data = await loadBootstrapData();
+      const data = unlockResult.bootstrap
+        ? applyBootstrapResult(unlockResult.bootstrap)
+        : await loadBootstrapData();
+      await preloadProfilesPageModule();
       setInitialPreviewDeferred(true);
       markProfilesSessionsHydrated(null);
       clearProfilesSessionsState();
@@ -503,15 +550,19 @@ function App() {
     return data;
   }
 
+  function applyBootstrapResult(result: BootstrapResult): HydratedProfilesResult {
+    return applyHydratedProfilesResult(
+      normalizeBootstrapResult(result),
+      { parameterSettingsHydrated: false },
+    );
+  }
+
   async function loadBootstrapData(): Promise<HydratedProfilesResult> {
     if (!window.profileManager) {
       throw new Error("Profile API 不可用");
     }
     const result = await window.profileManager.bootstrap();
-    return applyHydratedProfilesResult(
-      normalizeBootstrapResult(result),
-      { parameterSettingsHydrated: false },
-    );
+    return applyBootstrapResult(result);
   }
 
   async function loadData(): Promise<HydratedProfilesResult> {
@@ -1926,87 +1977,89 @@ function App() {
 
       {/* ===== PROFILES Tab ===== */}
       {activeTab === "profiles" && (
-        <ProfilesPage
-          providerSwitchProps={{
-            activeProvider: state?.selected_provider ?? PROVIDER_CLAUDE,
-            onSwitch: stableHandleProviderSwitch,
-            disabled: isBusy,
-          }}
-          profileListProps={{
-            profiles,
-            activeProvider: selectedProvider,
-            selectedKey: state?.selected_profile_key ?? "",
-            orderedKeys,
-            balanceEntries,
-            onSelect: stableHandleSelectProfile,
-            onReorder: stableHandleReorder,
-            onCreate: stableHandleNewProfile,
-            onClone: stableHandleCloneProfile,
-            onDelete: stableHandleDeleteProfile,
-            disabled: isBusy,
-          }}
-          siteBalanceSessionProps={{
-            siteBalanceSessions: draftSiteBalanceSessions,
-            balanceSessionSelection: draftBalanceSessionSelection,
-            balanceSessionDraft: draftBalanceSession,
-            onBalanceSessionSelectionChange: handleBalanceSessionSelectionChange,
-            onBalanceSessionDraftChange: handleBalanceSessionDraftChange,
-            onSaveBalanceSession: stableSaveBalanceSessionAction,
-            onDeleteSiteBalanceSession: stableDeleteSiteBalanceSessionAction,
-            disabled: isBusy,
-          }}
-          balanceTestProps={{
-            state: balanceState,
-            onTest: stableHandleTestBalance,
-            disabled: isBusy || !state?.selected_profile_key,
-            sessionHint: savedBalanceSessionHint,
-          }}
-          profileEditProps={{
-            draft: profileDraft,
-            globalPermissions,
-            runtime: profileRuntime,
-            provider: selectedProvider,
-            modelOptions,
-            modelFetchedAt,
-            modelFetchBusy,
-            modelFetchError,
-            modelFetchSuccess,
-            onChange: handleProfileDraftChange,
-            onAdvancedModelMappingChange: setDraftAdvancedModelMapping,
-            onPermissionsChange: setDraftPermissions,
-            onDraftCommit: stableDraftCommitAction,
-            onRuntimeChange: handleProfileRuntimeChange,
-            onRuntimeCommit: stableRuntimeCommitAction,
-            onFetchModels: stableFetchModelsAction,
-            onOpenBaseUrl: stableOpenBaseUrlAction,
-            onSave: stableSaveProfileAction,
-            onCancel: stableCancelProfileEditAction,
-            onPickCwd: stablePickWorkingDirectoryAction,
-            disabled: isBusy,
-          }}
-          launchPanelProps={{
-            preview,
-            disabled: isBusy || !state?.selected_profile_key,
-            resumeDisabled: !profilesSelectedSessionId,
-            sessions: profilesSessions,
-            sessionsLoading: profilesSessionsLoading,
-            sessionsUninitialized: profilesSessionsUninitialized,
-            selectedSessionId: profilesSelectedSessionId,
-            onSelectSession: setProfilesSelectedSessionId,
-            onRefreshSessions: stableRefreshProfilesSessionsAction,
-            onDirectLaunch: stableDirectLaunchAction,
-            onContinueLaunch: stableContinueLaunchAction,
-            onResumeLaunch: stableResumeLaunchAction,
-            onTemporaryReadonlyLaunch: stableTemporaryReadonlyLaunchAction,
-            onTemporaryFullAccessLaunch: stableTemporaryFullAccessLaunchAction,
-          }}
-        />
+        <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载 Profiles 页面...</p></div></div>}>
+          <ProfilesPageComponent
+            providerSwitchProps={{
+              activeProvider: state?.selected_provider ?? PROVIDER_CLAUDE,
+              onSwitch: stableHandleProviderSwitch,
+              disabled: isBusy,
+            }}
+            profileListProps={{
+              profiles,
+              activeProvider: selectedProvider,
+              selectedKey: state?.selected_profile_key ?? "",
+              orderedKeys,
+              balanceEntries,
+              onSelect: stableHandleSelectProfile,
+              onReorder: stableHandleReorder,
+              onCreate: stableHandleNewProfile,
+              onClone: stableHandleCloneProfile,
+              onDelete: stableHandleDeleteProfile,
+              disabled: isBusy,
+            }}
+            siteBalanceSessionProps={{
+              siteBalanceSessions: draftSiteBalanceSessions,
+              balanceSessionSelection: draftBalanceSessionSelection,
+              balanceSessionDraft: draftBalanceSession,
+              onBalanceSessionSelectionChange: handleBalanceSessionSelectionChange,
+              onBalanceSessionDraftChange: handleBalanceSessionDraftChange,
+              onSaveBalanceSession: stableSaveBalanceSessionAction,
+              onDeleteSiteBalanceSession: stableDeleteSiteBalanceSessionAction,
+              disabled: isBusy,
+            }}
+            balanceTestProps={{
+              state: balanceState,
+              onTest: stableHandleTestBalance,
+              disabled: isBusy || !state?.selected_profile_key,
+              sessionHint: savedBalanceSessionHint,
+            }}
+            profileEditProps={{
+              draft: profileDraft,
+              globalPermissions,
+              runtime: profileRuntime,
+              provider: selectedProvider,
+              modelOptions,
+              modelFetchedAt,
+              modelFetchBusy,
+              modelFetchError,
+              modelFetchSuccess,
+              onChange: handleProfileDraftChange,
+              onAdvancedModelMappingChange: setDraftAdvancedModelMapping,
+              onPermissionsChange: setDraftPermissions,
+              onDraftCommit: stableDraftCommitAction,
+              onRuntimeChange: handleProfileRuntimeChange,
+              onRuntimeCommit: stableRuntimeCommitAction,
+              onFetchModels: stableFetchModelsAction,
+              onOpenBaseUrl: stableOpenBaseUrlAction,
+              onSave: stableSaveProfileAction,
+              onCancel: stableCancelProfileEditAction,
+              onPickCwd: stablePickWorkingDirectoryAction,
+              disabled: isBusy,
+            }}
+            launchPanelProps={{
+              preview,
+              disabled: isBusy || !state?.selected_profile_key,
+              resumeDisabled: !profilesSelectedSessionId,
+              sessions: profilesSessions,
+              sessionsLoading: profilesSessionsLoading,
+              sessionsUninitialized: profilesSessionsUninitialized,
+              selectedSessionId: profilesSelectedSessionId,
+              onSelectSession: setProfilesSelectedSessionId,
+              onRefreshSessions: stableRefreshProfilesSessionsAction,
+              onDirectLaunch: stableDirectLaunchAction,
+              onContinueLaunch: stableContinueLaunchAction,
+              onResumeLaunch: stableResumeLaunchAction,
+              onTemporaryReadonlyLaunch: stableTemporaryReadonlyLaunchAction,
+              onTemporaryFullAccessLaunch: stableTemporaryFullAccessLaunchAction,
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ===== SKILLS Tab ===== */}
       {activeTab === "skills" && (
         <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载 Skills 页面...</p></div></div>}>
-          <LazySkillsPanel
+          <SkillsPanelComponent
             onError={stableSetErrorMessage}
             onSuccess={stableSetSuccessMessage}
             statusMessage={skillsStatusMessage}
@@ -2017,7 +2070,7 @@ function App() {
       {/* ===== SESSIONS Tab ===== */}
       {activeTab === "sessions" && (
         <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载会话页面...</p></div></div>}>
-          <LazySessionsPage
+          <SessionsPageComponent
             providerSwitchProps={{
               activeProvider,
               onSwitch: stableHandleProviderSwitch,
@@ -2049,7 +2102,7 @@ function App() {
       {activeTab === "settings" && (
         <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载设置页面...</p></div></div>}>
           {hasHydratedParameterSettings ? (
-            <LazySettingsPage
+             <SettingsPageComponent
               settingsSubTab={settingsSubTab}
               onSelectGlobal={stableSetGlobalSettingsSubTab}
               onSelectParameters={stableSetParameterSettingsSubTab}

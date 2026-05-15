@@ -47,18 +47,24 @@ describe("App startup route", () => {
     expect(source).not.toContain('import("./UnlockApp.js")');
     expect(source).toContain('import("./App.js")');
     expect(source).not.toContain('window.location.hash.includes("/unlock")');
+    expect(source).toContain('rootElement.innerHTML = `');
+    expect(source).toContain("正在准备解锁界面");
   });
 
-  it("should lazy-load non-default tabs from App", async () => {
+  it("should lazy-load app pages and warm the Profiles page while locked", async () => {
     const source = await readFile(path.join(process.cwd(), "src", "App.tsx"), "utf8");
 
+    expect(source).toContain("function preloadProfilesPageModule()");
+    expect(source).toContain('const LazyProfilesPage = lazy(() =>');
+    expect(source).toContain('preloadProfilesPageModule().then((module) => ({ default: module.ProfilesPage }))');
     expect(source).toContain('import("./components/app/SessionsPage.jsx").then((module) => ({ default: module.SessionsPage }))');
     expect(source).toContain('import("./components/app/SettingsPage.jsx").then((module) => ({ default: module.SettingsPage }))');
     expect(source).toContain('import("./components/skills/SkillsPanel.jsx").then((module) => ({ default: module.SkillsPanel }))');
+    expect(source).toContain("void preloadProfilesPageModule()");
     expect(source).not.toContain('import { SessionsPage } from "./components/app/SessionsPage.jsx";');
     expect(source).not.toContain('import { SettingsPage } from "./components/app/SettingsPage.jsx";');
     expect(source).not.toContain('import { SkillsPanel } from "./components/skills/SkillsPanel.jsx";');
-    expect(source).toContain('import { ProfilesPage } from "./components/app/ProfilesPage.jsx";');
+    expect(source).not.toContain('import { ProfilesPage } from "./components/app/ProfilesPage.jsx";');
   });
 
   it("should register IPC handlers before the first main window is created", async () => {
@@ -78,6 +84,19 @@ describe("App startup route", () => {
     const source = await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8");
     expect(source).not.toContain("void ensureSkillsServiceReady();");
     expect(source).not.toContain("await initSkillsService();");
+  });
+
+  it("should defer profile storage initialization until after the first main window", async () => {
+    const source = await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8");
+    const readyBlockStart = source.indexOf("app.whenReady().then(async () => {");
+    const readyBlockEnd = source.indexOf('app.on("activate"', readyBlockStart);
+    const readyBlock = source.slice(readyBlockStart, readyBlockEnd);
+
+    expect(readyBlock).not.toContain("await initProfileServices();");
+    expect(readyBlock).toContain("void ensureProfileStoresReady()");
+    expect(readyBlock.indexOf("await createMainWindow();")).toBeLessThan(
+      readyBlock.indexOf("void ensureProfileStoresReady()"),
+    );
   });
 
   it("should expose a dedicated bootstrap API for unlock-time hydration", async () => {
