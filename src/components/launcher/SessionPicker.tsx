@@ -42,6 +42,9 @@ export const SessionPicker = memo(function SessionPicker({
     () => sessions.find((session) => session.session_id === selectedId),
     [selectedId, sessions],
   );
+  const selectedExcerpts = selectedSession?.conversation_excerpts?.length
+    ? selectedSession.conversation_excerpts.slice(0, 6)
+    : (selectedSession?.user_prompts?.slice(0, 4).map((text) => ({ role: "user" as const, text })) ?? []);
   const listboxId = "profile-session-picker-listbox";
 
   return (
@@ -100,6 +103,21 @@ export const SessionPicker = memo(function SessionPicker({
             <div className="session-picker-summary">
               <p className="session-picker-heading">当前选中</p>
               <p className="session-preview">{selectedSession.preview || "(无预览)"}</p>
+              {selectedExcerpts.length > 0 && (
+                <div className="session-picker-excerpts">
+                  <p className="session-picker-heading">开头问答</p>
+                  <ul className="session-picker-excerpt-list">
+                    {selectedExcerpts.map((excerpt, index) => (
+                      <li key={`${selectedSession.session_id}-excerpt-${index}`}>
+                        <span className={`session-picker-role ${excerpt.role}`}>
+                          {excerpt.role === "assistant" ? "答" : "问"}
+                        </span>
+                        <span className="session-picker-excerpt-text">{excerpt.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <p className="session-meta">{selectedSession.session_id}</p>
               <p className="session-meta">
                 {formatSourceKind(selectedSession)} · {new Date(selectedSession.updated_at).toLocaleString()} · {selectedSession.cwd}

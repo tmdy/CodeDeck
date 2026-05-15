@@ -40,6 +40,13 @@ describe("session-service", () => {
       .toBe("C--Users-example-Sync-projects-skills-manager");
   });
 
+  it("encodes Claude project directories by replacing underscores and dots with hyphens", () => {
+    expect(encodeClaudeProjectPath("C:/Users/example/Downloads/thesis_round11_ch3_4_rewritten_no_pdf"))
+      .toBe("C--Users-example-Downloads-thesis-round11-ch3-4-rewritten-no-pdf");
+    expect(encodeClaudeProjectPath("C:/Users/example/Sync/XJTU-thesis-1.2.8（2025年更新）"))
+      .toBe("C--Users-example-Sync-XJTU-thesis-1-2-8-2025----");
+  });
+
   it("reads Claude sessions from ~/.claude/projects/<encoded-project>/*.jsonl", async () => {
     const claudeRoot = await createTempDir("skills-manager-claude-");
     tempDirs.push(claudeRoot);
@@ -102,6 +109,66 @@ describe("session-service", () => {
       cwd,
       preview: "从项目根目录开始",
     });
+  });
+
+  it("collects the first four Claude user prompts for session disambiguation", async () => {
+    const claudeRoot = await createTempDir("skills-manager-claude-prompts-");
+    tempDirs.push(claudeRoot);
+    const cwd = "C:/workspace/project-prompts";
+    const encoded = encodeClaudeProjectPath(cwd);
+    const filePath = path.join(claudeRoot, "projects", encoded, "session-prompts.jsonl");
+    await writeJsonl(filePath, [
+      { type: "assistant", cwd, message: { content: "ignored assistant" } },
+      { type: "user", cwd, message: { content: "第一条用户提问" } },
+      { type: "user", cwd, message: { content: "第二条用户提问" } },
+      { type: "user", cwd, message: { content: "   " } },
+      { type: "user", cwd, content: [{ text: "第三条用户提问" }] },
+      { type: "user", cwd, message: { content: "第四条用户提问" } },
+      { type: "user", cwd, message: { content: "第五条不应显示" } },
+    ]);
+
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "project",
+      cwd,
+    }, claudeRoot);
+
+    expect(sessions[0]).toMatchObject({
+      preview: "ignored assistant",
+      user_prompts: [
+        "第一条用户提问",
+        "第二条用户提问",
+        "第三条用户提问",
+        "第四条用户提问",
+      ],
+    });
+  });
+
+  it("collects Claude opening conversation excerpts with user and assistant roles", async () => {
+    const claudeRoot = await createTempDir("skills-manager-claude-excerpts-");
+    tempDirs.push(claudeRoot);
+    const cwd = "C:/workspace/project-excerpts";
+    const encoded = encodeClaudeProjectPath(cwd);
+    const filePath = path.join(claudeRoot, "projects", encoded, "session-excerpts.jsonl");
+    await writeJsonl(filePath, [
+      { type: "user", cwd, message: { content: "请分析这个历史会话入口问题" } },
+      { type: "assistant", cwd, message: { content: "可以，先看会话列表的数据来源。" } },
+      { type: "user", cwd, message: { content: "再看一下 UI 风格怎么统一" } },
+      { type: "assistant", cwd, message: { content: "建议保留列表形态，但降低边框层级。" } },
+    ]);
+
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "project",
+      cwd,
+    }, claudeRoot);
+
+    expect(sessions[0]?.conversation_excerpts).toEqual([
+      { role: "user", text: "请分析这个历史会话入口问题" },
+      { role: "assistant", text: "可以，先看会话列表的数据来源。" },
+      { role: "user", text: "再看一下 UI 风格怎么统一" },
+      { role: "assistant", text: "建议保留列表形态，但降低边框层级。" },
+    ]);
   });
 
   it("reads Claude legacy sessions/<id>.jsonl layout", async () => {
@@ -375,6 +442,182 @@ describe("session-service", () => {
       cwd: "C:/workspace/newer",
       preview: "较新 fallback 会话",
     });
+  });
+
+  it("collects the first four Codex user prompts when reading session files", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-prompts-");
+    tempDirs.push(codexRoot);
+    const sessionFile = path.join(
+      codexRoot,
+      "sessions",
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-30-00-019df0ff-prompts.jsonl",
+    );
+    await writeJsonl(sessionFile, [
+      {
+        type: "session_meta",
+        payload: {
+          id: "019df0ff-prompts",
+          cwd: "C:/workspace/codex-prompts",
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "第一条 Codex 提问" }],
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "ignored assistant" }],
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ text: "第二条 Codex 提问" }],
+        },
+      },
+      {
+        type: "user",
+        payload: {
+          message: "第三条 Codex 提问",
+        },
+      },
+      {
+        role: "user",
+        content: [{ text: "第四条 Codex 提问" }],
+      },
+      {
+        role: "user",
+        content: [{ text: "第五条不应显示" }],
+      },
+    ]);
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, codexRoot);
+
+    expect(sessions[0]).toMatchObject({
+      session_id: "019df0ff-prompts",
+      user_prompts: [
+        "第一条 Codex 提问",
+        "第二条 Codex 提问",
+        "第三条 Codex 提问",
+        "第四条 Codex 提问",
+      ],
+    });
+  });
+
+  it("skips Codex environment context scaffolding when collecting user prompts", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-scaffold-");
+    tempDirs.push(codexRoot);
+    const sessionFile = path.join(
+      codexRoot,
+      "sessions",
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-40-00-019df0ff-scaffold.jsonl",
+    );
+    await writeJsonl(sessionFile, [
+      {
+        type: "session_meta",
+        payload: {
+          id: "019df0ff-scaffold",
+          cwd: "C:/workspace/codex-scaffold",
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "<environment_context>\n  <cwd>C:/workspace/codex-scaffold</cwd>\n</environment_context>" }],
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "真正的第一条用户提问" }],
+        },
+      },
+    ]);
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, codexRoot);
+
+    expect(sessions[0]?.user_prompts).toEqual(["真正的第一条用户提问"]);
+  });
+
+  it("collects Codex opening conversation excerpts while skipping scaffold prompts", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-excerpts-");
+    tempDirs.push(codexRoot);
+    const sessionFile = path.join(
+      codexRoot,
+      "sessions",
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-50-00-019df0ff-excerpts.jsonl",
+    );
+    await writeJsonl(sessionFile, [
+      {
+        type: "session_meta",
+        payload: {
+          id: "019df0ff-excerpts",
+          cwd: "C:/workspace/codex-excerpts",
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "<environment_context>\n  <cwd>C:/workspace/codex-excerpts</cwd>\n</environment_context>" }],
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "先看历史记录展示问题" }],
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "我会检查 SessionPicker 和 session-service。" }],
+        },
+      },
+    ]);
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, codexRoot);
+
+    expect(sessions[0]?.conversation_excerpts).toEqual([
+      { role: "user", text: "先看历史记录展示问题" },
+      { role: "assistant", text: "我会检查 SessionPicker 和 session-service。" },
+    ]);
   });
 
   it("merges app runtime and global Codex sessions with app runtime taking precedence", async () => {
