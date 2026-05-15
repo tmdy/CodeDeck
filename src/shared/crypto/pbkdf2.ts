@@ -3,8 +3,20 @@
 
 import crypto from "node:crypto";
 
-/** 迭代次数，与 Go/Python 版本一致 */
-export const KDF_ITERATIONS = 480000;
+const DEFAULT_KDF_ITERATIONS = 480000;
+
+/** 解析 PBKDF2 迭代次数；默认值与 Go/Python 版本一致 */
+export function resolveKdfIterations(rawValue = process.env.CODEDECK_KDF_ITERATIONS): number {
+  const trimmed = rawValue?.trim() ?? "";
+  if (!/^\d+$/.test(trimmed)) {
+    return DEFAULT_KDF_ITERATIONS;
+  }
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_KDF_ITERATIONS;
+}
+
+/** 迭代次数，默认与 Go/Python 版本一致；开发环境可通过 CODEDECK_KDF_ITERATIONS 覆盖 */
+export const KDF_ITERATIONS = resolveKdfIterations();
 
 /** 派生密钥长度（字节），与 Go/Python 版本一致 */
 export const KDF_KEY_LENGTH = 32;

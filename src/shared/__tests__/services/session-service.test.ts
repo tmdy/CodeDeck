@@ -111,6 +111,39 @@ describe("session-service", () => {
     });
   });
 
+  it("applies Claude project session pagination before returning results", async () => {
+    const claudeRoot = await createTempDir("skills-manager-claude-page-");
+    tempDirs.push(claudeRoot);
+    const cwd = "C:/workspace/project-a";
+    const encoded = encodeClaudeProjectPath(cwd);
+    const projectDir = path.join(claudeRoot, "projects", encoded);
+
+    for (let index = 0; index < 5; index += 1) {
+      const filePath = path.join(projectDir, `session-${index + 1}.jsonl`);
+      await writeJsonl(filePath, [
+        {
+          type: "user",
+          cwd,
+          message: { content: `Session ${index + 1}` },
+        },
+      ]);
+      await setFileTime(filePath, `2026-05-04T10:${String(59 - index).padStart(2, "0")}:00.000Z`);
+    }
+
+    const sessions = await listClaudeSessions({
+      provider: "claude",
+      scope: "project",
+      cwd,
+      limit: 2,
+      offset: 1,
+    }, claudeRoot);
+
+    expect(sessions.map((session) => session.session_id)).toEqual([
+      "session-2",
+      "session-3",
+    ]);
+  });
+
   it("collects the first four Claude user prompts for session disambiguation", async () => {
     const claudeRoot = await createTempDir("skills-manager-claude-prompts-");
     tempDirs.push(claudeRoot);
@@ -310,6 +343,57 @@ describe("session-service", () => {
       cwd: "C:/workspace/current-project",
       preview: "当前项目会话",
     });
+  });
+
+  it("does not parse Codex project index entries beyond the requested page", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-project-page-");
+    tempDirs.push(codexRoot);
+    await writeFile(
+      path.join(codexRoot, "session_index.jsonl"),
+      [
+        JSON.stringify({
+          id: "019df0ff-page-01",
+          thread_name: "First page 1",
+          updated_at: "2026-05-04T10:59:00.000Z",
+          cwd: "C:/workspace/current-project",
+        }),
+        JSON.stringify({
+          id: "019df0ff-page-02",
+          thread_name: "First page 2",
+          updated_at: "2026-05-04T10:58:00.000Z",
+          cwd: "C:/workspace/current-project",
+        }),
+        JSON.stringify({
+          id: "019df0ff-page-bad",
+          updated_at: "2026-05-04T10:57:00.000Z",
+          cwd: "C:/workspace/current-project",
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+    const badFile = path.join(
+      codexRoot,
+      "sessions",
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-57-00-019df0ff-page-bad.jsonl",
+    );
+    await mkdir(path.dirname(badFile), { recursive: true });
+    await writeFile(badFile, "{not valid jsonl\n", "utf-8");
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "project",
+      cwd: "C:/workspace/current-project",
+      limit: 2,
+      offset: 0,
+    }, codexRoot);
+
+    expect(sessions.map((session) => session.session_id)).toEqual([
+      "019df0ff-page-01",
+      "019df0ff-page-02",
+    ]);
   });
 
   it("returns an empty Codex session list when cwd does not match", async () => {

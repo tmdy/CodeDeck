@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { initializeWorkspace, resolveWorkspaceLayout } from "../src/shared/app-workspace.js";
+import { initializeWorkspace, resolveWorkspaceLayout, type WorkspaceLayout } from "../src/shared/app-workspace.js";
 import { resolveElectronRuntimePaths } from "../src/shared/electron-runtime-paths.js";
 import {
   resolveDefaultPaths,
@@ -91,6 +91,7 @@ let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
 let mainWindow: BrowserWindow | null = null;
 let isTransitioningFromUnlock = false;
+let skillsInitPromise: Promise<void> | null = null;
 const appLogger = createAppLogger({
   getDirectory: () => path.join(projectRoot || process.cwd(), "app-data", "logs"),
 });
@@ -124,20 +125,33 @@ if (!gotSingleInstanceLock) {
 
 // ---- Skills 服务 ----
 
-async function initSkillsService(): Promise<void> {
-  appLogger.info("app", "workspace_init_start", "Initializing skills workspace", {
-    context: {
-      isPackaged: app.isPackaged,
-      hasEnvProjectRoot: !!process.env.SKILLS_MANAGER_PROJECT_ROOT?.trim(),
-    },
-  });
-  const layout = resolveWorkspaceLayout({
+function resolveCurrentWorkspaceLayout(): WorkspaceLayout {
+  return resolveWorkspaceLayout({
     cwd: process.cwd(),
     envProjectRoot: process.env.SKILLS_MANAGER_PROJECT_ROOT,
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     userDataPath: app.isPackaged ? app.getPath("userData") : path.join(os.homedir(), ".skills-manager"),
   });
+}
+
+function resolveProjectRoot(): WorkspaceLayout {
+  const layout = resolveCurrentWorkspaceLayout();
+  projectRoot = layout.workspaceRoot;
+  return layout;
+}
+
+async function initSkillsService(layout = resolveProjectRoot()): Promise<void> {
+  if (skillsService) {
+    return;
+  }
+  appLogger.info("app", "workspace_init_start", "Initializing skills workspace", {
+    context: {
+      isPackaged: app.isPackaged,
+      hasEnvProjectRoot: !!process.env.SKILLS_MANAGER_PROJECT_ROOT?.trim(),
+    },
+  });
+  projectRoot = layout.workspaceRoot;
   await initializeWorkspace(layout);
   projectRoot = layout.workspaceRoot;
   skillsService = new SkillsManagerService(resolveDefaultPaths(projectRoot));
@@ -147,6 +161,24 @@ async function initSkillsService(): Promise<void> {
       hasSeedRoot: !!layout.seedRoot,
     },
   });
+}
+
+function ensureSkillsServiceReady(): Promise<void> {
+  if (skillsService) {
+    return Promise.resolve();
+  }
+  if (!skillsInitPromise) {
+    skillsInitPromise = initSkillsService().catch((error: unknown) => {
+      skillsInitPromise = null;
+      throw error;
+    });
+  }
+  return skillsInitPromise;
+}
+
+async function getReadySkillsService(): Promise<SkillsManagerService> {
+  await ensureSkillsServiceReady();
+  return getSkillsService();
 }
 
 function getSkillsService(): SkillsManagerService {
@@ -733,18 +765,23 @@ async function createMainWindow(): Promise<void> {
 // ---- 注册所有 IPC 处理器 ----
 
 function registerAllIpcHandlers(): void {
-  // ============ Skills Manager IPC（保持不变） ============
-  handleIpc("skills-manager:scan", async () => getSkillsService().scanEnvironment());
+  // ============ Skills Manager IPC（按需初始化） ============
+  handleIpc("skills-manager:scan", async () => {
+    const svc = await getReadySkillsService();
+    return svc.scanEnvironment();
+  });
   handleIpc("skills-manager:load-cached-snapshot", async () =>
-    getSkillsService().loadCachedSnapshot(),
+    (await getReadySkillsService()).loadCachedSnapshot(),
   );
   handleIpc("skills-manager:refresh-snapshot", async () =>
-    getSkillsService().refreshSnapshot(),
+    (await getReadySkillsService()).refreshSnapshot(),
   );
   handleIpc(
     "skills-manager:update-skill-user-tags",
-    async (_event, skillId: string, tags: string[]) =>
-      getSkillsService().updateSkillUserTags(skillId, tags),
+    async (_event, skillId: string, tags: string[]) => {
+      const svc = await getReadySkillsService();
+      return svc.updateSkillUserTags(skillId, tags);
+    },
   );
   handleIpc("skills-manager:pick-project-directory", async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
@@ -759,20 +796,20 @@ function registerAllIpcHandlers(): void {
         );
   });
   handleIpc("skills-manager:select-project", async (_event, projectPath: string) =>
-    getSkillsService().selectProject(projectPath),
+    (await getReadySkillsService()).selectProject(projectPath),
   );
   handleIpc("skills-manager:clear-current-project-selection", async () =>
-    getSkillsService().clearCurrentProjectSelection(),
+    (await getReadySkillsService()).clearCurrentProjectSelection(),
   );
   handleIpc(
     "skills-manager:scan-project",
     async (_event, projectPath?: string) =>
-      getSkillsService().scanProjectSkills(projectPath),
+      (await getReadySkillsService()).scanProjectSkills(projectPath),
   );
   handleIpc(
     "skills-manager:preview",
     async (_event, action: PreviewAction, skillIds: string[]) =>
-      getSkillsService().createPreview(action, skillIds),
+      (await getReadySkillsService()).createPreview(action, skillIds),
   );
   handleIpc(
     "skills-manager:execute",
@@ -780,7 +817,8 @@ function registerAllIpcHandlers(): void {
       appLogger.info("skills", "batch_execute_start", "Skills batch execution started", {
         context: { action, skillCount: skillIds.length },
       });
-      const result = await getSkillsService().executeBatch(action, skillIds);
+      const svc = await getReadySkillsService();
+      const result = await svc.executeBatch(action, skillIds);
       appLogger.info("skills", "batch_execute_finished", "Skills batch execution finished", {
         context: {
           action,
@@ -795,7 +833,7 @@ function registerAllIpcHandlers(): void {
   handleIpc(
     "skills-manager:project-preview",
     async (_event, host: SkillHost, skillIds: string[], action: ProjectBatchAction) =>
-      getSkillsService().createProjectPreview(host, skillIds, action),
+      (await getReadySkillsService()).createProjectPreview(host, skillIds, action),
   );
   handleIpc(
     "skills-manager:project-execute",
@@ -803,7 +841,8 @@ function registerAllIpcHandlers(): void {
       appLogger.info("skills", "project_batch_execute_start", "Project skills batch execution started", {
         context: { host, action, skillCount: skillIds.length },
       });
-      const result = await getSkillsService().executeProjectBatch(host, skillIds, action);
+      const svc = await getReadySkillsService();
+      const result = await svc.executeProjectBatch(host, skillIds, action);
       appLogger.info("skills", "project_batch_execute_finished", "Project skills batch execution finished", {
         context: {
           host,
@@ -817,7 +856,8 @@ function registerAllIpcHandlers(): void {
     },
   );
   handleIpc("skills-manager:rollback-last-batch", async () => {
-    const result = await getSkillsService().rollbackLastSuccessfulBatch();
+    const svc = await getReadySkillsService();
+    const result = await svc.rollbackLastSuccessfulBatch();
     appLogger.info("skills", "batch_rollback_finished", "Last successful skills batch rollback finished", {
       context: {
         successCount: result.results.filter((item) => item.success).length,
@@ -1241,9 +1281,8 @@ if (gotSingleInstanceLock) {
 
 app.whenReady().then(async () => {
   appLogger.info("app", "ready_start", "Electron app ready handler started");
-  // 1. 初始化 Skills 工作区
-  await initSkillsService();
-  appLogger.info("app", "skills_service_ready", "Skills service initialized");
+  // 1. 先确定工作区根目录，但不执行 Skills 工作区初始化
+  resolveProjectRoot();
 
   // 2. 初始化 Profile 存储
   await initProfileServices();
@@ -1261,6 +1300,7 @@ app.whenReady().then(async () => {
   // 5. 创建主窗口
   await createMainWindow();
   appLogger.info("app", "main_window_created", "Main window created");
+  void ensureSkillsServiceReady();
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

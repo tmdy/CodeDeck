@@ -1199,9 +1199,22 @@ function App() {
   }
 
   useEffect(() => {
-    if (activeTab === "profiles") {
-      void handleLoadProfilesSessions();
+    if (activeTab !== "profiles") {
+      return;
     }
+    if (!state?.selected_profile_key) {
+      clearProfilesSessionsState();
+      return;
+    }
+
+    const run = () => void handleLoadProfilesSessions();
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(run, { timeout: 1500 });
+      return () => window.cancelIdleCallback(id);
+    }
+
+    const id = window.setTimeout(run, 800);
+    return () => window.clearTimeout(id);
   }, [activeTab, state?.selected_provider, state?.selected_profile_key]);
 
   useEffect(() => {

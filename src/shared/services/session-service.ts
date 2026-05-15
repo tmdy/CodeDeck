@@ -55,6 +55,15 @@ interface CodexIndexEntry {
   preview: string;
 }
 
+interface ClaudeCandidateFile {
+  filePath: string;
+  fallbackCwd: string;
+}
+
+interface StatCandidateFile extends ClaudeCandidateFile {
+  mtimeMs: number;
+}
+
 const MAX_PREVIEW_LENGTH = 120;
 const MAX_USER_PROMPTS = 4;
 const MAX_USER_PROMPT_LENGTH = 240;
@@ -374,6 +383,78 @@ async function collectClaudeCandidateFiles(projectDir: string): Promise<string[]
   return candidates;
 }
 
+async function sortClaudeCandidateFilesByMtime(
+  candidates: ClaudeCandidateFile[],
+): Promise<StatCandidateFile[]> {
+  const fs = await import("node:fs/promises");
+  const withStats = await Promise.all(candidates.map(async (candidate) => {
+    try {
+      const stat = await fs.stat(candidate.filePath);
+      return { ...candidate, mtimeMs: stat.mtimeMs };
+    } catch {
+      return null;
+    }
+  }));
+  return withStats
+    .filter((candidate): candidate is StatCandidateFile => candidate !== null)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+}
+
+function sessionSummaryFromFileSummary(summary: SessionFileSummary): SessionSummary {
+  const { provider, session_id, cwd, updated_at, preview, user_prompts, conversation_excerpts } = summary;
+  return {
+    provider,
+    session_id,
+    cwd,
+    updated_at,
+    preview,
+    ...(user_prompts?.length ? { user_prompts } : {}),
+    ...(conversation_excerpts?.length ? { conversation_excerpts } : {}),
+  };
+}
+
+async function collectClaudeSessionsPage(options: {
+  candidates: ClaudeCandidateFile[];
+  request: ListSessionsRequest;
+  normalizedCwd?: string;
+  displayCwd?: string;
+}): Promise<SessionSummary[]> {
+  const sortedCandidates = await sortClaudeCandidateFilesByMtime(options.candidates);
+  const offset = Math.max(0, options.request.offset ?? 0);
+  const limit = options.request.limit && options.request.limit > 0 ? options.request.limit : undefined;
+  const sessions: SessionFileSummary[] = [];
+  let skipped = 0;
+
+  for (const candidate of sortedCandidates) {
+    try {
+      const summary = await summarizeClaudeSessionFile(candidate.filePath, candidate.fallbackCwd);
+      if (options.normalizedCwd) {
+        const cwdCandidates = summary.cwdCandidates?.length
+          ? summary.cwdCandidates
+          : [summary.cwd || candidate.fallbackCwd];
+        const matchesRequestedCwd = cwdCandidates.some(
+          (value) => normalizeComparablePath(value) === options.normalizedCwd,
+        );
+        if (!matchesRequestedCwd) {
+          continue;
+        }
+      }
+      if (skipped < offset) {
+        skipped += 1;
+        continue;
+      }
+      sessions.push(options.displayCwd ? { ...summary, cwd: options.displayCwd } : summary);
+      if (limit !== undefined && sessions.length >= limit) {
+        break;
+      }
+    } catch {
+      // 单个坏文件不影响其他会话
+    }
+  }
+
+  return sessions.map(sessionSummaryFromFileSummary);
+}
+
 async function summarizeClaudeSessionFile(filePath: string, fallbackCwd: string): Promise<SessionFileSummary> {
   const path = await import("node:path");
   const fs = await import("node:fs/promises");
@@ -594,6 +675,140 @@ async function summarizeCodexSessionFromIndex(root: string, entry: CodexIndexEnt
   return summarizeCodexSessionFile(filePath);
 }
 
+function compareUpdatedAtDesc(left: { updated_at: string }, right: { updated_at: string }): number {
+  const leftTime = new Date(left.updated_at).getTime();
+  const rightTime = new Date(right.updated_at).getTime();
+  const safeLeftTime = Number.isNaN(leftTime) ? 0 : leftTime;
+  const safeRightTime = Number.isNaN(rightTime) ? 0 : rightTime;
+  return safeRightTime - safeLeftTime;
+}
+
+async function summarizeCodexIndexEntryForList(
+  root: string,
+  entry: CodexIndexEntry,
+  normalizedCwd: string,
+  loadProjectDetails: boolean,
+): Promise<SessionSummary | null> {
+  let targetedSummary: SessionSummary | null = null;
+  if (normalizedCwd && (!entry.cwd || !entry.preview || loadProjectDetails)) {
+    try {
+      targetedSummary = await summarizeCodexSessionFromIndex(root, entry);
+    } catch {
+      targetedSummary = null;
+    }
+  }
+
+  const cwd = firstString(entry.cwd, targetedSummary?.cwd);
+  if (normalizedCwd && normalizeComparablePath(cwd) !== normalizedCwd) {
+    return null;
+  }
+
+  const userPrompts = targetedSummary?.user_prompts;
+  const conversationExcerpts = targetedSummary?.conversation_excerpts;
+  return {
+    provider: "codex",
+    session_id: entry.session_id,
+    cwd,
+    updated_at: firstString(entry.updated_at, targetedSummary?.updated_at),
+    preview: firstString(entry.preview, targetedSummary?.preview, entry.session_id),
+    ...(userPrompts?.length ? { user_prompts: userPrompts } : {}),
+    ...(conversationExcerpts?.length ? { conversation_excerpts: conversationExcerpts } : {}),
+  };
+}
+
+async function listCodexSessionsFromIndexPage(
+  root: string,
+  indexEntries: CodexIndexEntry[],
+  request: ListSessionsRequest,
+  normalizedCwd: string,
+): Promise<SessionSummary[]> {
+  const offset = Math.max(0, request.offset ?? 0);
+  const limit = request.limit && request.limit > 0 ? request.limit : undefined;
+  const sortedEntries = [...indexEntries].sort(compareUpdatedAtDesc);
+  const sessions: SessionSummary[] = [];
+  let skipped = 0;
+
+  for (const entry of sortedEntries) {
+    if (normalizedCwd && entry.cwd && normalizeComparablePath(entry.cwd) !== normalizedCwd) {
+      continue;
+    }
+
+    let summary: SessionSummary | null = null;
+    if (normalizedCwd && !entry.cwd) {
+      summary = await summarizeCodexIndexEntryForList(root, entry, normalizedCwd, false);
+      if (!summary) {
+        continue;
+      }
+    }
+
+    if (skipped < offset) {
+      skipped += 1;
+      continue;
+    }
+
+    summary ??= await summarizeCodexIndexEntryForList(root, entry, normalizedCwd, Boolean(normalizedCwd));
+    if (!summary) {
+      continue;
+    }
+
+    sessions.push(summary);
+    if (limit !== undefined && sessions.length >= limit) {
+      break;
+    }
+  }
+
+  return sessions;
+}
+
+async function sortJsonlFilesByMtime(filePaths: string[]): Promise<Array<{ filePath: string; mtimeMs: number }>> {
+  const fs = await import("node:fs/promises");
+  const withStats = await Promise.all(filePaths.map(async (filePath) => {
+    try {
+      const stat = await fs.stat(filePath);
+      return { filePath, mtimeMs: stat.mtimeMs };
+    } catch {
+      return null;
+    }
+  }));
+  return withStats
+    .filter((item): item is { filePath: string; mtimeMs: number } => item !== null)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+}
+
+async function listCodexFallbackSessionsPage(
+  sessionsRoot: string,
+  request: ListSessionsRequest,
+  normalizedCwd: string,
+): Promise<SessionSummary[]> {
+  const filePaths = await walkJsonlFiles(sessionsRoot);
+  const sortedFiles = await sortJsonlFilesByMtime(filePaths);
+  const offset = Math.max(0, request.offset ?? 0);
+  const limit = request.limit && request.limit > 0 ? request.limit : undefined;
+  const sessions: SessionSummary[] = [];
+  let skipped = 0;
+
+  for (const item of sortedFiles) {
+    try {
+      const summary = await summarizeCodexSessionFile(item.filePath);
+      if (normalizedCwd && normalizeComparablePath(summary.cwd) !== normalizedCwd) {
+        continue;
+      }
+      if (skipped < offset) {
+        skipped += 1;
+        continue;
+      }
+      sessions.push(sessionSummaryFromFileSummary(summary));
+      if (limit !== undefined && sessions.length >= limit) {
+        break;
+      }
+    } catch {
+      // 单个坏文件不影响其他会话
+    }
+  }
+
+  return sessions;
+}
+
 export async function listClaudeSessions(
   request: ListSessionsRequest,
   claudeHome?: string,
@@ -606,62 +821,38 @@ export async function listClaudeSessions(
     ? (path.basename(claudeHome) === "projects" ? path.dirname(claudeHome) : claudeHome)
     : (process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(os.homedir(), ".claude"));
   const projectsRoot = path.join(configRoot, "projects");
-  const sessions: SessionFileSummary[] = [];
 
   if (request.scope === "project") {
     const cwd = requireProjectCwd(request);
     const normalizedCwd = normalizeComparablePath(cwd);
     const projectDir = path.join(projectsRoot, encodeClaudeProjectPath(cwd));
     const candidateFiles = await collectClaudeCandidateFiles(projectDir);
-    for (const filePath of candidateFiles) {
-      try {
-        const summary = await summarizeClaudeSessionFile(filePath, cwd);
-        const cwdCandidates = summary.cwdCandidates?.length ? summary.cwdCandidates : [summary.cwd || cwd];
-        if (cwdCandidates.some((candidate) => normalizeComparablePath(candidate) === normalizedCwd)) {
-          sessions.push({ ...summary, cwd });
-        }
-      } catch {
-        // 单个坏文件不影响其他会话
-      }
-    }
-  } else {
-    let projectEntries;
-    try {
-      projectEntries = await fs.readdir(projectsRoot, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-
-    for (const entry of projectEntries) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      const projectDir = path.join(projectsRoot, entry.name);
-      const candidateFiles = await collectClaudeCandidateFiles(projectDir);
-      for (const filePath of candidateFiles) {
-        try {
-          sessions.push(await summarizeClaudeSessionFile(filePath, projectDir));
-        } catch {
-          // 单个坏文件不影响其他会话
-        }
-      }
-    }
+    return collectClaudeSessionsPage({
+      candidates: candidateFiles.map((filePath) => ({ filePath, fallbackCwd: cwd })),
+      request,
+      normalizedCwd,
+      displayCwd: cwd,
+    });
   }
 
-  sessions.sort(
-    (left, right) =>
-      new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
-  );
+  let projectEntries;
+  try {
+    projectEntries = await fs.readdir(projectsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
 
-  return sessions.map(({ provider, session_id, cwd: sessionCwd, updated_at, preview, user_prompts, conversation_excerpts }) => ({
-    provider,
-    session_id,
-    cwd: sessionCwd,
-    updated_at,
-    preview,
-    ...(user_prompts?.length ? { user_prompts } : {}),
-    ...(conversation_excerpts?.length ? { conversation_excerpts } : {}),
-  }));
+  const candidates: ClaudeCandidateFile[] = [];
+  for (const entry of projectEntries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const projectDir = path.join(projectsRoot, entry.name);
+    const candidateFiles = await collectClaudeCandidateFiles(projectDir);
+    candidates.push(...candidateFiles.map((filePath) => ({ filePath, fallbackCwd: projectDir })));
+  }
+
+  return collectClaudeSessionsPage({ candidates, request });
 }
 
 export async function listCodexSessions(
@@ -676,50 +867,10 @@ export async function listCodexSessions(
     ? normalizeComparablePath(requireProjectCwd(request))
     : "";
   const indexEntries = await readCodexIndex(path.join(root, "session_index.jsonl"));
-  const needsFallback = indexEntries.length === 0;
-  const fallbackMap = needsFallback ? await buildCodexFallbackMap(path.join(root, "sessions")) : new Map();
-
-  const mergedFromIndex = await Promise.all(indexEntries.map(async (entry) => {
-    const fallback = fallbackMap.get(entry.session_id);
-    const canUseEntryCwd = entry.cwd && normalizeComparablePath(entry.cwd) === normalizedCwd;
-    const targetedSummary = normalizedCwd && (!entry.cwd || !entry.preview || canUseEntryCwd)
-      ? await summarizeCodexSessionFromIndex(root, entry)
-      : null;
-    const userPrompts = targetedSummary?.user_prompts ?? fallback?.user_prompts;
-    const conversationExcerpts = targetedSummary?.conversation_excerpts ?? fallback?.conversation_excerpts;
-    return {
-      provider: "codex",
-      session_id: entry.session_id,
-      cwd: firstString(entry.cwd, targetedSummary?.cwd, fallback?.cwd),
-      updated_at: firstString(entry.updated_at, targetedSummary?.updated_at, fallback?.updated_at),
-      preview: firstString(entry.preview, targetedSummary?.preview, fallback?.preview, entry.session_id),
-      ...(userPrompts?.length ? { user_prompts: userPrompts } : {}),
-      ...(conversationExcerpts?.length ? { conversation_excerpts: conversationExcerpts } : {}),
-    } satisfies SessionSummary;
-  }));
-
-  const baseSessions = mergedFromIndex.length > 0
-    ? mergedFromIndex
-    : Array.from(fallbackMap.values()).map(({ provider, session_id, cwd: sessionCwd, updated_at, preview, user_prompts, conversation_excerpts }) => ({
-      provider,
-      session_id,
-      cwd: sessionCwd,
-      updated_at,
-      preview,
-      ...(user_prompts?.length ? { user_prompts } : {}),
-      ...(conversation_excerpts?.length ? { conversation_excerpts } : {}),
-    }));
-
-  const filteredSessions = normalizedCwd
-    ? baseSessions.filter((session) => normalizeComparablePath(session.cwd) === normalizedCwd)
-    : baseSessions;
-
-  filteredSessions.sort(
-    (left, right) =>
-      new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
-  );
-
-  return paginatedSessions(filteredSessions, request);
+  if (indexEntries.length > 0) {
+    return listCodexSessionsFromIndexPage(root, indexEntries, request, normalizedCwd);
+  }
+  return listCodexFallbackSessionsPage(path.join(root, "sessions"), request, normalizedCwd);
 }
 
 export async function listCodexSessionsFromHomes(
@@ -727,6 +878,9 @@ export async function listCodexSessionsFromHomes(
   homes: CodexSessionHome[],
 ): Promise<SessionSummary[]> {
   const merged = new Map<string, SessionSummary>();
+  const requestedLimit = request.limit && request.limit > 0 ? request.limit : undefined;
+  const requestedOffset = Math.max(0, request.offset ?? 0);
+  const perHomeLimit = requestedLimit === undefined ? undefined : requestedOffset + requestedLimit;
 
   for (const source of homes) {
     if (!source.home.trim()) {
@@ -734,8 +888,8 @@ export async function listCodexSessionsFromHomes(
     }
     const sessions = await listCodexSessions({
       ...request,
-      limit: undefined,
-      offset: undefined,
+      limit: perHomeLimit,
+      offset: 0,
     }, source.home);
     for (const session of sessions) {
       if (merged.has(session.session_id)) {
