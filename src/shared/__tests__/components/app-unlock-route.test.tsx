@@ -64,4 +64,25 @@ describe("App unlock route", () => {
     expect(source).toContain('import("./App.js")');
     expect(source).toContain('window.location.hash.includes("/unlock")');
   });
+
+  it("should not block the unlock window on skills workspace initialization", async () => {
+    const source = await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8");
+    const readyBlockStart = source.indexOf("app.whenReady().then(async () => {");
+    const unlockWindowIndex = source.indexOf("await createUnlockWindow();", readyBlockStart);
+    const deferredSkillsIndex = source.indexOf("void ensureSkillsServiceReady();", readyBlockStart);
+    const eagerSkillsIndex = source.indexOf("await initSkillsService();", readyBlockStart);
+
+    expect(readyBlockStart).toBeGreaterThanOrEqual(0);
+    expect(unlockWindowIndex).toBeGreaterThan(readyBlockStart);
+    expect(deferredSkillsIndex).toBeGreaterThan(unlockWindowIndex);
+    expect(eagerSkillsIndex === -1 || eagerSkillsIndex > unlockWindowIndex).toBe(true);
+  });
+
+  it("should idle-delay the initial Profiles session scan", async () => {
+    const source = await readFile(path.join(process.cwd(), "src", "App.tsx"), "utf8");
+
+    expect(source).toContain("window.requestIdleCallback");
+    expect(source).toContain("window.setTimeout(run, 800)");
+    expect(source).toContain("window.cancelIdleCallback(id)");
+  });
 });

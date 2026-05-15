@@ -321,6 +321,11 @@ async function flushAsyncWork(times = 4) {
   }
 }
 
+async function flushProfileSessionLoad() {
+  await vi.advanceTimersByTimeAsync(800);
+  await flushAsyncWork();
+}
+
 describe("App command preview", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -419,6 +424,9 @@ describe("App command preview", () => {
       root.render(<App />);
       await flushAsyncWork();
     });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
 
     expect(container.textContent).toContain("Alpha project session");
 
@@ -430,6 +438,9 @@ describe("App command preview", () => {
     await act(async () => {
       betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await flushAsyncWork();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
     });
 
     expect(fixture.listSessions).toHaveBeenCalledWith({
@@ -470,6 +481,9 @@ describe("App command preview", () => {
       root.render(<App />);
       await flushAsyncWork();
     });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
 
     expect(fixture.listSessions).toHaveBeenCalledWith({
       provider: "claude",
@@ -488,6 +502,9 @@ describe("App command preview", () => {
     await act(async () => {
       betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await flushAsyncWork();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
     });
 
     expect(fixture.listSessions).toHaveBeenCalledWith({
@@ -534,6 +551,9 @@ describe("App command preview", () => {
     });
     await act(async () => {
       await Promise.resolve();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
     });
 
     const cwdInput = Array.from(container.querySelectorAll("input")).find(
@@ -649,6 +669,9 @@ describe("App command preview", () => {
     await act(async () => {
       await Promise.resolve();
     });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
 
     expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
     expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
@@ -672,6 +695,9 @@ describe("App command preview", () => {
     });
     await act(async () => {
       await Promise.resolve();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
     });
 
     expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
@@ -712,6 +738,9 @@ describe("App command preview", () => {
     });
     await act(async () => {
       await Promise.resolve();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
     });
 
     expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);

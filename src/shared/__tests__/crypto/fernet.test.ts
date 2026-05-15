@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { encryptFernet, decryptFernet, splitDerivedKey, deriveFernetKey } from "../../crypto/fernet.js";
-import { deriveKey, generateSalt } from "../../crypto/pbkdf2.js";
+import { deriveKey, generateSalt, resolveKdfIterations } from "../../crypto/pbkdf2.js";
 
 describe("deriveFernetKey", () => {
   it("should derive 32-byte key", () => {
@@ -92,6 +92,22 @@ describe("encryptFernet / decryptFernet", () => {
 });
 
 describe("PBKDF2 key derivation", () => {
+  it("should keep the production default when no override is configured", () => {
+    expect(resolveKdfIterations(undefined)).toBe(480000);
+    expect(resolveKdfIterations("")).toBe(480000);
+  });
+
+  it("should accept a positive integer iteration override", () => {
+    expect(resolveKdfIterations("120000")).toBe(120000);
+  });
+
+  it("should reject unsafe or malformed iteration overrides", () => {
+    expect(resolveKdfIterations("0")).toBe(480000);
+    expect(resolveKdfIterations("-1")).toBe(480000);
+    expect(resolveKdfIterations("abc")).toBe(480000);
+    expect(resolveKdfIterations("120000.5")).toBe(480000);
+  });
+
   it("should generate 16-byte salt", () => {
     const salt = generateSalt();
     expect(salt.length).toBe(16);
