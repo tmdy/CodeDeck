@@ -19,7 +19,7 @@ import type { CommandPreview, LaunchRequest } from "./shared/launcher/types.js";
 import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ModelMappingsState } from "./shared/model-mapping/config-types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
-import type { LocalState } from "./shared/state/local-state.js";
+import type { BootstrapResult, LocalState } from "./shared/state/local-state.js";
 import type { ListSessionsRequest, SessionListScope } from "./shared/services/session-service.js";
 import type {
   SiteBalanceSession,
@@ -57,6 +57,7 @@ declare global {
       // Auth
       checkEncryptedConfig: () => Promise<boolean>;
       unlock: (passphrase: string) => Promise<{ success: boolean }>;
+      bootstrap: () => Promise<BootstrapResult>;
       initializeEncryption: (passphrase: string) => Promise<{ success: boolean }>;
       changePassphrase: (currentPassphrase: string, nextPassphrase: string) => Promise<{ success: boolean }>;
 

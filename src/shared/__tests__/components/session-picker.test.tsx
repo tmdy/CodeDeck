@@ -18,6 +18,24 @@ const longSession: SessionSummary = {
 };
 
 describe("SessionPicker", () => {
+  it("renders an unloaded placeholder before the first session fetch", () => {
+    const html = renderToStaticMarkup(
+      <SessionPicker
+        sessions={[]}
+        selectedId=""
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+        isUninitialized
+      />,
+    );
+
+    expect(html).toContain("恢复会话");
+    expect(html).toContain("尚未加载当前工作目录的会话。");
+    expect(html).toContain("点击");
+    expect(html).toContain("加载会话");
+    expect(html).toContain("未选择会话");
+  });
+
   it("renders empty state when there are no sessions", () => {
     const html = renderToStaticMarkup(
       <SessionPicker
@@ -31,6 +49,7 @@ describe("SessionPicker", () => {
     expect(html).toContain("恢复会话");
     expect(html).toContain("当前工作目录未找到会话。");
     expect(html).toContain("未选择会话");
+    expect(html).toContain("刷新");
   });
 
   it("renders loading state instead of empty state while sessions are loading", () => {

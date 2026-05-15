@@ -8,6 +8,8 @@ import type { BalanceCheckState } from "../balance/types.js";
 import type { ParameterSettings } from "../parameter/types.js";
 import { defaultParameterSettings, normalizeParameterSettings } from "../parameter/types.js";
 import type { SessionListScope } from "../services/session-service.js";
+import type { Profile } from "../profile/types.js";
+import type { SiteBalanceSessionsByBaseUrl } from "../balance/site-balance-sessions.js";
 
 export interface LocalState {
   selected_provider: string;
@@ -25,6 +27,24 @@ export interface LocalState {
   sessions_tab_scope_by_provider: Record<string, SessionListScope>;
   /** 会话页每个 provider 最近一次用于恢复的 profile */
   sessions_tab_restore_profile_key_by_provider: Record<string, ProfileKey>;
+}
+
+export type BootstrapLocalState = Pick<
+  LocalState,
+  | "selected_provider"
+  | "selected_profile_key"
+  | "selected_profile_key_by_provider"
+  | "profile_order_by_provider"
+  | "runtime_by_profile"
+  | "balance_checks_by_profile"
+  | "global_settings"
+>;
+
+export interface BootstrapResult {
+  profiles: Profile[];
+  state: BootstrapLocalState;
+  siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+  defaultWorkingDirectory: string;
 }
 
 export function defaultLocalState(): LocalState {
@@ -63,4 +83,16 @@ export function ensureInitialized(state: LocalState): LocalState {
   state.sessions_tab_restore_profile_key_by_provider ??= {};
 
   return state;
+}
+
+export function mergeBootstrapState(state: BootstrapLocalState): LocalState {
+  return ensureInitialized({
+    ...defaultLocalState(),
+    ...state,
+    selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+    profile_order_by_provider: { ...state.profile_order_by_provider },
+    runtime_by_profile: { ...state.runtime_by_profile },
+    balance_checks_by_profile: { ...state.balance_checks_by_profile },
+    global_settings: state.global_settings ?? defaultGlobalSettings(),
+  });
 }

@@ -10,6 +10,7 @@ interface ProfilesLaunchPanelProps {
   resumeDisabled?: boolean;
   sessions: SessionSummary[];
   sessionsLoading?: boolean;
+  sessionsUninitialized?: boolean;
   selectedSessionId?: string;
   onSelectSession: (sessionId: string) => void;
   onRefreshSessions: () => void;
@@ -26,6 +27,7 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
   resumeDisabled,
   sessions,
   sessionsLoading,
+  sessionsUninitialized,
   selectedSessionId,
   onSelectSession,
   onRefreshSessions,
@@ -50,6 +52,7 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
       <SessionPicker
         sessions={sessions}
         isLoading={sessionsLoading}
+        isUninitialized={sessionsUninitialized}
         selectedId={selectedSessionId}
         onSelect={onSelectSession}
         onRefresh={onRefreshSessions}

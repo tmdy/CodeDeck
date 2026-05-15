@@ -75,9 +75,45 @@ function observeSkillsListRect(
 }
 
 let lastSkillsSnapshot: SkillsSnapshotResult | null = null;
+let initialCachedSnapshotPromise: Promise<SkillsSnapshotResult | null> | null = null;
+let initialFreshSnapshotPromise: Promise<SkillsSnapshotResult> | null = null;
 
 export function resetSkillsPanelSnapshotCacheForTests() {
   lastSkillsSnapshot = null;
+  initialCachedSnapshotPromise = null;
+  initialFreshSnapshotPromise = null;
+}
+
+function getInitialSnapshotPromises(): {
+  cached: Promise<SkillsSnapshotResult | null>;
+  fresh: Promise<SkillsSnapshotResult>;
+} {
+  if (!window.skillsManager) {
+    throw new Error("当前环境未注入 Skills API，请通过 Electron 运行。");
+  }
+  if (!initialFreshSnapshotPromise || !initialCachedSnapshotPromise) {
+    initialCachedSnapshotPromise = window.skillsManager.loadCachedSnapshot()
+      .then((cached) => {
+        if (cached) {
+          lastSkillsSnapshot = cached;
+        }
+        return cached;
+      });
+    initialFreshSnapshotPromise = initialCachedSnapshotPromise
+      .then(() => window.skillsManager!.refreshSnapshot())
+      .then((fresh) => {
+        lastSkillsSnapshot = fresh;
+        return fresh;
+      })
+      .finally(() => {
+        initialCachedSnapshotPromise = null;
+        initialFreshSnapshotPromise = null;
+      });
+  }
+  return {
+    cached: initialCachedSnapshotPromise,
+    fresh: initialFreshSnapshotPromise,
+  };
 }
 
 function formatBytes(bytes: number): string {
@@ -322,11 +358,12 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
 
     setRefreshing(true);
     try {
-      const cached = await window.skillsManager.loadCachedSnapshot();
+      const { cached: cachedPromise, fresh: freshPromise } = getInitialSnapshotPromises();
+      const cached = await cachedPromise;
       if (cached) {
         applySnapshot(cached);
       }
-      const fresh = await window.skillsManager.refreshSnapshot();
+      const fresh = await freshPromise;
       applySnapshot(fresh);
     } catch (error) {
       onError(error instanceof Error ? error.message : "扫描 Skills 失败。");

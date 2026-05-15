@@ -31,6 +31,7 @@ import {
 } from "../src/shared/balance/site-balance-sessions.js";
 import { pickDirectoryPath } from "../src/shared/electron/dialog-helpers.js";
 import { createAppLogger, createIpcHandlerLogger } from "../src/shared/electron/debug-log.js";
+import { createSessionListCache } from "../src/shared/electron/session-list-cache.js";
 import { executeLaunchPlan, type ExternalTerminalLaunchSpec } from "../src/shared/electron/launch-runtime.js";
 import { resolveBaseUrlExternalTarget } from "../src/shared/electron/open-url.js";
 import {
@@ -91,6 +92,7 @@ let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
 let mainWindow: BrowserWindow | null = null;
 let skillsInitPromise: Promise<void> | null = null;
+const sessionListCache = createSessionListCache({ ttlMs: 5_000 });
 const appLogger = createAppLogger({
   getDirectory: () => path.join(projectRoot || process.cwd(), "app-data", "logs"),
 });
@@ -144,7 +146,7 @@ async function initSkillsService(layout = resolveProjectRoot()): Promise<void> {
   if (skillsService) {
     return;
   }
-  appLogger.info("app", "workspace_init_start", "Initializing skills workspace", {
+  appLogger.info("app", "skills_first_init_start", "Initializing skills workspace", {
     context: {
       isPackaged: app.isPackaged,
       hasEnvProjectRoot: !!process.env.SKILLS_MANAGER_PROJECT_ROOT?.trim(),
@@ -154,7 +156,7 @@ async function initSkillsService(layout = resolveProjectRoot()): Promise<void> {
   await initializeWorkspace(layout);
   projectRoot = layout.workspaceRoot;
   skillsService = new SkillsManagerService(resolveDefaultPaths(projectRoot));
-  appLogger.info("app", "workspace_init_success", "Skills workspace initialized", {
+  appLogger.info("app", "skills_first_init_ready", "Skills workspace initialized", {
     context: {
       workspaceRoot: projectRoot,
       hasSeedRoot: !!layout.seedRoot,
@@ -896,6 +898,25 @@ function registerAllIpcHandlers(): void {
   );
 
   // Profile CRUD
+  handleIpc("profile:bootstrap", () => {
+    const svc = getProfileService();
+    const state = svc.getState();
+    return {
+      profiles: svc.getProfiles(),
+      state: {
+        selected_provider: state.selected_provider,
+        selected_profile_key: state.selected_profile_key,
+        selected_profile_key_by_provider: state.selected_profile_key_by_provider,
+        profile_order_by_provider: state.profile_order_by_provider,
+        runtime_by_profile: state.runtime_by_profile,
+        balance_checks_by_profile: state.balance_checks_by_profile,
+        global_settings: state.global_settings,
+      },
+      siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
+      defaultWorkingDirectory: getDefaultWorkingDirectory(),
+    };
+  }, { level: "debug" });
+
   handleIpc("profile:list", () => {
     const svc = getProfileService();
     return {
@@ -1064,6 +1085,7 @@ function registerAllIpcHandlers(): void {
       commandExists,
       spawnExternalTerminal,
     });
+    sessionListCache.invalidate(request.provider);
     appLogger.info("launcher", "launch_success", "Launch command executed", {
       durationMs: Date.now() - startedAt,
       context: {
@@ -1082,11 +1104,15 @@ function registerAllIpcHandlers(): void {
     "session:list",
     async (_event, request: ListSessionsRequest) => {
       const codexHomes = await resolveCodexSessionHomes(request);
-      const sessions = await listSessionsForProvider(request, {
-        listClaudeSessions,
-        listCodexSessions: (sessionRequest) => codexHomes.length > 0
-          ? listCodexSessionsFromHomes(sessionRequest, codexHomes)
-          : listCodexSessions(sessionRequest),
+      const sessions = await sessionListCache.run({
+        request,
+        codexHomes,
+        load: () => listSessionsForProvider(request, {
+          listClaudeSessions,
+          listCodexSessions: (sessionRequest) => codexHomes.length > 0
+            ? listCodexSessionsFromHomes(sessionRequest, codexHomes)
+            : listCodexSessions(sessionRequest),
+        }),
       });
       appLogger.info("sessions", "session_list_finished", "Session list loaded", {
         context: {
@@ -1101,6 +1127,7 @@ function registerAllIpcHandlers(): void {
   );
 
   handleIpc("session:refresh", async (_event, provider: string) => {
+    sessionListCache.invalidate(provider);
     if (provider.trim().toLowerCase() === "codex") {
       invalidateCodexSessionCache();
     }
@@ -1276,7 +1303,6 @@ app.whenReady().then(async () => {
   // 4. 创建主窗口
   await createMainWindow();
   appLogger.info("app", "main_window_created", "Main window created");
-  void ensureSkillsServiceReady();
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
