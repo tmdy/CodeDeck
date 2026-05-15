@@ -20,8 +20,15 @@ export interface SessionSummary {
   cwd: string;
   updated_at: string;
   preview: string;
+  user_prompts?: string[];
+  conversation_excerpts?: SessionConversationExcerpt[];
   source_kind?: CodexSessionSourceKind;
   source_home?: string;
+}
+
+export interface SessionConversationExcerpt {
+  role: "user" | "assistant";
+  text: string;
 }
 
 export type CodexSessionSourceKind = "app_runtime" | "global_codex";
@@ -49,6 +56,10 @@ interface CodexIndexEntry {
 }
 
 const MAX_PREVIEW_LENGTH = 120;
+const MAX_USER_PROMPTS = 4;
+const MAX_USER_PROMPT_LENGTH = 240;
+const MAX_CONVERSATION_EXCERPTS = 6;
+const MAX_CONVERSATION_EXCERPT_LENGTH = 180;
 const codexIndexCache = new Map<string, {
   mtimeMs: number;
   size: number;
@@ -72,11 +83,23 @@ function requireProjectCwd(request: ListSessionsRequest): string {
 }
 
 function trimPreview(value: string): string {
+  return trimText(value, MAX_PREVIEW_LENGTH);
+}
+
+function trimUserPrompt(value: string): string {
+  return trimText(value, MAX_USER_PROMPT_LENGTH);
+}
+
+function trimConversationExcerpt(value: string): string {
+  return trimText(value, MAX_CONVERSATION_EXCERPT_LENGTH);
+}
+
+function trimText(value: string, maxLength: number): string {
   const trimmed = value.trim();
   if (!trimmed) {
     return "";
   }
-  return trimmed.slice(0, MAX_PREVIEW_LENGTH);
+  return trimmed.slice(0, maxLength);
 }
 
 function encodeClaudeProjectPath(cwd: string): string {
@@ -84,7 +107,7 @@ function encodeClaudeProjectPath(cwd: string): string {
     .trim()
     .replace(/\\/g, "/")
     .replace(/[:/]/g, "-")
-    .replace(/[^a-zA-Z0-9._-]/g, "-");
+    .replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
 function firstString(...values: unknown[]): string {
@@ -126,6 +149,154 @@ function extractTextValue(value: unknown): string {
     extractTextValue(record.message),
     extractTextValue(record.parts),
   );
+}
+
+function extractUserPromptTextValue(value: unknown): string {
+  if (typeof value === "string") {
+    return trimUserPrompt(value);
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractUserPromptTextValue(item);
+      if (text) {
+        return text;
+      }
+    }
+    return "";
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return "";
+  }
+  return firstString(
+    extractUserPromptTextValue(record.text),
+    extractUserPromptTextValue(record.input_text),
+    extractUserPromptTextValue(record.content),
+    extractUserPromptTextValue(record.message),
+    extractUserPromptTextValue(record.parts),
+    extractUserPromptTextValue(record.payload),
+  );
+}
+
+function extractConversationTextValue(value: unknown): string {
+  if (typeof value === "string") {
+    return trimConversationExcerpt(value);
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractConversationTextValue(item);
+      if (text) {
+        return text;
+      }
+    }
+    return "";
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return "";
+  }
+  return firstString(
+    extractConversationTextValue(record.text),
+    extractConversationTextValue(record.input_text),
+    extractConversationTextValue(record.output_text),
+    extractConversationTextValue(record.content),
+    extractConversationTextValue(record.message),
+    extractConversationTextValue(record.parts),
+    extractConversationTextValue(record.payload),
+  );
+}
+
+function getSessionRecordRole(record: Record<string, unknown>): SessionConversationExcerpt["role"] | "" {
+  const type = firstString(record.type).toLowerCase();
+  const role = firstString(record.role).toLowerCase();
+  if (type === "user" || role === "user") {
+    return "user";
+  }
+  if (type === "assistant" || role === "assistant") {
+    return "assistant";
+  }
+  const payload = asRecord(record.payload);
+  if (!payload) {
+    return "";
+  }
+  const payloadType = firstString(payload.type).toLowerCase();
+  const payloadRole = firstString(payload.role).toLowerCase();
+  if (payloadType === "user" || payloadRole === "user") {
+    return "user";
+  }
+  if (payloadType === "assistant" || payloadRole === "assistant") {
+    return "assistant";
+  }
+  return "";
+}
+
+function isUserSessionRecord(record: Record<string, unknown>): boolean {
+  return getSessionRecordRole(record) === "user";
+}
+
+function extractUserPrompt(record: Record<string, unknown>): string {
+  if (!isUserSessionRecord(record)) {
+    return "";
+  }
+  const payload = asRecord(record.payload);
+  const prompt = firstString(
+    extractUserPromptTextValue(record.message),
+    extractUserPromptTextValue(record.content),
+    extractUserPromptTextValue(payload),
+  );
+  return isSessionScaffoldPrompt(prompt) ? "" : prompt;
+}
+
+function isSessionScaffoldPrompt(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith("<environment_context>")
+    || trimmed.startsWith("# AGENTS.md instructions");
+}
+
+function collectUserPrompts(records: unknown[]): string[] {
+  const prompts: string[] = [];
+  for (const recordValue of records) {
+    if (prompts.length >= MAX_USER_PROMPTS) {
+      break;
+    }
+    const record = asRecord(recordValue);
+    if (!record) {
+      continue;
+    }
+    const prompt = extractUserPrompt(record);
+    if (prompt) {
+      prompts.push(prompt);
+    }
+  }
+  return prompts;
+}
+
+function collectConversationExcerpts(records: unknown[]): SessionConversationExcerpt[] {
+  const excerpts: SessionConversationExcerpt[] = [];
+  for (const recordValue of records) {
+    if (excerpts.length >= MAX_CONVERSATION_EXCERPTS) {
+      break;
+    }
+    const record = asRecord(recordValue);
+    if (!record) {
+      continue;
+    }
+    const role = getSessionRecordRole(record);
+    if (!role) {
+      continue;
+    }
+    const payload = asRecord(record.payload);
+    const text = firstString(
+      extractConversationTextValue(record.message),
+      extractConversationTextValue(record.content),
+      extractConversationTextValue(payload),
+    );
+    if (!text || isSessionScaffoldPrompt(text)) {
+      continue;
+    }
+    excerpts.push({ role, text });
+  }
+  return excerpts;
 }
 
 async function safeReadJsonl(filePath: string): Promise<unknown[]> {
@@ -212,6 +383,8 @@ async function summarizeClaudeSessionFile(filePath: string, fallbackCwd: string)
   let cwd = fallbackCwd;
   const cwdCandidates: string[] = [];
   const seenCwds = new Set<string>();
+  const userPrompts = collectUserPrompts(records);
+  const conversationExcerpts = collectConversationExcerpts(records);
 
   function addCwdCandidate(value: string): void {
     const trimmed = value.trim();
@@ -251,6 +424,8 @@ async function summarizeClaudeSessionFile(filePath: string, fallbackCwd: string)
     cwd,
     updated_at: stat.mtime.toISOString(),
     preview: preview || sessionId,
+    ...(userPrompts.length > 0 ? { user_prompts: userPrompts } : {}),
+    ...(conversationExcerpts.length > 0 ? { conversation_excerpts: conversationExcerpts } : {}),
     filePath,
     cwdCandidates: cwdCandidates.length > 0 ? cwdCandidates : [cwd],
   };
@@ -293,6 +468,8 @@ async function summarizeCodexSessionFile(filePath: string): Promise<SessionFileS
   let cwd = "";
   let preview = "";
   let updatedAt = stat.mtime.toISOString();
+  const userPrompts = collectUserPrompts(records);
+  const conversationExcerpts = collectConversationExcerpts(records);
 
   for (const recordValue of records) {
     const record = asRecord(recordValue);
@@ -323,6 +500,8 @@ async function summarizeCodexSessionFile(filePath: string): Promise<SessionFileS
     cwd,
     updated_at: updatedAt,
     preview: preview || sessionId,
+    ...(userPrompts.length > 0 ? { user_prompts: userPrompts } : {}),
+    ...(conversationExcerpts.length > 0 ? { conversation_excerpts: conversationExcerpts } : {}),
     filePath,
   };
 }
@@ -474,12 +653,14 @@ export async function listClaudeSessions(
       new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
   );
 
-  return sessions.map(({ provider, session_id, cwd: sessionCwd, updated_at, preview }) => ({
+  return sessions.map(({ provider, session_id, cwd: sessionCwd, updated_at, preview, user_prompts, conversation_excerpts }) => ({
     provider,
     session_id,
     cwd: sessionCwd,
     updated_at,
     preview,
+    ...(user_prompts?.length ? { user_prompts } : {}),
+    ...(conversation_excerpts?.length ? { conversation_excerpts } : {}),
   }));
 }
 
@@ -500,26 +681,33 @@ export async function listCodexSessions(
 
   const mergedFromIndex = await Promise.all(indexEntries.map(async (entry) => {
     const fallback = fallbackMap.get(entry.session_id);
-    const targetedSummary = normalizedCwd && (!entry.cwd || !entry.preview)
+    const canUseEntryCwd = entry.cwd && normalizeComparablePath(entry.cwd) === normalizedCwd;
+    const targetedSummary = normalizedCwd && (!entry.cwd || !entry.preview || canUseEntryCwd)
       ? await summarizeCodexSessionFromIndex(root, entry)
       : null;
+    const userPrompts = targetedSummary?.user_prompts ?? fallback?.user_prompts;
+    const conversationExcerpts = targetedSummary?.conversation_excerpts ?? fallback?.conversation_excerpts;
     return {
       provider: "codex",
       session_id: entry.session_id,
       cwd: firstString(entry.cwd, targetedSummary?.cwd, fallback?.cwd),
       updated_at: firstString(entry.updated_at, targetedSummary?.updated_at, fallback?.updated_at),
       preview: firstString(entry.preview, targetedSummary?.preview, fallback?.preview, entry.session_id),
+      ...(userPrompts?.length ? { user_prompts: userPrompts } : {}),
+      ...(conversationExcerpts?.length ? { conversation_excerpts: conversationExcerpts } : {}),
     } satisfies SessionSummary;
   }));
 
   const baseSessions = mergedFromIndex.length > 0
     ? mergedFromIndex
-    : Array.from(fallbackMap.values()).map(({ provider, session_id, cwd: sessionCwd, updated_at, preview }) => ({
+    : Array.from(fallbackMap.values()).map(({ provider, session_id, cwd: sessionCwd, updated_at, preview, user_prompts, conversation_excerpts }) => ({
       provider,
       session_id,
       cwd: sessionCwd,
       updated_at,
       preview,
+      ...(user_prompts?.length ? { user_prompts } : {}),
+      ...(conversation_excerpts?.length ? { conversation_excerpts } : {}),
     }));
 
   const filteredSessions = normalizedCwd

@@ -94,6 +94,78 @@ describe("SessionPicker", () => {
     expect(html).toContain("session-2");
   });
 
+  it("renders selected session user prompts when available", () => {
+    const html = renderToStaticMarkup(
+      <SessionPicker
+        sessions={[
+          {
+            provider: "claude",
+            session_id: "session-prompts",
+            cwd: "C:/repo",
+            updated_at: "2026-05-04T10:00:00.000Z",
+            preview: "相同开头提示词",
+            user_prompts: [
+              "相同开头提示词，第一种任务分支",
+              "请继续分析这个分支的错误",
+            ],
+          },
+        ]}
+        selectedId="session-prompts"
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("开头问答");
+    expect(html).toContain("问");
+    expect(html).toContain("相同开头提示词，第一种任务分支");
+    expect(html).toContain("请继续分析这个分支的错误");
+  });
+
+  it("renders selected session conversation excerpts as a unified question-answer list", () => {
+    const html = renderToStaticMarkup(
+      <SessionPicker
+        sessions={[
+          {
+            provider: "claude",
+            session_id: "session-excerpts",
+            cwd: "C:/repo",
+            updated_at: "2026-05-04T10:00:00.000Z",
+            preview: "相同开头提示词",
+            user_prompts: ["旧字段提问"],
+            conversation_excerpts: [
+              { role: "user", text: "先看历史记录展示问题" },
+              { role: "assistant", text: "我会检查 SessionPicker 和 session-service。" },
+            ],
+          },
+        ]}
+        selectedId="session-excerpts"
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("开头问答");
+    expect(html).toContain("问");
+    expect(html).toContain("答");
+    expect(html).toContain("先看历史记录展示问题");
+    expect(html).toContain("我会检查 SessionPicker 和 session-service。");
+    expect(html).not.toContain("旧字段提问");
+  });
+
+  it("does not render the selected session prompts block when prompts are unavailable", () => {
+    const html = renderToStaticMarkup(
+      <SessionPicker
+        sessions={[longSession]}
+        selectedId="session-long"
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    expect(html).not.toContain("开头提问");
+  });
+
   it("shows a bounded inline list and preserves long session text", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

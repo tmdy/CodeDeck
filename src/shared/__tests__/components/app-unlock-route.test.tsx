@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import App from "../../../App.jsx";
+import UnlockApp from "../../../UnlockApp.jsx";
 
 describe("App unlock route", () => {
   afterEach(() => {
@@ -14,10 +15,11 @@ describe("App unlock route", () => {
   it("should render the unlock screen on the first paint for the unlock route", () => {
     window.history.replaceState(null, "", "/#/unlock");
 
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<UnlockApp />);
 
     expect(html).toContain('class="unlock-screen"');
     expect(html).toContain("Skills Manager");
+    expect(html).toContain('type="password"');
     expect(html).not.toContain("请输入配置密码以解锁 Profile 管理功能");
     expect(html).not.toContain("首次使用请先设置配置密码");
     expect(html).not.toContain("跳过");
@@ -52,5 +54,14 @@ describe("App unlock route", () => {
     expect(source).toContain("{errorMessage && activeTab !== \"skills\" && (");
     expect(source).toContain("{successMessage && activeTab !== \"skills\" && (");
     expect(source).toContain("statusMessage={skillsStatusMessage}");
+  });
+
+  it("should split the unlock route away from the main app bundle", async () => {
+    const source = await readFile(path.join(process.cwd(), "src", "main.tsx"), "utf8");
+
+    expect(source).not.toContain('import App from "./App.js"');
+    expect(source).toContain('import("./UnlockApp.js")');
+    expect(source).toContain('import("./App.js")');
+    expect(source).toContain('window.location.hash.includes("/unlock")');
   });
 });
