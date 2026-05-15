@@ -179,6 +179,9 @@ const profileApi = {
       ipcRenderer.removeListener("profile:unlock-error", handler);
     };
   },
+  logRendererEvent: (event: string, message: string, context?: unknown): void => {
+    ipcRenderer.send("app:renderer-log", { event, message, context });
+  },
 };
 
 contextBridge.exposeInMainWorld("skillsManager", skillsApi);

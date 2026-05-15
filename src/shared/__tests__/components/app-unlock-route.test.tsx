@@ -5,36 +5,21 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import App from "../../../App.jsx";
-import UnlockApp from "../../../UnlockApp.jsx";
 
-describe("App unlock route", () => {
+describe("App startup route", () => {
   afterEach(() => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("should render the unlock screen on the first paint for the unlock route", () => {
-    window.history.replaceState(null, "", "/#/unlock");
-
-    const html = renderToStaticMarkup(<UnlockApp />);
-
-    expect(html).toContain('class="unlock-screen"');
-    expect(html).toContain("Skills Manager");
-    expect(html).toContain('type="password"');
-    expect(html).not.toContain("请输入配置密码以解锁 Profile 管理功能");
-    expect(html).not.toContain("首次使用请先设置配置密码");
-    expect(html).not.toContain("跳过");
-    expect(html).not.toContain("使用空配置");
-    expect(html).not.toContain("AI CLI 工具统一管理");
-  });
-
-  it("should not force the unlock screen outside the unlock route on the first paint", () => {
+  it("should render a lightweight startup gate before auth status is known", () => {
     window.history.replaceState(null, "", "/");
 
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).not.toContain('class="unlock-screen"');
-    expect(html).toContain("AI CLI 工具统一管理");
-    expect(html).not.toContain("Skills Manager V2");
+    expect(html).toContain('class="startup-screen"');
+    expect(html).toContain("Skills Manager");
+    expect(html).toContain("正在准备解锁界面");
+    expect(html).not.toContain("AI CLI 工具统一管理");
   });
 
   it("should keep the main header compact", async () => {
@@ -56,26 +41,50 @@ describe("App unlock route", () => {
     expect(source).toContain("statusMessage={skillsStatusMessage}");
   });
 
-  it("should split the unlock route away from the main app bundle", async () => {
+  it("should mount a single App entry instead of routing to UnlockApp by hash", async () => {
     const source = await readFile(path.join(process.cwd(), "src", "main.tsx"), "utf8");
 
-    expect(source).not.toContain('import App from "./App.js"');
-    expect(source).toContain('import("./UnlockApp.js")');
+    expect(source).not.toContain('import("./UnlockApp.js")');
     expect(source).toContain('import("./App.js")');
-    expect(source).toContain('window.location.hash.includes("/unlock")');
+    expect(source).not.toContain('window.location.hash.includes("/unlock")');
   });
 
-  it("should not block the unlock window on skills workspace initialization", async () => {
+  it("should lazy-load non-default tabs from App", async () => {
+    const source = await readFile(path.join(process.cwd(), "src", "App.tsx"), "utf8");
+
+    expect(source).toContain('import("./components/app/SessionsPage.jsx").then((module) => ({ default: module.SessionsPage }))');
+    expect(source).toContain('import("./components/app/SettingsPage.jsx").then((module) => ({ default: module.SettingsPage }))');
+    expect(source).toContain('import("./components/skills/SkillsPanel.jsx").then((module) => ({ default: module.SkillsPanel }))');
+    expect(source).not.toContain('import { SessionsPage } from "./components/app/SessionsPage.jsx";');
+    expect(source).not.toContain('import { SettingsPage } from "./components/app/SettingsPage.jsx";');
+    expect(source).not.toContain('import { SkillsPanel } from "./components/skills/SkillsPanel.jsx";');
+    expect(source).toContain('import { ProfilesPage } from "./components/app/ProfilesPage.jsx";');
+  });
+
+  it("should register IPC handlers before the first main window is created", async () => {
     const source = await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8");
     const readyBlockStart = source.indexOf("app.whenReady().then(async () => {");
-    const unlockWindowIndex = source.indexOf("await createUnlockWindow();", readyBlockStart);
+    const registerIpcIndex = source.indexOf("registerAllIpcHandlers();", readyBlockStart);
+    const createMainWindowIndex = source.indexOf("await createMainWindow();", readyBlockStart);
+
+    expect(readyBlockStart).toBeGreaterThanOrEqual(0);
+    expect(registerIpcIndex).toBeGreaterThan(readyBlockStart);
+    expect(createMainWindowIndex).toBeGreaterThan(registerIpcIndex);
+    expect(source).not.toContain("createUnlockWindow");
+    expect(source).not.toContain("isTransitioningFromUnlock");
+  });
+
+  it("should keep skills workspace initialization deferred until after the first main window", async () => {
+    const source = await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8");
+    const readyBlockStart = source.indexOf("app.whenReady().then(async () => {");
+    const createMainWindowIndex = source.indexOf("await createMainWindow();", readyBlockStart);
     const deferredSkillsIndex = source.indexOf("void ensureSkillsServiceReady();", readyBlockStart);
     const eagerSkillsIndex = source.indexOf("await initSkillsService();", readyBlockStart);
 
     expect(readyBlockStart).toBeGreaterThanOrEqual(0);
-    expect(unlockWindowIndex).toBeGreaterThan(readyBlockStart);
-    expect(deferredSkillsIndex).toBeGreaterThan(unlockWindowIndex);
-    expect(eagerSkillsIndex === -1 || eagerSkillsIndex > unlockWindowIndex).toBe(true);
+    expect(createMainWindowIndex).toBeGreaterThan(readyBlockStart);
+    expect(deferredSkillsIndex).toBeGreaterThan(createMainWindowIndex);
+    expect(eagerSkillsIndex).toBe(-1);
   });
 
   it("should idle-delay the initial Profiles session scan", async () => {
