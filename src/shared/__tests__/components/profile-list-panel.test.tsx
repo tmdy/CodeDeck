@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProfileListPanel } from "../../../components/profiles/ProfileListPanel.jsx";
@@ -78,5 +80,12 @@ describe("ProfileListPanel", () => {
     );
 
     expect(html).not.toContain("profile-item-status");
+  });
+
+  it("indexes provider profiles before applying ordered keys", async () => {
+    const source = await readFile(path.join(process.cwd(), "src", "components", "profiles", "ProfileListPanel.tsx"), "utf8");
+
+    expect(source).toContain("const profileByKey = new Map(");
+    expect(source).not.toContain("providerProfiles.find((p) => itemKey(p) === k)");
   });
 });

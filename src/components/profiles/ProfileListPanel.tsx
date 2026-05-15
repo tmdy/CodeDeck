@@ -65,9 +65,12 @@ export const ProfileListPanel = memo(function ProfileListPanel({
   const visible = useMemo(() => {
     const result: { key: ProfileKey; name: string; provider: string }[] = [];
     const providerProfiles = profiles.filter((profile) => profile.provider === activeProvider);
+    const profileByKey = new Map(
+      providerProfiles.map((profile) => [itemKey(profile), profile] as const),
+    );
     const orderedSet = new Set(orderedKeys);
     for (const k of orderedKeys) {
-      const profile = providerProfiles.find((p) => itemKey(p) === k);
+      const profile = profileByKey.get(k);
       if (profile) {
         result.push({ key: k, name: profile.name, provider: profile.provider });
       }

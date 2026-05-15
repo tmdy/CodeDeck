@@ -71,7 +71,7 @@ const profileApi = {
     ipcRenderer.invoke("profile:check-encrypted-config"),
   unlock: (
     passphrase: string,
-  ): Promise<{ success: boolean; profiles?: unknown[]; state?: unknown }> =>
+  ): Promise<{ success: boolean; bootstrap?: unknown }> =>
     ipcRenderer.invoke("profile:unlock", passphrase),
   bootstrap: (): Promise<unknown> =>
     ipcRenderer.invoke("profile:bootstrap"),

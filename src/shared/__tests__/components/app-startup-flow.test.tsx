@@ -9,6 +9,7 @@ import { createDefaultModelMappingsState } from "../../model-mapping/config-type
 import { itemKey } from "../../profile/keys-internal.js";
 import type { Profile, RuntimeSettings } from "../../profile/types.js";
 import {
+  type BootstrapResult,
   defaultLocalState,
   type BootstrapLocalState,
   type LocalState,
@@ -77,6 +78,15 @@ function createBootstrapState(state: LocalState): BootstrapLocalState {
   };
 }
 
+function createBootstrapResult(state: LocalState): BootstrapResult {
+  return {
+    profiles: [{ ...baseProfile }],
+    state: createBootstrapState(state),
+    siteBalanceSessionsByBaseUrl: {},
+    defaultWorkingDirectory: "C:/Users/99395/Downloads",
+  };
+}
+
 function installWindowStubs() {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -100,20 +110,23 @@ function installWindowStubs() {
   });
 }
 
-function createProfileManagerFixture(options: { hasEncryptedConfig: boolean }) {
+function createProfileManagerFixture(options: {
+  hasEncryptedConfig: boolean;
+  unlockBootstrap?: BootstrapResult;
+}) {
   const state = createState(baseProfile);
+  const bootstrapResult = options.unlockBootstrap ?? createBootstrapResult(state);
 
   const manager: MockProfileManager = {
     checkEncryptedConfig: vi.fn(async () => options.hasEncryptedConfig),
-    unlock: vi.fn(async () => ({ success: true })),
+    unlock: vi.fn(async () => (
+      options.unlockBootstrap
+        ? { success: true, bootstrap: options.unlockBootstrap }
+        : { success: true }
+    )),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
-    bootstrap: vi.fn(async () => ({
-      profiles: [{ ...baseProfile }],
-      state: createBootstrapState(state),
-      siteBalanceSessionsByBaseUrl: {},
-      defaultWorkingDirectory: "C:/Users/99395/Downloads",
-    })),
+    bootstrap: vi.fn(async () => bootstrapResult),
     listProfiles: vi.fn(async () => ({
       profiles: [{ ...baseProfile }],
       state: cloneState(state),
@@ -251,6 +264,36 @@ describe("App startup flow", () => {
 
     expect(fixture.manager.unlock).toHaveBeenCalledWith("pass-123");
     expect(fixture.manager.bootstrap).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.listProfiles).not.toHaveBeenCalled();
+    expect(container.querySelector(".unlock-screen")).toBeFalsy();
+    expect(container.textContent).toContain("AI CLI 工具统一管理");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("hydrates directly from unlock bootstrap when the main process returns it", async () => {
+    installWindowStubs();
+    const fixture = createProfileManagerFixture({
+      hasEncryptedConfig: true,
+      unlockBootstrap: createBootstrapResult(createState(baseProfile)),
+    });
+    window.profileManager = fixture.manager;
+
+    const { container, root } = await renderApp(<App />);
+
+    const input = container.querySelector("input[type='password']");
+    expect(input).toBeInstanceOf(HTMLInputElement);
+
+    await setInputValue(input as HTMLInputElement, "pass-123");
+    await act(async () => {
+      getButtonByText(container, "解锁").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(fixture.manager.unlock).toHaveBeenCalledWith("pass-123");
+    expect(fixture.manager.bootstrap).not.toHaveBeenCalled();
     expect(fixture.manager.listProfiles).not.toHaveBeenCalled();
     expect(container.querySelector(".unlock-screen")).toBeFalsy();
     expect(container.textContent).toContain("AI CLI 工具统一管理");
