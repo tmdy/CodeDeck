@@ -8,7 +8,11 @@ import App, { resetAppStartupStateForTests } from "../../../App.jsx";
 import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
 import { itemKey } from "../../profile/keys-internal.js";
 import type { Profile, RuntimeSettings } from "../../profile/types.js";
-import { defaultLocalState, type LocalState } from "../../state/local-state.js";
+import {
+  defaultLocalState,
+  type BootstrapLocalState,
+  type LocalState,
+} from "../../state/local-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -61,6 +65,18 @@ function cloneState(state: LocalState): LocalState {
   };
 }
 
+function createBootstrapState(state: LocalState): BootstrapLocalState {
+  return {
+    selected_provider: state.selected_provider,
+    selected_profile_key: state.selected_profile_key,
+    selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+    profile_order_by_provider: { ...state.profile_order_by_provider },
+    runtime_by_profile: { ...state.runtime_by_profile },
+    balance_checks_by_profile: { ...state.balance_checks_by_profile },
+    global_settings: { ...state.global_settings },
+  };
+}
+
 function installWindowStubs() {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -92,6 +108,12 @@ function createProfileManagerFixture(options: { hasEncryptedConfig: boolean }) {
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
+    bootstrap: vi.fn(async () => ({
+      profiles: [{ ...baseProfile }],
+      state: createBootstrapState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+    })),
     listProfiles: vi.fn(async () => ({
       profiles: [{ ...baseProfile }],
       state: cloneState(state),
@@ -228,7 +250,8 @@ describe("App startup flow", () => {
     await flush();
 
     expect(fixture.manager.unlock).toHaveBeenCalledWith("pass-123");
-    expect(fixture.manager.listProfiles).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.bootstrap).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.listProfiles).not.toHaveBeenCalled();
     expect(container.querySelector(".unlock-screen")).toBeFalsy();
     expect(container.textContent).toContain("AI CLI 工具统一管理");
 
@@ -259,7 +282,8 @@ describe("App startup flow", () => {
     await flush();
 
     expect(fixture.manager.unlock).toHaveBeenCalledWith("new-pass");
-    expect(fixture.manager.listProfiles).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.bootstrap).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.listProfiles).not.toHaveBeenCalled();
     expect(container.textContent).toContain("AI CLI 工具统一管理");
 
     await act(async () => {
@@ -279,6 +303,65 @@ describe("App startup flow", () => {
     );
 
     expect(fixture.manager.checkEncryptedConfig).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("keeps bootstrap single-shot under React StrictMode during unlock", async () => {
+    installWindowStubs();
+    const fixture = createProfileManagerFixture({ hasEncryptedConfig: true });
+    window.profileManager = fixture.manager;
+
+    const { container, root } = await renderApp(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+
+    const input = container.querySelector("input[type='password']");
+    expect(input).toBeInstanceOf(HTMLInputElement);
+
+    await setInputValue(input as HTMLInputElement, "pass-123");
+    await act(async () => {
+      getButtonByText(container, "解锁").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(fixture.manager.bootstrap).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.listProfiles).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("defers parameter settings loading until the Settings tab is opened", async () => {
+    installWindowStubs();
+    const fixture = createProfileManagerFixture({ hasEncryptedConfig: true });
+    window.profileManager = fixture.manager;
+
+    const { container, root } = await renderApp(<App />);
+
+    const input = container.querySelector("input[type='password']");
+    expect(input).toBeInstanceOf(HTMLInputElement);
+
+    await setInputValue(input as HTMLInputElement, "pass-123");
+    await act(async () => {
+      getButtonByText(container, "解锁").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(fixture.manager.getParameterSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      getButtonByText(container, "设置").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.getParameterSettings).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       root.unmount();

@@ -43,6 +43,13 @@ interface SessionListLoaders {
   listCodexSessions: (request: ListSessionsRequest) => Promise<SessionSummary[]>;
 }
 
+interface CodexHomesLoaders {
+  listCodexSessions?: (
+    request: ListSessionsRequest,
+    codexHome?: string,
+  ) => Promise<SessionSummary[]>;
+}
+
 interface SessionFileSummary extends SessionSummary {
   filePath: string;
   cwdCandidates?: string[];
@@ -876,21 +883,28 @@ export async function listCodexSessions(
 export async function listCodexSessionsFromHomes(
   request: ListSessionsRequest,
   homes: CodexSessionHome[],
+  loaders: CodexHomesLoaders = {},
 ): Promise<SessionSummary[]> {
   const merged = new Map<string, SessionSummary>();
   const requestedLimit = request.limit && request.limit > 0 ? request.limit : undefined;
   const requestedOffset = Math.max(0, request.offset ?? 0);
   const perHomeLimit = requestedLimit === undefined ? undefined : requestedOffset + requestedLimit;
+  const loadCodexSessions = loaders.listCodexSessions ?? listCodexSessions;
 
-  for (const source of homes) {
-    if (!source.home.trim()) {
-      continue;
-    }
-    const sessions = await listCodexSessions({
-      ...request,
-      limit: perHomeLimit,
-      offset: 0,
-    }, source.home);
+  const pages = await Promise.all(
+    homes
+      .filter((source) => source.home.trim())
+      .map(async (source) => ({
+        source,
+        sessions: await loadCodexSessions({
+          ...request,
+          limit: perHomeLimit,
+          offset: 0,
+        }, source.home),
+      })),
+  );
+
+  for (const { source, sessions } of pages) {
     for (const session of sessions) {
       if (merged.has(session.session_id)) {
         continue;

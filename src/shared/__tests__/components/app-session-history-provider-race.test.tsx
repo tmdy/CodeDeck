@@ -8,7 +8,11 @@ import { defaultBalanceCheckState } from "../../balance/types.js";
 import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
 import { itemKey } from "../../profile/keys-internal.js";
 import type { Profile, RuntimeSettings } from "../../profile/types.js";
-import { defaultLocalState, type LocalState } from "../../state/local-state.js";
+import {
+  defaultLocalState,
+  type BootstrapLocalState,
+  type LocalState,
+} from "../../state/local-state.js";
 import type { SessionSummary } from "../../services/session-service.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,6 +40,18 @@ function cloneState(state: LocalState): LocalState {
     balance_checks_by_profile: { ...state.balance_checks_by_profile },
     sessions_tab_scope_by_provider: { ...state.sessions_tab_scope_by_provider },
     sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
+  };
+}
+
+function createBootstrapState(state: LocalState): BootstrapLocalState {
+  return {
+    selected_provider: state.selected_provider,
+    selected_profile_key: state.selected_profile_key,
+    selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+    profile_order_by_provider: { ...state.profile_order_by_provider },
+    runtime_by_profile: { ...state.runtime_by_profile },
+    balance_checks_by_profile: { ...state.balance_checks_by_profile },
+    global_settings: { ...state.global_settings },
   };
 }
 
@@ -97,6 +113,12 @@ function createProviderRaceFixture() {
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
+    bootstrap: vi.fn(async () => ({
+      profiles: profiles.map((profile) => ({ ...profile })),
+      state: createBootstrapState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+    })),
     listProfiles: vi.fn(async () => ({
       profiles: profiles.map((profile) => ({ ...profile })),
       state: cloneState(state),
@@ -213,6 +235,12 @@ function createPrefetchFixture() {
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
+    bootstrap: vi.fn(async () => ({
+      profiles: [{ ...codexProfile }],
+      state: createBootstrapState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+    })),
     listProfiles: vi.fn(async () => ({
       profiles: [{ ...codexProfile }],
       state: cloneState(state),

@@ -9,7 +9,11 @@ import { createDefaultModelMappingsState } from "../../model-mapping/config-type
 import { itemKey } from "../../profile/keys-internal.js";
 import type { Profile, RuntimeSettings } from "../../profile/types.js";
 import type { SessionSummary } from "../../services/session-service.js";
-import { defaultLocalState, type LocalState } from "../../state/local-state.js";
+import {
+  defaultLocalState,
+  type BootstrapLocalState,
+  type LocalState,
+} from "../../state/local-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,6 +53,18 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
+function createBootstrapState(state: LocalState): BootstrapLocalState {
+  return {
+    selected_provider: state.selected_provider,
+    selected_profile_key: state.selected_profile_key,
+    selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+    profile_order_by_provider: { ...state.profile_order_by_provider },
+    runtime_by_profile: { ...state.runtime_by_profile },
+    balance_checks_by_profile: { ...state.balance_checks_by_profile },
+    global_settings: { ...state.global_settings },
+  };
+}
+
 function createProfileManagerFixture(options: { initialCwd?: string } = {}) {
   const runtime: RuntimeSettings = {
     cwd: options.initialCwd ?? "C:/workspace/initial",
@@ -69,6 +85,12 @@ function createProfileManagerFixture(options: { initialCwd?: string } = {}) {
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
+    bootstrap: vi.fn(async () => ({
+      profiles: [{ ...currentProfile }],
+      state: createBootstrapState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
+    })),
     listProfiles: vi.fn(async () => ({
       profiles: [{ ...currentProfile }],
       state: {
@@ -229,6 +251,12 @@ function createProfileSessionSwitchFixture(options: { delayAlpha?: boolean; dela
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
+    bootstrap: vi.fn(async () => ({
+      profiles: profiles.map((profile) => ({ ...profile })),
+      state: createBootstrapState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
+    })),
     listProfiles: vi.fn(async () => ({
       profiles: profiles.map((profile) => ({ ...profile })),
       state: cloneLocalStateForTest(state),
@@ -326,6 +354,18 @@ async function flushProfileSessionLoad() {
   await flushAsyncWork();
 }
 
+async function clickProfileSessionsLoadButton(container: HTMLElement) {
+  const loadButton = Array.from(container.querySelectorAll("button")).find(
+    (button) => button.textContent?.trim() === "加载会话",
+  );
+  expect(loadButton).toBeDefined();
+  await act(async () => {
+    loadButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 async function setInputValue(input: HTMLInputElement, value: string) {
   const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   await act(async () => {
@@ -383,10 +423,16 @@ describe("App command preview", () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture();
     const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(0);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(599);
     });
 
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
     expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(1);
 
     const nameInput = Array.from(container.querySelectorAll("input")).find(
@@ -452,10 +498,22 @@ describe("App command preview", () => {
     vi.useFakeTimers();
     const fixture = createProfileSessionSwitchFixture({ delayBeta: true });
     const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(0);
+    expect(container.textContent).toContain("尚未加载当前工作目录的会话。");
+
     await act(async () => {
-      await flushProfileSessionLoad();
+      await clickProfileSessionsLoadButton(container);
     });
 
+    expect(fixture.manager.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/alpha",
+      profile_key: fixture.alphaKey,
+      limit: 20,
+      offset: 0,
+    });
     expect(container.textContent).toContain("Alpha project session");
 
     const betaButton = Array.from(container.querySelectorAll("button")).find(
@@ -502,7 +560,7 @@ describe("App command preview", () => {
     const fixture = createProfileSessionSwitchFixture({ delayAlpha: true, delayBeta: true });
     const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
-      await flushProfileSessionLoad();
+      await clickProfileSessionsLoadButton(container);
     });
 
     expect(fixture.listSessions).toHaveBeenCalledWith({
@@ -562,23 +620,13 @@ describe("App command preview", () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture({ initialCwd: "" });
     const { container, root } = await renderUnlockedApp(fixture.manager);
-    await act(async () => {
-      await flushProfileSessionLoad();
-    });
 
     const cwdInput = Array.from(container.querySelectorAll("input")).find(
       (input) => input.placeholder === "默认使用下载目录",
     );
     expect(cwdInput).toBeInstanceOf(HTMLInputElement);
     expect((cwdInput as HTMLInputElement).value).toBe(DEFAULT_DOWNLOADS_CWD);
-    expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
-      provider: "claude",
-      scope: "project",
-      cwd: DEFAULT_DOWNLOADS_CWD,
-      profile_key: "claude::Relay",
-      limit: 20,
-      offset: 0,
-    });
+    expect(fixture.manager.listSessions).not.toHaveBeenCalled();
 
     await act(async () => {
       root.unmount();
@@ -608,6 +656,7 @@ describe("App command preview", () => {
       expect.objectContaining({ name: "Relay" }),
       expect.objectContaining({ cwd: DEFAULT_DOWNLOADS_CWD }),
     );
+    expect(fixture.manager.listSessions).not.toHaveBeenCalled();
 
     await act(async () => {
       root.unmount();
@@ -638,6 +687,7 @@ describe("App command preview", () => {
         runtime_settings: expect.objectContaining({ cwd: DEFAULT_DOWNLOADS_CWD }),
       }),
     );
+    expect(fixture.manager.listSessions).not.toHaveBeenCalled();
 
     await act(async () => {
       root.unmount();
@@ -650,7 +700,7 @@ describe("App command preview", () => {
     const fixture = createProfileManagerFixture();
     const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
-      await flushProfileSessionLoad();
+      await clickProfileSessionsLoadButton(container);
     });
 
     expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
@@ -710,7 +760,7 @@ describe("App command preview", () => {
     const fixture = createProfileManagerFixture();
     const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
-      await flushProfileSessionLoad();
+      await clickProfileSessionsLoadButton(container);
     });
 
     expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);

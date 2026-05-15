@@ -160,4 +160,40 @@ describe("SkillsPanel cached startup", () => {
     expect(skillsManager.loadCachedSnapshot).toHaveBeenCalledTimes(1);
     expect(skillsManager.refreshSnapshot).toHaveBeenCalledTimes(1);
   });
+
+  it("deduplicates the initial snapshot requests across concurrent mounts", async () => {
+    const freshSnapshot = createSnapshot("fresh", createRecord("fresh-writer", "Fresh Writer"));
+    let resolveRefresh: (snapshot: SkillsSnapshotResult) => void = () => undefined;
+    const refreshPromise = new Promise<SkillsSnapshotResult>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const skillsManager = createSkillsManager({
+      loadCachedSnapshot: vi.fn().mockResolvedValue(null),
+      refreshSnapshot: vi.fn().mockReturnValue(refreshPromise),
+    });
+    window.skillsManager = skillsManager;
+    const firstContainer = document.createElement("div");
+    const secondContainer = document.createElement("div");
+    const firstRoot = createRoot(firstContainer);
+    const secondRoot = createRoot(secondContainer);
+
+    await act(async () => {
+      firstRoot.render(<SkillsPanel onError={vi.fn()} onSuccess={vi.fn()} />);
+      secondRoot.render(<SkillsPanel onError={vi.fn()} onSuccess={vi.fn()} />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(skillsManager.loadCachedSnapshot).toHaveBeenCalledTimes(1);
+    expect(skillsManager.refreshSnapshot).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveRefresh(freshSnapshot);
+      await refreshPromise;
+    });
+
+    expect(firstContainer.textContent).toContain("Fresh Writer");
+    expect(secondContainer.textContent).toContain("Fresh Writer");
+  });
 });

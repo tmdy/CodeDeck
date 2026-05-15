@@ -9,6 +9,7 @@ interface SessionPickerProps {
   onRefresh: () => void;
   disabled?: boolean;
   isLoading?: boolean;
+  isUninitialized?: boolean;
 }
 
 function formatSessionLabel(session: SessionSummary): string {
@@ -37,6 +38,7 @@ export const SessionPicker = memo(function SessionPicker({
   onRefresh,
   disabled,
   isLoading,
+  isUninitialized,
 }: SessionPickerProps) {
   const selectedSession = useMemo(
     () => sessions.find((session) => session.session_id === selectedId),
@@ -60,13 +62,20 @@ export const SessionPicker = memo(function SessionPicker({
           onClick={onRefresh}
           disabled={disabled}
         >
-          刷新
+          {isUninitialized ? "加载会话" : "刷新"}
         </button>
       </div>
 
       {sessions.length === 0 ? (
         <div className="session-picker-summary">
-          <p className="empty-state">{isLoading ? "正在加载会话..." : "当前工作目录未找到会话。"}</p>
+          <p className="empty-state">
+            {isLoading
+              ? "正在加载会话..."
+              : isUninitialized
+                ? "尚未加载当前工作目录的会话。"
+                : "当前工作目录未找到会话。"}
+          </p>
+          {isUninitialized && <p className="muted">点击“加载会话”后再选择恢复目标。</p>}
           <p className="muted">未选择会话</p>
         </div>
       ) : (

@@ -6,6 +6,7 @@ import {
   encodeClaudeProjectPath,
   importCodexSessionToRuntimeHome,
   type ListSessionsRequest,
+  type SessionSummary,
   listClaudeSessions,
   listCodexSessions,
   listCodexSessionsFromHomes,
@@ -897,6 +898,62 @@ describe("session-service", () => {
     expect(sessions.map((session) => session.session_id)).toEqual([
       "global-match",
       "app-match",
+    ]);
+  });
+
+  it("starts loading all Codex homes before awaiting merged results", async () => {
+    let resolveApp!: (value: SessionSummary[]) => void;
+    let resolveGlobal!: (value: SessionSummary[]) => void;
+    const loadSessions = vi.fn((_request: ListSessionsRequest, home?: string) => {
+      if (home === "C:/codex/app") {
+        return new Promise<SessionSummary[]>((resolve) => {
+          resolveApp = resolve;
+        });
+      }
+      if (home === "C:/codex/global") {
+        return new Promise<SessionSummary[]>((resolve) => {
+          resolveGlobal = resolve;
+        });
+      }
+      throw new Error(`unexpected home: ${home}`);
+    });
+
+    const pending = listCodexSessionsFromHomes({
+      provider: "codex",
+      scope: "global_recent",
+    }, [
+      { kind: "app_runtime", home: "C:/codex/app" },
+      { kind: "global_codex", home: "C:/codex/global" },
+    ], {
+      listCodexSessions: loadSessions,
+    });
+
+    await Promise.resolve();
+
+    expect(loadSessions).toHaveBeenCalledTimes(2);
+
+    resolveGlobal([
+      {
+        provider: "codex",
+        session_id: "global-1",
+        cwd: "C:/workspace/global",
+        updated_at: "2026-05-15T11:00:00.000Z",
+        preview: "global-1",
+      },
+    ]);
+    resolveApp([
+      {
+        provider: "codex",
+        session_id: "app-1",
+        cwd: "C:/workspace/app",
+        updated_at: "2026-05-15T12:00:00.000Z",
+        preview: "app-1",
+      },
+    ]);
+
+    await expect(pending).resolves.toMatchObject([
+      { session_id: "app-1" },
+      { session_id: "global-1" },
     ]);
   });
 

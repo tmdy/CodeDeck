@@ -76,22 +76,16 @@ describe("App startup route", () => {
 
   it("should keep skills workspace initialization deferred until after the first main window", async () => {
     const source = await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8");
-    const readyBlockStart = source.indexOf("app.whenReady().then(async () => {");
-    const createMainWindowIndex = source.indexOf("await createMainWindow();", readyBlockStart);
-    const deferredSkillsIndex = source.indexOf("void ensureSkillsServiceReady();", readyBlockStart);
-    const eagerSkillsIndex = source.indexOf("await initSkillsService();", readyBlockStart);
-
-    expect(readyBlockStart).toBeGreaterThanOrEqual(0);
-    expect(createMainWindowIndex).toBeGreaterThan(readyBlockStart);
-    expect(deferredSkillsIndex).toBeGreaterThan(createMainWindowIndex);
-    expect(eagerSkillsIndex).toBe(-1);
+    expect(source).not.toContain("void ensureSkillsServiceReady();");
+    expect(source).not.toContain("await initSkillsService();");
   });
 
-  it("should idle-delay the initial Profiles session scan", async () => {
-    const source = await readFile(path.join(process.cwd(), "src", "App.tsx"), "utf8");
+  it("should expose a dedicated bootstrap API for unlock-time hydration", async () => {
+    const preloadSource = await readFile(path.join(process.cwd(), "electron", "preload.ts"), "utf8");
+    const mainSource = await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8");
 
-    expect(source).toContain("window.requestIdleCallback");
-    expect(source).toContain("window.setTimeout(run, 800)");
-    expect(source).toContain("window.cancelIdleCallback(id)");
+    expect(preloadSource).toContain("bootstrap: (): Promise<unknown>");
+    expect(preloadSource).toContain('ipcRenderer.invoke("profile:bootstrap")');
+    expect(mainSource).toContain('handleIpc("profile:bootstrap"');
   });
 });
