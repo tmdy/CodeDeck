@@ -27,6 +27,7 @@ export interface ProfileEditorDraft {
   settings_file: string;
   launch_mode: "new";
   extra_args: string;
+  extra_env: Record<string, string>;
   exclude_user_settings: boolean;
 }
 
@@ -59,6 +60,7 @@ export function buildSelectedProfileDraft(
     settings_file: baseRuntime.settings_file ?? "",
     launch_mode: "new",
     extra_args: baseRuntime.extra_args,
+    extra_env: cloneEnvMap(baseRuntime.extra_env),
     exclude_user_settings: baseRuntime.exclude_user_settings,
   };
 }
@@ -92,6 +94,7 @@ export function buildNewProfileDraft(provider: string, initial?: { url?: string;
     settings_file: runtime.settings_file ?? "",
     launch_mode: "new",
     extra_args: runtime.extra_args,
+    extra_env: {},
     exclude_user_settings: runtime.exclude_user_settings,
   };
 }
@@ -104,6 +107,7 @@ export function buildRuntimeSettingsFromDraft(draft: ProfileEditorDraft): Runtim
     settings_file: draft.settings_file,
     launch_mode: draft.launch_mode,
     extra_args: draft.extra_args,
+    extra_env: cloneEnvMap(draft.extra_env),
     exclude_user_settings: draft.exclude_user_settings,
   };
 }
@@ -129,15 +133,12 @@ export function hasProfileDraftChanges(
       current.advancedModelMapping.claude?.sonnetTarget ||
       current.advancedModelMapping.claude?.haikuTarget ||
       current.advancedModelMapping.claude?.subagentTarget ||
-      (
-        current.advancedModelMapping.claude?.deepseekReasoningEffort
-        && current.advancedModelMapping.claude.deepseekReasoningEffort !== "default"
-      ) ||
       current.advancedModelMapping.codex?.commandLineModelOverride ||
       current.cwd ||
       current.command_base ||
       current.settings_file ||
       current.extra_args ||
+      Object.keys(current.extra_env).length > 0 ||
       current.exclude_user_settings !== true,
     );
   }
@@ -155,6 +156,7 @@ export function hasProfileDraftChanges(
     current.command_base !== baseline.command_base ||
     current.settings_file !== baseline.settings_file ||
     current.extra_args !== baseline.extra_args ||
+    !envMapsEqual(current.extra_env, baseline.extra_env) ||
     current.exclude_user_settings !== baseline.exclude_user_settings
   );
 }
@@ -216,7 +218,6 @@ function advancedModelMappingsEqual(left: AdvancedModelMapping, right: AdvancedM
     && (left.claude?.sonnetTarget ?? "") === (right.claude?.sonnetTarget ?? "")
     && (left.claude?.haikuTarget ?? "") === (right.claude?.haikuTarget ?? "")
     && (left.claude?.subagentTarget ?? "") === (right.claude?.subagentTarget ?? "")
-    && (left.claude?.deepseekReasoningEffort ?? "default") === (right.claude?.deepseekReasoningEffort ?? "default")
     && (left.codex?.commandLineModelOverride ?? "") === (right.codex?.commandLineModelOverride ?? "");
 }
 
@@ -249,6 +250,19 @@ function stringArraysEqual(left: readonly string[], right: readonly string[]): b
   return left.every((item, index) => item === right[index]);
 }
 
+function envMapsEqual(left: Record<string, string>, right: Record<string, string>): boolean {
+  const leftEntries = Object.entries(left);
+  const rightEntries = Object.entries(right);
+  if (leftEntries.length !== rightEntries.length) {
+    return false;
+  }
+  return leftEntries.every(([key, value]) => right[key] === value);
+}
+
+function cloneEnvMap(value?: Record<string, string>): Record<string, string> {
+  return { ...(value ?? {}) };
+}
+
 export function balanceSessionDraftsEqual(
   left: ProfileEditorDraft["balanceSessionDraft"],
   right: ProfileEditorDraft["balanceSessionDraft"],
@@ -268,7 +282,6 @@ function cloneAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedModelM
       sonnetTarget: value?.claude?.sonnetTarget ?? "",
       haikuTarget: value?.claude?.haikuTarget ?? "",
       subagentTarget: value?.claude?.subagentTarget ?? "",
-      deepseekReasoningEffort: value?.claude?.deepseekReasoningEffort ?? "default",
     },
     codex: {
       commandLineModelOverride: value?.codex?.commandLineModelOverride ?? "",

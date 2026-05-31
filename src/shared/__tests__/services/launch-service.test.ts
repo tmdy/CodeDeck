@@ -37,6 +37,7 @@ function makeRuntime(overrides: Partial<RuntimeSettings> = {}): RuntimeSettings 
     extra_args: "",
     exclude_user_settings: true,
     ...overrides,
+    extra_env: overrides.extra_env ?? {},
   };
 }
 
@@ -80,19 +81,57 @@ describe("LaunchService", () => {
     expect(preview.env.some((item) => item.name === "CLAUDE_CODE_EFFORT_LEVEL")).toBe(false);
   });
 
-  it("should inject DeepSeek max effort for Claude profiles when configured", () => {
+  it("should merge global and profile runtime env for Claude while keeping provider env authoritative", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Official",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+      selectedModelId: "claude-sonnet-4-5",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      parameter_settings: {
+        ...defaultLocalState().parameter_settings,
+        extra_env: {
+          GLOBAL_ONLY: "global",
+          SHARED_ENV: "global-value",
+          ANTHROPIC_MODEL: "global-model",
+        },
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime({
+        extra_env: {
+          PROFILE_ONLY: "profile",
+          SHARED_ENV: "profile-value",
+          ANTHROPIC_MODEL: "profile-model",
+          ANTHROPIC_AUTH_TOKEN: "profile-token",
+        },
+      }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.env.GLOBAL_ONLY).toBe("global");
+    expect(plan.env.PROFILE_ONLY).toBe("profile");
+    expect(plan.env.SHARED_ENV).toBe("profile-value");
+    expect(plan.env.ANTHROPIC_MODEL).toBe("claude-sonnet-4-5");
+    expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBe("sk-ant");
+  });
+
+  it("should allow Claude effort level through profile runtime env", () => {
     const profile: Profile = {
       provider: "claude",
       name: "DeepSeek Pro",
       url: "https://api.deepseek.com/anthropic",
       key: "sk-ds",
       selectedModelId: "deepseek-v4-pro[1m]",
-      advancedModelMapping: {
-        enabled: false,
-        claude: {
-          deepseekReasoningEffort: "max",
-        },
-      },
     };
     const service = new ProfileService([profile], new MemoryStateAccessor({
       parameter_settings: {
@@ -110,7 +149,11 @@ describe("LaunchService", () => {
     const plan = launchService.buildExecutionPlan({
       profile_key: itemKey(profile),
       provider: "claude",
-      runtime_settings: makeRuntime(),
+      runtime_settings: makeRuntime({
+        extra_env: {
+          CLAUDE_CODE_EFFORT_LEVEL: "max",
+        },
+      }),
     });
 
     expect(plan.valid).toBe(true);
@@ -118,8 +161,8 @@ describe("LaunchService", () => {
     expect(plan.env.ANTHROPIC_MODEL).toBe("deepseek-v4-pro[1m]");
   });
 
-  it("should inject DeepSeek high effort for Claude profiles when configured", () => {
-    const profile: Profile = {
+  it("should ignore legacy DeepSeek reasoning effort fields instead of injecting effort env", () => {
+    const profile = {
       provider: "claude",
       name: "DeepSeek Pro",
       url: "https://api.deepseek.com/anthropic",
@@ -131,7 +174,7 @@ describe("LaunchService", () => {
           deepseekReasoningEffort: "high",
         },
       },
-    };
+    } as unknown as Profile;
     const service = new ProfileService([profile], new MemoryStateAccessor());
     const launchService = new LaunchService(service, {
       getModelMappingsState: () => makeMappings(),
@@ -145,7 +188,8 @@ describe("LaunchService", () => {
     });
 
     expect(plan.valid).toBe(true);
-    expect(plan.env.CLAUDE_CODE_EFFORT_LEVEL).toBe("high");
+    expect(plan.env.CLAUDE_CODE_EFFORT_LEVEL).toBeUndefined();
+    expect(plan.env.ANTHROPIC_MODEL).toBe("deepseek-v4-pro");
   });
 
   it("should only inject Claude family alias mapping when the profile explicitly enables it", () => {
@@ -414,6 +458,50 @@ describe("LaunchService", () => {
     expect(plan.codexConfig?.profileName).toBe("site-a632b8ac583c81de");
     expect(plan.env.CODEX_HOME).toBe("C:/workspace/app-data/codex-runtime/home");
     expect(plan.env.CODEX_SITE_API_KEY_A632B8AC583C81DE).toBe("sk-glm");
+  });
+
+  it("should merge profile runtime env for Codex without overriding generated Codex env", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "GLM",
+      url: "https://open.bigmodel.cn/api/paas/v4",
+      key: "sk-glm",
+      selectedModelId: "glm-4.6",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      parameter_settings: {
+        ...defaultLocalState().parameter_settings,
+        extra_env: {
+          SHARED_ENV: "global-value",
+          CODEX_HOME: "C:/global-codex-home",
+        },
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+    });
+    const apiKeyEnv = "CODEX_SITE_API_KEY_A632B8AC583C81DE";
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({
+        command_base: "codex",
+        extra_env: {
+          PROFILE_ONLY: "profile",
+          SHARED_ENV: "profile-value",
+          CODEX_HOME: "C:/profile-codex-home",
+          [apiKeyEnv]: "profile-key",
+        },
+      }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.env.PROFILE_ONLY).toBe("profile");
+    expect(plan.env.SHARED_ENV).toBe("profile-value");
+    expect(plan.env.CODEX_HOME).toBe("C:/workspace/app-data/codex-runtime/home");
+    expect(plan.env[apiKeyEnv]).toBe("sk-glm");
   });
 
   it("should allow an explicit Codex command-line model override only in advanced mapping mode", () => {

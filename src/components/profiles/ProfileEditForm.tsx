@@ -4,7 +4,6 @@ import { memo, type ReactNode, useCallback, useMemo, useState } from "react";
 import type {
   AdvancedModelMapping,
   ClaudeModelAliasMode,
-  DeepSeekReasoningEffort,
   LaunchMode,
   ProviderID,
 } from "../../shared/profile/types.js";
@@ -31,6 +30,7 @@ interface ProfileEditFormProps {
     command_base: string;
     settings_file: string;
     extra_args: string;
+    extra_env?: Record<string, string>;
     launch_mode: LaunchMode;
     exclude_user_settings: boolean;
   };
@@ -45,7 +45,7 @@ interface ProfileEditFormProps {
   onPermissionsChange?: (permissions: ProfilePermissions | null) => void;
   onDraftCommit?: (field: string, value?: string | boolean) => void;
   onAdvancedModelMappingChange: (next: AdvancedModelMapping) => void;
-  onRuntimeChange: (field: string, value: string | boolean) => void;
+  onRuntimeChange: (field: string, value: string | boolean | Record<string, string>) => void;
   onRuntimeCommit?: (field: string) => void;
   onFetchModels: () => void;
   onOpenBaseUrl?: () => void;
@@ -113,6 +113,35 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     return modelOptions.filter((item) => item.toLowerCase().includes(keyword));
   }, [draft.selectedModelId, modelOptions]);
   const showModelPicker = modelPickerOpen && !disabled && modelOptions.length > 0;
+  const runtimeEnv = runtime.extra_env ?? {};
+  const runtimeEnvEntries = Object.entries(runtimeEnv);
+
+  const updateRuntimeEnvKey = useCallback((currentKey: string, nextKey: string, value: string) => {
+    const nextEnv = { ...runtimeEnv };
+    delete nextEnv[currentKey];
+    nextEnv[nextKey] = value;
+    onRuntimeChange("extra_env", nextEnv);
+  }, [onRuntimeChange, runtimeEnv]);
+
+  const updateRuntimeEnvValue = useCallback((key: string, value: string) => {
+    onRuntimeChange("extra_env", {
+      ...runtimeEnv,
+      [key]: value,
+    });
+  }, [onRuntimeChange, runtimeEnv]);
+
+  const addRuntimeEnv = useCallback(() => {
+    onRuntimeChange("extra_env", {
+      ...runtimeEnv,
+      "": "",
+    });
+  }, [onRuntimeChange, runtimeEnv]);
+
+  const removeRuntimeEnv = useCallback((key: string) => {
+    const nextEnv = { ...runtimeEnv };
+    delete nextEnv[key];
+    onRuntimeChange("extra_env", nextEnv);
+  }, [onRuntimeChange, runtimeEnv]);
 
   const updateAdvancedMapping = useCallback((changes: Partial<AdvancedModelMapping>) => {
     onAdvancedModelMappingChange({
@@ -151,19 +180,6 @@ export const ProfileEditForm = memo(function ProfileEditForm({
         ...advancedMapping.claude,
         aliasMode: "custom",
         [field]: value,
-      },
-      codex: {
-        ...advancedMapping.codex,
-      },
-    });
-  }, [advancedMapping, onAdvancedModelMappingChange]);
-
-  const updateDeepSeekReasoningEffort = useCallback((deepseekReasoningEffort: DeepSeekReasoningEffort) => {
-    onAdvancedModelMappingChange({
-      ...advancedMapping,
-      claude: {
-        ...advancedMapping.claude,
-        deepseekReasoningEffort,
       },
       codex: {
         ...advancedMapping.codex,
@@ -247,21 +263,6 @@ export const ProfileEditForm = memo(function ProfileEditForm({
           <option value="none">无覆盖</option>
           <option value="single_model_compat">第三方单模型兼容模式</option>
           <option value="custom">高级自定义</option>
-        </select>
-      </label>
-      <label>
-        <span className="field-title-with-help">
-          <span>DeepSeek 推理强度</span>
-          <span className="field-help">用于 DeepSeek Claude Code 兼容接口，会注入 CLAUDE_CODE_EFFORT_LEVEL。</span>
-        </span>
-        <select
-          value={advancedMapping.claude?.deepseekReasoningEffort ?? "default"}
-          onChange={(e) => updateDeepSeekReasoningEffort(e.target.value as DeepSeekReasoningEffort)}
-          disabled={disabled}
-        >
-          <option value="default">默认</option>
-          <option value="high">High</option>
-          <option value="max">Max</option>
         </select>
       </label>
       {claudeAliasMode === "custom" && (
@@ -532,6 +533,47 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 disabled={disabled}
               />
             </label>
+            <div className="profile-runtime-env-section">
+              <span>环境变量</span>
+              {runtimeEnvEntries.length > 0 && (
+                <div className="profile-runtime-env-list">
+                  {runtimeEnvEntries.map(([key, value]) => (
+                    <div key={key} className="profile-runtime-env-row">
+                      <input
+                        value={key}
+                        onChange={(e) => updateRuntimeEnvKey(key, e.target.value, value)}
+                        placeholder="变量名"
+                        disabled={disabled}
+                      />
+                      <input
+                        value={value}
+                        onChange={(e) => updateRuntimeEnvValue(key, e.target.value)}
+                        placeholder="变量值"
+                        disabled={disabled}
+                      />
+                      <button
+                        type="button"
+                        className="secondary-button small"
+                        onClick={() => removeRuntimeEnv(key)}
+                        disabled={disabled}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="profile-runtime-env-actions">
+                <button
+                  type="button"
+                  className="secondary-button small"
+                  onClick={addRuntimeEnv}
+                  disabled={disabled}
+                >
+                  添加环境变量
+                </button>
+              </div>
+            </div>
             <label className="checkbox-label">
               <input
                 type="checkbox"

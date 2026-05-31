@@ -21,7 +21,6 @@ describe("ProfileEditForm", () => {
         sonnetTarget: "",
         haikuTarget: "",
         subagentTarget: "",
-        deepseekReasoningEffort: "default",
       },
       codex: {
         commandLineModelOverride: "",
@@ -85,6 +84,120 @@ describe("ProfileEditForm", () => {
     expect(html).not.toContain(">代理<");
   });
 
+  it("should render profile runtime environment variable controls", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          extra_env: {
+            PROFILE_ONLY: "profile value",
+            CLAUDE_CODE_EFFORT_LEVEL: "max",
+          },
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        onChange={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("环境变量");
+    expect(html).not.toContain("Profile 环境变量会覆盖全局环境变量");
+    expect(html).toContain("profile-runtime-env-list");
+    expect(html).toContain("profile-runtime-env-actions");
+    expect(html).toContain("PROFILE_ONLY");
+    expect(html).toContain("profile value");
+    expect(html).toContain("CLAUDE_CODE_EFFORT_LEVEL");
+    expect(html).toContain("max");
+  });
+
+  it("should add, update and remove profile runtime environment variables", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onRuntimeChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            extra_env: { OLD_ENV: "old value" },
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={onRuntimeChange}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const addButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "添加环境变量",
+    );
+    expect(addButton).toBeDefined();
+    expect(addButton?.className).toContain("small");
+
+    await act(async () => {
+      addButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onRuntimeChange).toHaveBeenLastCalledWith("extra_env", {
+      OLD_ENV: "old value",
+      "": "",
+    });
+
+    const oldEnvInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.value === "OLD_ENV",
+    );
+    expect(oldEnvInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(oldEnvInput, "NEW_ENV");
+      oldEnvInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(onRuntimeChange).toHaveBeenLastCalledWith("extra_env", {
+      NEW_ENV: "old value",
+    });
+
+    const deleteButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "删除",
+    );
+    expect(deleteButton).toBeDefined();
+
+    await act(async () => {
+      deleteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onRuntimeChange).toHaveBeenLastCalledWith("extra_env", {});
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("should render Claude single-model compatibility controls without explanatory helper text", () => {
     const mapping = makeAdvancedMapping();
     mapping.enabled = true;
@@ -120,8 +233,8 @@ describe("ProfileEditForm", () => {
     expect(html).toContain("主会话模型");
     expect(html).toContain("glm-5.1");
     expect(html).toContain("第三方单模型兼容模式");
-    expect(html).toContain("DeepSeek 推理强度");
-    expect(html).toContain("用于 DeepSeek Claude Code 兼容接口，会注入 CLAUDE_CODE_EFFORT_LEVEL。");
+    expect(html).not.toContain("DeepSeek 推理强度");
+    expect(html).not.toContain("用于 DeepSeek Claude Code 兼容接口，会注入 CLAUDE_CODE_EFFORT_LEVEL。");
     expect(html).not.toContain("将 Opus / Sonnet / Haiku / Subagent 全部指向当前模型");
     expect(html).not.toContain("ANTHROPIC_DEFAULT_OPUS_MODEL");
     expect(html).not.toContain("ANTHROPIC_DEFAULT_SONNET_MODEL");
@@ -254,60 +367,6 @@ describe("ProfileEditForm", () => {
     expect(html).toContain("deepseek-v4-flash");
     expect(html).not.toContain("看起来是第三方模型");
     expect(html).not.toContain("应用推荐设置");
-  });
-
-  it("should update Claude DeepSeek reasoning effort from the compatibility panel", async () => {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    const onAdvancedModelMappingChange = vi.fn();
-
-    await act(async () => {
-      root.render(
-        <ProfileEditForm
-          draft={{ name: "DeepSeek", url: "https://api.deepseek.com/anthropic", key: "sk", selectedModelId: "deepseek-v4-pro", advancedModelMapping: makeAdvancedMapping() }}
-          runtime={{
-            cwd: "",
-            command_base: "claude",
-            settings_file: "",
-            extra_args: "",
-            launch_mode: "new",
-            exclude_user_settings: true,
-          }}
-          provider="claude"
-          modelOptions={[]}
-          onChange={vi.fn()}
-          onAdvancedModelMappingChange={onAdvancedModelMappingChange}
-          onRuntimeChange={vi.fn()}
-          onFetchModels={vi.fn()}
-          onPickCwd={vi.fn()}
-          onSave={vi.fn()}
-          onCancel={vi.fn()}
-        />,
-      );
-    });
-
-    const effortSelect = Array.from(container.querySelectorAll("select")).find(
-      (select) => select.parentElement?.textContent?.includes("DeepSeek 推理强度"),
-    );
-    expect(effortSelect).toBeInstanceOf(HTMLSelectElement);
-
-    await act(async () => {
-      if (effortSelect) {
-        effortSelect.value = "max";
-        effortSelect.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    });
-
-    expect(onAdvancedModelMappingChange).toHaveBeenCalledWith(expect.objectContaining({
-      enabled: false,
-      claude: expect.objectContaining({ deepseekReasoningEffort: "max" }),
-    }));
-
-    await act(async () => {
-      root.unmount();
-    });
-    container.remove();
   });
 
   it("should not offer a recommended compatibility action for official Claude models on third-party gateways", () => {
