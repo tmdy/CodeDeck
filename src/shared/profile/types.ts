@@ -29,7 +29,6 @@ export type ProfilePermissionsInput = Partial<Omit<ProfilePermissions, "common">
 };
 
 export type ClaudeModelAliasMode = "none" | "single_model_compat" | "custom";
-export type DeepSeekReasoningEffort = "default" | "high" | "max";
 
 export interface ClaudeAdvancedModelMapping {
   aliasMode?: ClaudeModelAliasMode;
@@ -38,7 +37,6 @@ export interface ClaudeAdvancedModelMapping {
   sonnetTarget?: string;
   haikuTarget?: string;
   subagentTarget?: string;
-  deepseekReasoningEffort?: DeepSeekReasoningEffort;
 }
 
 export interface CodexAdvancedModelMapping {
@@ -70,6 +68,7 @@ export interface RuntimeSettings {
   settings_file?: string;
   launch_mode: LaunchMode;
   extra_args: string;
+  extra_env: Record<string, string>;
   exclude_user_settings: boolean;
 }
 
@@ -136,6 +135,7 @@ export function defaultRuntimeSettings(providerID: string): RuntimeSettings {
     settings_file: "",
     launch_mode: DEFAULT_LAUNCH_MODE,
     extra_args: "",
+    extra_env: {},
     exclude_user_settings: true,
   };
 }
@@ -149,8 +149,20 @@ export function normalizeRuntimeSettings(settings: RuntimeSettings, providerID: 
     settings_file: settings.settings_file?.trim() ?? defaults.settings_file,
     launch_mode: normalizeLaunchMode(settings.launch_mode),
     extra_args: settings.extra_args.trim(),
+    extra_env: normalizeRuntimeEnv(settings.extra_env),
     exclude_user_settings: settings.exclude_user_settings ?? defaults.exclude_user_settings,
   };
+}
+
+function normalizeRuntimeEnv(env?: Record<string, string>): Record<string, string> {
+  if (!env) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(env)
+      .map(([key, value]) => [key.trim(), value] as const)
+      .filter(([key]) => key.length > 0),
+  );
 }
 
 export function defaultGlobalSettings(): GlobalSettings {
@@ -190,7 +202,6 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
     sonnetTarget: value.claude.sonnetTarget?.trim() || undefined,
     haikuTarget: value.claude.haikuTarget?.trim() || undefined,
     subagentTarget: value.claude.subagentTarget?.trim() || undefined,
-    deepseekReasoningEffort: normalizeDeepSeekReasoningEffort(value.claude.deepseekReasoningEffort),
   } : undefined;
   const codex = value.codex ? {
     commandLineModelOverride: value.codex.commandLineModelOverride?.trim() || undefined,
@@ -201,13 +212,6 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
     claude,
     codex,
   };
-}
-
-export function normalizeDeepSeekReasoningEffort(value?: string): DeepSeekReasoningEffort {
-  if (value === "high" || value === "max") {
-    return value;
-  }
-  return "default";
 }
 
 export function resolveClaudeModelAliasMode(value?: AdvancedModelMapping): ClaudeModelAliasMode {

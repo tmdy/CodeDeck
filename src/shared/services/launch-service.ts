@@ -6,7 +6,6 @@ import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND,
   PROVIDER_CLAUDE,
-  normalizeDeepSeekReasoningEffort,
   normalizeRuntimeSettings,
   resolveClaudeModelAliasMode,
   type LaunchMode,
@@ -200,7 +199,7 @@ export class LaunchService {
     const artifacts = profile.provider === PROVIDER_CLAUDE
       ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.claude)
       : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.codex);
-    const env = this.mergeInjectedEnv(artifacts.env);
+    const env = this.mergeInjectedEnv(artifacts.env, normalizedRuntime.extra_env);
 
     return {
       valid: true,
@@ -290,13 +289,6 @@ export class LaunchService {
         if (advancedClaude?.subagentTarget?.trim()) env.CLAUDE_CODE_SUBAGENT_MODEL = advancedClaude.subagentTarget.trim();
       }
     }
-    const deepseekReasoningEffort = normalizeDeepSeekReasoningEffort(
-      profile.advancedModelMapping?.claude?.deepseekReasoningEffort,
-    );
-    if (deepseekReasoningEffort !== "default") {
-      env.CLAUDE_CODE_EFFORT_LEVEL = deepseekReasoningEffort;
-    }
-
     return {
       commandExecutable: commandBase,
       commandArgs: args,
@@ -395,15 +387,24 @@ export class LaunchService {
     return errors;
   }
 
-  private mergeInjectedEnv(providerEnv: Record<string, string>): Record<string, string> {
+  private mergeInjectedEnv(
+    providerEnv: Record<string, string>,
+    runtimeEnv: Record<string, string>,
+  ): Record<string, string> {
     const extraEnv = this.getParameterSettings().extra_env ?? {};
     const normalizedExtraEnv = Object.fromEntries(
       Object.entries(extraEnv)
         .map(([key, value]) => [key.trim(), value] as const)
         .filter(([key]) => key.length > 0),
     );
+    const normalizedRuntimeEnv = Object.fromEntries(
+      Object.entries(runtimeEnv)
+        .map(([key, value]) => [key.trim(), value] as const)
+        .filter(([key]) => key.length > 0),
+    );
     return {
       ...normalizedExtraEnv,
+      ...normalizedRuntimeEnv,
       ...providerEnv,
     };
   }

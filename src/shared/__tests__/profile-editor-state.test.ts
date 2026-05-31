@@ -38,7 +38,6 @@ function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDr
         sonnetTarget: "",
         haikuTarget: "",
         subagentTarget: "",
-        deepseekReasoningEffort: "default",
       },
       codex: {
         commandLineModelOverride: "",
@@ -57,6 +56,7 @@ function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDr
     extra_args: "--verbose",
     exclude_user_settings: true,
     ...overrides,
+    extra_env: overrides.extra_env ?? {},
     permissions: overrides.permissions ?? null,
   };
 }
@@ -72,6 +72,7 @@ describe("profile-editor-state", () => {
         settings_file: "C:/Users/test/.claude/settings.local.json",
         launch_mode: "continue_last",
         extra_args: "--debug",
+        extra_env: { PROFILE_ONLY: "profile" },
         exclude_user_settings: false,
       },
       "claude",
@@ -96,7 +97,6 @@ describe("profile-editor-state", () => {
           sonnetTarget: "",
           haikuTarget: "",
           subagentTarget: "",
-          deepseekReasoningEffort: "default",
         },
         codex: {
           commandLineModelOverride: "",
@@ -114,6 +114,7 @@ describe("profile-editor-state", () => {
       settings_file: "C:/Users/test/.claude/settings.local.json",
       launch_mode: "new",
       extra_args: "--debug",
+      extra_env: { PROFILE_ONLY: "profile" },
       exclude_user_settings: false,
     });
   });
@@ -129,6 +130,26 @@ describe("profile-editor-state", () => {
     expect(draft.permissions).toBeNull();
     expect(draft.balanceSessionSelection).toBe("auto");
     expect(draft.exclude_user_settings).toBe(true);
+  });
+
+  it("should drop legacy DeepSeek reasoning effort from selected profile drafts", () => {
+    const legacyProfile = {
+      ...claudeProfile,
+      advancedModelMapping: {
+        enabled: false,
+        claude: {
+          deepseekReasoningEffort: "max",
+        },
+      },
+    } as unknown as Profile;
+
+    const draft = buildSelectedProfileDraft(
+      legacyProfile,
+      undefined,
+      "claude",
+    );
+
+    expect(draft.advancedModelMapping.claude).not.toHaveProperty("deepseekReasoningEffort");
   });
 
   it("should create new Claude third-party drafts with single-model compatibility enabled by default", () => {
@@ -367,6 +388,7 @@ describe("profile-editor-state", () => {
       settings_file: "",
       launch_mode: "new",
       extra_args: "--verbose",
+      extra_env: {},
       exclude_user_settings: true,
     });
   });
