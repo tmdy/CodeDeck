@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-05-04T03:24:21.365Z",
+  "updatedAt": "2026-05-11T07:07:18.286Z",
   "entries": {
     "codex:_shared": {
       "translatedDescription": "共享系统目录，供多个 Codex skill 复用，不作为独立功能技能使用。",
@@ -1109,6 +1109,34 @@
     "claude:workflow-test-fix": {
       "translatedDescription": "用于测试失败后的修复闭环，强调复现、定位、最小修复与回归验证。",
       "translatedSummary": "测试失败修复与回归闭环技能。"
+    },
+    "codex:ara-compiler": {
+      "translatedDescription": "将论文、代码仓库、实验日志、代码目录或研究笔记整理为 Agent-Native Research Artifact（ARA），抽取问题、概念、主张、证据、实验线索和可追溯探索过程，适合把零散研究材料沉淀成结构化、可复核的研究包。",
+      "translatedSummary": "将论文、代码和实验记录整理为结构化 ARA 研究资产。"
+    },
+    "codex:ara-research-manager": {
+      "translatedDescription": "在一次研究或开发任务结束后回顾会话过程，提取决策、实验、失败路径、主张、启发式经验和方向调整，并写入 ara/ 目录，帮助保留研究项目真实演化过程和来源标记。",
+      "translatedSummary": "会话结束后记录研究决策、实验和失败路径，维护 ARA 演化轨迹。"
+    },
+    "codex:ara-rigor-reviewer": {
+      "translatedDescription": "对已通过结构校验的 ARA 研究资产进行语义层面的严谨性审查，从证据相关性、可证伪性、主张边界、论证连贯性、探索完整性和方法严谨性等维度给出评分与修改建议。",
+      "translatedSummary": "从证据、主张边界和方法严谨性等维度审查 ARA 研究资产。"
+    },
+    "claude:ara-compiler": {
+      "translatedDescription": "将论文、代码仓库、实验日志、代码目录或研究笔记整理为 Agent-Native Research Artifact（ARA），抽取问题、概念、主张、证据、实验线索和可追溯探索过程，适合把零散研究材料沉淀成结构化、可复核的研究包。",
+      "translatedSummary": "将论文、代码和实验记录整理为结构化 ARA 研究资产。"
+    },
+    "claude:ara-research-manager": {
+      "translatedDescription": "在一次研究或开发任务结束后回顾会话过程，提取决策、实验、失败路径、主张、启发式经验和方向调整，并写入 ara/ 目录，帮助保留研究项目真实演化过程和来源标记。",
+      "translatedSummary": "会话结束后记录研究决策、实验和失败路径，维护 ARA 演化轨迹。"
+    },
+    "claude:ara-rigor-reviewer": {
+      "translatedDescription": "对已通过结构校验的 ARA 研究资产进行语义层面的严谨性审查，从证据相关性、可证伪性、主张边界、论证连贯性、探索完整性和方法严谨性等维度给出评分与修改建议。",
+      "translatedSummary": "从证据、主张边界和方法严谨性等维度审查 ARA 研究资产。"
+    },
+    "codex:brainstorm": {
+      "translatedDescription": "双模式头脑风暴流程：自动模式会生成分析框架、并行调用多角色视角进行扩展，再汇总形成综合结论；也支持单角色独立分析。",
+      "translatedSummary": "双模式头脑风暴与多角色并行分析流程。"
     }
   }
 }

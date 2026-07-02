@@ -109,8 +109,8 @@ describe("App page containers", () => {
   it("renders the Sessions page layout", () => {
     const html = renderToStaticMarkup(
       <SessionsPage
-        providerSwitchProps={{
-          activeProvider: PROVIDER_CLAUDE,
+        sessionViewSwitchProps={{
+          activeView: PROVIDER_CLAUDE,
           onSwitch: vi.fn(),
         }}
         sessionListProps={{

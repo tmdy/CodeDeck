@@ -65,6 +65,7 @@ import {
 import type { ParameterSettings } from "../src/shared/parameter/types.js";
 import type { ModelMappingsState } from "../src/shared/model-mapping/config-types.js";
 import { normalizeThemeMode } from "../src/shared/theme.js";
+import { createStartupTheme, serializeStartupTheme } from "../src/shared/startup-theme.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -111,6 +112,10 @@ function applyNativeThemeMode(mode: unknown): void {
   nativeTheme.themeSource = normalizeThemeMode(mode);
 }
 
+function getLocalStatePath(): string {
+  return path.join(projectRoot, "app-data", LOCAL_STATE_FILE);
+}
+
 function profileStoresReady(): boolean {
   return Boolean(
     encryptedStore
@@ -136,6 +141,17 @@ async function ensureProfileStoresReady(): Promise<void> {
   await profileStoresInitPromise;
 }
 
+function warmProfileStoresInBackground(): void {
+  void ensureProfileStoresReady()
+    .then(async () => {
+      appLogger.info("app", "profile_services_ready", "Profile storage services initialized");
+      await syncNativeThemeFromLocalState();
+    })
+    .catch((error: unknown) => {
+      appLogger.error("app", "profile_services_ready_error", "Profile storage warmup failed", { error });
+    });
+}
+
 async function fileExists(targetPath: string): Promise<boolean> {
   try {
     await fs.access(targetPath);
@@ -157,9 +173,178 @@ function resolveWindowBackgroundColor(): string {
 }
 
 async function syncNativeThemeFromLocalState(): Promise<void> {
-  if (!localStateStore) return;
-  const state = await localStateStore.load();
+  const stateStore = localStateStore ?? new LocalStateStore(getLocalStatePath());
+  const state = await stateStore.load();
   applyNativeThemeMode(state.global_settings.theme_mode);
+}
+
+function getStartupThemeArgument(): string {
+  return `--skills-manager-startup-theme=${serializeStartupTheme(
+    createStartupTheme(nativeTheme.themeSource, nativeTheme.shouldUseDarkColors),
+  )}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function createStartupShellHtml(
+  message = "正在准备解锁界面...",
+  options: { progress?: boolean } = {},
+): string {
+  const showProgress = options.progress ?? true;
+  const startupTheme = createStartupTheme(nativeTheme.themeSource, nativeTheme.shouldUseDarkColors);
+  const isDark = startupTheme.effectiveTheme === "dark";
+  const background = isDark ? "#111827" : "#f2efe7";
+  const text = isDark ? "#e5edf7" : "#1d2733";
+  const muted = isDark ? "#9aa8ba" : "#607084";
+  const surface = isDark ? "rgba(23, 31, 43, 0.9)" : "rgba(255, 255, 255, 0.88)";
+  const border = isDark ? "rgba(190, 205, 225, 0.12)" : "rgba(29, 39, 51, 0.08)";
+  const shadow = isDark ? "rgba(0, 0, 0, 0.28)" : "rgba(50, 68, 92, 0.1)";
+  const progressTrack = isDark ? "rgba(74, 144, 226, 0.18)" : "rgba(23, 64, 109, 0.12)";
+  const progressBar = isDark ? "#3b82c4" : "#17406d";
+  const safeMessage = escapeHtml(message);
+  return `<!doctype html>
+<html lang="zh-CN" data-theme="${startupTheme.effectiveTheme}" data-theme-mode="${startupTheme.themeMode}">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Skills Manager</title>
+    <style>
+      :root {
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: ${text};
+        background: ${background};
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body,
+      #root {
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body.unlock-route {
+        overflow: hidden;
+      }
+
+      .startup-screen {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        width: 100vw;
+        overflow: hidden;
+        padding: 16px;
+        background: ${background};
+      }
+
+      .unlock-card {
+        border: 1px solid ${border};
+        background: ${surface};
+        box-shadow: 0 24px 80px ${shadow};
+        border-radius: 22px;
+        padding: 24px;
+        width: min(420px, calc(100vw - 48px));
+        max-width: 100%;
+        display: grid;
+        gap: 12px;
+        text-align: center;
+      }
+
+      .unlock-card h1 {
+        margin: 0;
+        font-size: 1.42rem;
+      }
+
+      .unlock-card p {
+        margin: 0;
+        color: ${muted};
+      }
+
+      .startup-progress {
+        height: 4px;
+        width: 100%;
+        overflow: hidden;
+        border-radius: 999px;
+        background: ${progressTrack};
+      }
+
+      .startup-progress-bar {
+        display: block;
+        width: 44%;
+        height: 100%;
+        border-radius: inherit;
+        background: ${progressBar};
+        animation: startup-progress-slide 1.1s ease-in-out infinite;
+      }
+
+      @keyframes startup-progress-slide {
+        0% {
+          transform: translateX(-120%);
+        }
+
+        100% {
+          transform: translateX(260%);
+        }
+      }
+    </style>
+  </head>
+  <body class="unlock-route">
+    <div id="root">
+      <div class="startup-screen">
+        <div class="unlock-card">
+          <h1>Skills Manager</h1>
+          <p>${safeMessage}</p>
+          ${showProgress ? `
+          <div class="startup-progress" role="progressbar" aria-label="${safeMessage}">
+            <span class="startup-progress-bar"></span>
+          </div>` : ""}
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`;
+}
+
+function createStartupShellUrl(message?: string, options?: { progress?: boolean }): string {
+  return `data:text/html;charset=UTF-8,${encodeURIComponent(createStartupShellHtml(message, options))}`;
+}
+
+async function showStartupShell(browserWindow: BrowserWindow): Promise<void> {
+  await browserWindow.loadURL(createStartupShellUrl());
+  if (!browserWindow.isDestroyed() && !browserWindow.isVisible()) {
+    browserWindow.show();
+  }
+}
+
+function errorToStartupMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return "未知错误";
+}
+
+async function showStartupLoadError(browserWindow: BrowserWindow, error: unknown): Promise<void> {
+  if (browserWindow.isDestroyed()) {
+    return;
+  }
+  await browserWindow.loadURL(createStartupShellUrl(
+    `界面启动失败：${errorToStartupMessage(error)}。请打开 DevTools 查看控制台错误（Ctrl+Shift+I）`,
+    { progress: false },
+  ));
+  if (!browserWindow.isDestroyed() && !browserWindow.isVisible()) {
+    browserWindow.show();
+  }
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -488,6 +673,8 @@ function buildProfileBootstrapPayload(): BootstrapResult {
       runtime_by_profile: state.runtime_by_profile,
       balance_checks_by_profile: state.balance_checks_by_profile,
       global_settings: state.global_settings,
+      working_directory_favorites: state.working_directory_favorites,
+      session_favorites: state.session_favorites,
     },
     siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
     defaultWorkingDirectory: getDefaultWorkingDirectory(),
@@ -707,14 +894,20 @@ function getPreloadPath(): string {
 async function createMainWindow(): Promise<void> {
   appLogger.info("window", "main_window_start", "Opening main window");
   const browserWindow = new BrowserWindow({
+    title: "Skills Manager",
     width: 1520,
     height: 920,
     minWidth: 1200,
     minHeight: 760,
+    // 启动期间立即显示窗口（纯色背景），避免渲染器冷启动期间（日志实测约 3.4s）
+    // 用户双击后完全看不到窗口反馈。backgroundColor 与启动 shell 背景同色，
+    // 纯色 → shell 过渡无闪烁；shell 自带进度条，冷启动结束后立即接管视觉反馈。
+    show: true,
     backgroundColor: resolveWindowBackgroundColor(),
     icon: resolveWindowIconPath(),
     webPreferences: {
       preload: getPreloadPath(),
+      additionalArguments: [getStartupThemeArgument()],
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -734,13 +927,20 @@ async function createMainWindow(): Promise<void> {
     }
   });
 
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devServerUrl) {
-    await browserWindow.loadURL(devServerUrl);
-    return;
-  }
+  await showStartupShell(browserWindow);
 
-  await browserWindow.loadFile(resolveDistIndexPath());
+  try {
+    const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+    if (devServerUrl) {
+      await browserWindow.loadURL(devServerUrl);
+      return;
+    }
+
+    await browserWindow.loadFile(resolveDistIndexPath());
+  } catch (error: unknown) {
+    appLogger.error("window", "main_window_load_error", "Main window failed to load renderer", { error });
+    await showStartupLoadError(browserWindow, error);
+  }
 }
 
 // ---- 注册所有 IPC 处理器 ----
@@ -1019,6 +1219,12 @@ function registerAllIpcHandlers(): void {
     },
   );
   handleIpc(
+    "profile:update-working-directory-favorites",
+    async (_event, favorites: unknown) => {
+      return getProfileService().updateWorkingDirectoryFavorites(favorites);
+    },
+  );
+  handleIpc(
     "profile:save-site-balance-session",
     async (_event, baseUrl: string, draft: SiteBalanceSessionDraft) => {
       return getProfileService().saveSiteBalanceSession(baseUrl, draft);
@@ -1188,6 +1394,13 @@ function registerAllIpcHandlers(): void {
     },
   );
 
+  handleIpc(
+    "session:update-favorites",
+    async (_event, favorites: unknown) => {
+      return getSettingsStateService().updateSessionFavorites(favorites);
+    },
+  );
+
   handleIpc("balance:test", async (_event, profileKey: ProfileKey) => {
     void runBalanceCheck(profileKey);
   });
@@ -1338,23 +1551,16 @@ app.whenReady().then(async () => {
   appLogger.info("app", "ready_start", "Electron app ready handler started");
   // 1. 先确定工作区根目录，但不执行 Skills 工作区初始化
   resolveProjectRoot();
+  await syncNativeThemeFromLocalState();
 
   // 2. 先注册 IPC，再开窗；Profile 存储改为后台预热，不阻塞解锁页出现。
   registerAllIpcHandlers();
   appLogger.info("app", "ipc_handlers_registered", "IPC handlers registered");
+  warmProfileStoresInBackground();
 
   // 3. 创建主窗口
   await createMainWindow();
   appLogger.info("app", "main_window_created", "Main window created");
-
-  void ensureProfileStoresReady()
-    .then(async () => {
-      appLogger.info("app", "profile_services_ready", "Profile storage services initialized");
-      await syncNativeThemeFromLocalState();
-    })
-    .catch((error: unknown) => {
-      appLogger.error("app", "profile_services_ready_error", "Profile storage warmup failed", { error });
-    });
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

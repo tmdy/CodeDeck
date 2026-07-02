@@ -1,6 +1,13 @@
+// @vitest-environment jsdom
+
 import { describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import type { ReactElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SessionList } from "../../../components/launcher/SessionList.jsx";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function createSession(index: number) {
   return {
@@ -13,6 +20,55 @@ function createSession(index: number) {
 }
 
 describe("SessionList", () => {
+  it("renders favorite controls without selecting the row when toggled", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onSelect = vi.fn();
+    const onToggleFavorite = vi.fn();
+    const FavoriteSessionList = SessionList as unknown as (props: Record<string, unknown>) => ReactElement;
+
+    await act(async () => {
+      root.render(
+        <FavoriteSessionList
+          provider="codex"
+          sessions={[createSession(1)]}
+          selectedId=""
+          restoreProfiles={[]}
+          selectedRestoreProfileKey=""
+          restoreDisabled
+          getSessionKey={(session: ReturnType<typeof createSession>) => (
+            `codex|app_runtime||${session.session_id}`
+          )}
+          favoriteSessionKeys={new Set(["codex|app_runtime||session-1"])}
+          onSelect={onSelect}
+          onRefresh={vi.fn()}
+          onSelectRestoreProfile={vi.fn()}
+          onRestore={vi.fn()}
+          onToggleFavorite={onToggleFavorite}
+        />,
+      );
+    });
+
+    const favoriteButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="取消收藏会话：会话 1"]',
+    );
+    expect(favoriteButton).toBeInstanceOf(HTMLButtonElement);
+    expect(favoriteButton?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => {
+      favoriteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onToggleFavorite).toHaveBeenCalledWith(expect.objectContaining({ session_id: "session-1" }));
+    expect(onSelect).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("renders the history scope toolbar, selected session details and restore profile selector", () => {
     const html = renderToStaticMarkup(
       <SessionList

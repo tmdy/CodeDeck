@@ -22,6 +22,7 @@ export interface WriteCodexProfileOptions {
   apiKeyEnv: string;
   targetModel: string;
   content?: string;
+  globalConfigContent?: string;
 }
 
 export function sanitizeCodexProfileId(profileId: string): string {
@@ -109,37 +110,40 @@ export class ModelMappingConfigService {
 
   async writeCodexProfile(options: WriteCodexProfileOptions): Promise<string> {
     const runtimeHome = await this.ensureCodexRuntimeHome();
-    const targetPath = path.join(runtimeHome, "config.toml");
-    const content = options.content ?? this.buildCodexProfileContent(options);
-    const existing = await readTextIfExists(targetPath);
+    const baseConfigPath = path.join(runtimeHome, "config.toml");
     const profileName = options.profileName ?? buildCodexSiteProfileName(options.profileId);
-    const nextContent = mergeTomlBlocks(existing, content, new Set([
-      `profiles.${JSON.stringify(profileName)}`,
-      `profiles.${JSON.stringify(profileName)}.sandbox_workspace_write`,
-      `model_providers.${options.providerId}`,
-    ]));
+    const profileConfigPath = path.join(runtimeHome, `${profileName}.config.toml`);
+    const rawProfileContent = options.content ?? this.buildCodexProfileContent(options);
+    const profileContent = normalizeTomlContent(toStandaloneCodexProfileContent(rawProfileContent, profileName));
+
+    const existingBaseConfig = await readTextIfExists(baseConfigPath);
+    const cleanedBaseConfig = cleanCodexBaseConfig(existingBaseConfig, new Set([options.providerId]));
+    const globalConfigContent = normalizeTomlContent([
+      extractCodexGlobalConfigContent(rawProfileContent),
+      options.globalConfigContent ?? "",
+    ].filter((item) => item.trim()).join("\n"));
+    const globalHeaders = collectTomlHeaders(globalConfigContent);
+    const nextBaseConfig = globalHeaders.size > 0
+      ? mergeTomlBlocks(cleanedBaseConfig, globalConfigContent, globalHeaders)
+      : cleanedBaseConfig;
+
     await ensureDirectory(runtimeHome);
-    if (await pathExists(targetPath)) {
-      await backupIfExists(targetPath);
+    if (existingBaseConfig || nextBaseConfig.trim()) {
+      await writeTextWithBackupIfChanged(baseConfigPath, nextBaseConfig);
     }
-    await fs.writeFile(targetPath, nextContent, "utf8");
-    return targetPath;
+    await writeTextWithBackupIfChanged(profileConfigPath, profileContent);
+    return profileConfigPath;
   }
 
   buildCodexProfileContent(options: WriteCodexProfileOptions): string {
     const targetModel = options.targetModel.trim();
-    const profileName = options.profileName ?? buildCodexSiteProfileName(options.profileId);
     const profileLines = targetModel
       ? [
-          `[profiles.${JSON.stringify(profileName)}]`,
           `model = ${JSON.stringify(targetModel)}`,
           `model_provider = ${JSON.stringify(options.providerId)}`,
           "",
         ]
-      : [
-          `[profiles.${JSON.stringify(profileName)}]`,
-          "",
-        ];
+      : [];
     return [
       ...profileLines,
       `[model_providers.${options.providerId}]`,
@@ -147,6 +151,9 @@ export class ModelMappingConfigService {
       `base_url = ${JSON.stringify(options.baseUrl.trim())}`,
       `env_key = ${JSON.stringify(options.apiKeyEnv.trim())}`,
       'wire_api = "responses"',
+      "",
+      "[windows]",
+      'sandbox = "elevated"',
       "",
     ].join("\n");
   }
@@ -233,6 +240,83 @@ async function readTextIfExists(targetPath: string): Promise<string> {
   return fs.readFile(targetPath, "utf8");
 }
 
+async function writeTextWithBackupIfChanged(targetPath: string, content: string): Promise<void> {
+  const existing = await readTextIfExists(targetPath);
+  if (existing === content) {
+    return;
+  }
+  await ensureDirectory(path.dirname(targetPath));
+  if (existing) {
+    await backupIfExists(targetPath);
+  }
+  await fs.writeFile(targetPath, content, "utf8");
+}
+
+function normalizeTomlContent(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n").trim();
+  return normalized ? `${normalized}\n` : "";
+}
+
+function toStandaloneCodexProfileContent(content: string, profileName: string): string {
+  const blocks = splitTomlBlocks(content);
+  const standaloneBlocks: TomlBlock[] = [];
+  const topLevelLines: string[] = [];
+  for (const block of blocks) {
+    if (!block.header) {
+      topLevelLines.push(...block.lines);
+      continue;
+    }
+    if (isTargetProfileHeader(block.header, profileName)) {
+      topLevelLines.push(...block.lines.slice(1), "");
+      continue;
+    }
+    if (isTargetProfileWorkspaceHeader(block.header, profileName)) {
+      standaloneBlocks.push({
+        header: "sandbox_workspace_write",
+        lines: ["[sandbox_workspace_write]", ...block.lines.slice(1)],
+      });
+      continue;
+    }
+    if (isLegacyCodexProfileHeader(block.header) || isCodexGlobalConfigHeader(block.header)) {
+      continue;
+    }
+    standaloneBlocks.push(block);
+  }
+  const normalizedTopLevelLines = topLevelLines.filter((line, index, lines) => {
+    if (line.trim()) {
+      return true;
+    }
+    return index > 0 && lines[index - 1]?.trim();
+  });
+  return renderTomlBlocks([
+    ...(normalizedTopLevelLines.some((line) => line.trim()) ? [{ lines: normalizedTopLevelLines }] : []),
+    ...standaloneBlocks,
+  ]);
+}
+
+function extractCodexGlobalConfigContent(content: string): string {
+  return renderTomlBlocks(splitTomlBlocks(content).filter((block) => block.header && isCodexGlobalConfigHeader(block.header)));
+}
+
+function isTargetProfileHeader(header: string, profileName: string): boolean {
+  return profileHeaderCandidates(profileName).some((candidate) => header === candidate);
+}
+
+function isTargetProfileWorkspaceHeader(header: string, profileName: string): boolean {
+  return profileHeaderCandidates(profileName).some((candidate) => header === `${candidate}.sandbox_workspace_write`);
+}
+
+function profileHeaderCandidates(profileName: string): string[] {
+  return [`profiles.${JSON.stringify(profileName)}`, `profiles.${profileName}`];
+}
+
+function isCodexGlobalConfigHeader(header: string): boolean {
+  return header === "mcp_servers"
+    || header.startsWith("mcp_servers.")
+    || header === "projects"
+    || header.startsWith("projects.");
+}
+
 function splitTomlBlocks(content: string): TomlBlock[] {
   const blocks: TomlBlock[] = [];
   let current: TomlBlock = { lines: [] };
@@ -254,6 +338,55 @@ function splitTomlBlocks(content: string): TomlBlock[] {
   return blocks;
 }
 
+function renderTomlBlocks(blocks: TomlBlock[]): string {
+  const rendered = blocks
+    .map((block) => block.lines.join("\n").trimEnd())
+    .filter(Boolean)
+    .join("\n\n");
+  return rendered ? `${rendered}\n` : "";
+}
+
+function collectTomlHeaders(content: string): Set<string> {
+  return new Set(splitTomlBlocks(content)
+    .map((block) => block.header)
+    .filter((header): header is string => Boolean(header)));
+}
+
+function cleanCodexBaseConfig(existing: string, providerIdsToRemove: Set<string>): string {
+  const blocks = splitTomlBlocks(existing);
+  const keptBlocks: TomlBlock[] = [];
+  for (const block of blocks) {
+    if (!block.header) {
+      const lines = block.lines.filter((line) => !/^\s*profile\s*=/.test(line));
+      if (lines.some((line) => line.trim())) {
+        keptBlocks.push({ lines });
+      }
+      continue;
+    }
+    if (isLegacyCodexProfileHeader(block.header)) {
+      continue;
+    }
+    if (isManagedProviderHeader(block.header, providerIdsToRemove)) {
+      continue;
+    }
+    keptBlocks.push(block);
+  }
+  return renderTomlBlocks(keptBlocks);
+}
+
+function isLegacyCodexProfileHeader(header: string): boolean {
+  return header === "profiles" || header.startsWith("profiles.");
+}
+
+function isManagedProviderHeader(header: string, providerIdsToRemove: Set<string>): boolean {
+  for (const providerId of providerIdsToRemove) {
+    if (header === `model_providers.${providerId}`) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function mergeTomlBlocks(existing: string, incoming: string, replaceHeaders: Set<string>): string {
   const existingBlocks = splitTomlBlocks(existing);
   const incomingBlocks = splitTomlBlocks(incoming);
@@ -266,11 +399,7 @@ function mergeTomlBlocks(existing: string, incoming: string, replaceHeaders: Set
     return replaceHeaders.has(block.header) || !existingHeaders.has(block.header);
   });
   const blocks = [...keptBlocks, ...appendedBlocks];
-  const rendered = blocks
-    .map((block) => block.lines.join("\n").trimEnd())
-    .filter(Boolean)
-    .join("\n\n");
-  return rendered ? `${rendered}\n` : "";
+  return renderTomlBlocks(blocks);
 }
 
 async function readJsonlLines(filePath: string): Promise<string[]> {

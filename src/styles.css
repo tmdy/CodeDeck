@@ -664,6 +664,33 @@ ul {
   color: var(--app-text-muted);
 }
 
+.startup-progress {
+  height: 4px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--app-accent-softer);
+}
+
+.startup-progress-bar {
+  display: block;
+  width: 44%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--app-accent);
+  animation: startup-progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes startup-progress-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(260%);
+  }
+}
+
 .unlock-card input {
   text-align: center;
   font-size: 1rem;
@@ -888,6 +915,18 @@ ul {
   font-weight: 600;
   color: var(--app-text);
   font-size: 0.86rem;
+}
+
+.profile-runtime-card .glass-card-body > label + label,
+.profile-runtime-card .glass-card-body > label + .profile-runtime-env-section,
+.profile-runtime-card .profile-runtime-env-section + .checkbox-label {
+  margin-top: 2px;
+}
+
+.profile-runtime-env-section > span,
+.profile-runtime-env-row input {
+  font-size: 0.86rem;
+  font-weight: 600;
 }
 
 .field-help {
@@ -1129,12 +1168,29 @@ ul {
 
 .path-field {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 6px;
 }
 
 .path-field input {
   min-width: 0;
+}
+
+.path-field select {
+  min-width: 76px;
+  max-width: 160px;
+}
+
+.icon-button {
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.icon-button.active {
+  color: #b7791f;
 }
 
 .secret-field {
@@ -1179,6 +1235,29 @@ ul {
 .profiles-launch-panel {
   display: grid;
   gap: 10px;
+}
+
+.profiles-launch-panel .launch-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.profiles-launch-panel .launch-controls .session-meta {
+  grid-column: 1 / -1;
+  margin: 0 0 2px;
+  line-height: 1.25;
+}
+
+.profiles-launch-panel .launch-btn {
+  padding: 0.38rem 0.58rem;
+  min-height: 34px;
+  border-radius: 8px;
+  font-size: 0.86rem;
+  line-height: 1.2;
+}
+
+.profiles-launch-panel .launch-btn.primary {
+  grid-column: 1 / -1;
 }
 
 /* Launch Controls */
@@ -1326,6 +1405,13 @@ ul {
   overflow: auto;
 }
 
+.session-item-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 6px;
+  align-items: stretch;
+}
+
 .session-item {
   display: grid;
   gap: 4px;
@@ -1344,6 +1430,36 @@ ul {
 
 .session-item.selected {
   border-color: rgba(130, 100, 58, 0.6);
+}
+
+.session-favorite-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(29, 39, 51, 0.08);
+  background: rgba(248, 250, 252, 0.88);
+  color: var(--app-text-muted);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.session-favorite-btn:hover {
+  background: rgba(23, 64, 109, 0.06);
+}
+
+.session-favorite-btn.active {
+  color: #b7791f;
+  border-color: rgba(183, 121, 31, 0.34);
+}
+
+.session-favorite-btn.compact {
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
 }
 
 .session-list-footer {
@@ -1375,6 +1491,13 @@ ul {
   border-radius: 12px;
   background: var(--app-surface-muted);
   border: 1px solid var(--app-border);
+}
+
+.session-detail-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .session-detail-card p {
@@ -1420,6 +1543,7 @@ ul {
 }
 
 .session-picker-summary {
+  min-width: 0;
   display: grid;
   gap: 3px;
   padding: 8px 10px;
@@ -1431,6 +1555,13 @@ ul {
 .session-picker-summary p {
   margin: 0;
   line-height: 1.35;
+}
+
+.session-picker-selected-summary .session-preview,
+.session-picker-selected-summary .session-meta {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .session-picker-excerpts {
@@ -1491,6 +1622,12 @@ ul {
   -webkit-line-clamp: 2;
 }
 
+.session-picker-selected-summary .session-picker-excerpt-text {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
 .session-picker-heading {
   margin: 0;
   font-size: 0.82rem;
@@ -1528,6 +1665,10 @@ ul {
   border: 1px solid var(--app-accent-border);
   border-radius: 8px;
   background: var(--app-input-bg);
+}
+
+.session-picker.has-selection .session-picker-list {
+  max-height: min(320px, 42vh);
 }
 
 .session-picker-option {

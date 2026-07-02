@@ -451,13 +451,49 @@ describe("LaunchService", () => {
       ]),
     );
     expect(plan.commandArgs).toEqual(["--profile", "site-a632b8ac583c81de"]);
-    expect(plan.codexConfig?.content).toContain('base_url = "https://open.bigmodel.cn/api/paas/v4"');
     expect(plan.codexConfig?.content).toContain('model = "glm-4.6"');
-    expect(plan.codexConfig?.content).toContain('[profiles."site-a632b8ac583c81de"]');
+    expect(plan.codexConfig?.content).toContain('base_url = "https://open.bigmodel.cn/api/paas/v4"');
     expect(plan.codexConfig?.content).toContain("[model_providers.site_provider_a632b8ac583c81de]");
+    expect(plan.codexConfig?.content).not.toContain("[profiles.");
     expect(plan.codexConfig?.profileName).toBe("site-a632b8ac583c81de");
     expect(plan.env.CODEX_HOME).toBe("C:/workspace/app-data/codex-runtime/home");
     expect(plan.env.CODEX_SITE_API_KEY_A632B8AC583C81DE).toBe("sk-glm");
+  });
+
+  it("should pass explicit Codex CLI permission flags for full access profiles", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "Danger",
+      url: "https://api.openai.com/v1",
+      key: "sk-openai",
+      selectedModelId: "gpt-5.5",
+      permissions: {
+        preset: "full_access",
+        fullAccessConfirmed: true,
+      },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex" }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.commandArgs).toEqual([
+      "--profile",
+      "site-0fa7d5b4930bc063",
+      "--sandbox",
+      "danger-full-access",
+      "--ask-for-approval",
+      "never",
+    ]);
+    expect(plan.command).toBe("codex --profile site-0fa7d5b4930bc063 --sandbox danger-full-access --ask-for-approval never");
   });
 
   it("should merge profile runtime env for Codex without overriding generated Codex env", () => {
@@ -665,6 +701,7 @@ describe("LaunchService", () => {
     expect(plan.codexConfig?.content).toContain('base_url = "https://api.openai.com/v1"');
     expect(plan.codexConfig?.content).not.toContain("model =");
     expect(plan.codexConfig?.content).not.toContain("model_provider =");
+    expect(plan.codexConfig?.content).not.toContain("[profiles.");
     expect(plan.codexConfig?.targetModel).toBe("");
   });
 });

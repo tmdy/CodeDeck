@@ -1,7 +1,13 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AdvancedModelMapping, Profile, ProfileKey, GlobalSettings, LaunchMode } from "./shared/profile/types.js";
 import type { BootstrapResult, LocalState } from "./shared/state/local-state.js";
-import { mergeBootstrapState } from "./shared/state/local-state.js";
+import {
+  getSessionFavoriteKey,
+  mergeBootstrapState,
+  normalizeSessionFavorites,
+  normalizeWorkingDirectoryFavorites,
+  type FavoriteSessionSummary,
+} from "./shared/state/local-state.js";
 import type { CommandPreview } from "./shared/launcher/types.js";
 import type { LaunchSessionSource } from "./shared/launcher/types.js";
 import type { BalanceCheckState } from "./shared/balance/types.js";
@@ -48,6 +54,7 @@ import {
 import { normalizeThemeMode, resolveEffectiveTheme } from "./shared/theme.js";
 
 type TabId = "skills" | "profiles" | "sessions" | "settings";
+type SessionsViewId = "claude" | "codex" | "favorites";
 type SettingsSubTab = "global" | "parameters";
 type BalanceSessionDraftState = {
   label: string;
@@ -68,25 +75,36 @@ type ModelCatalogFetchState = {
   busy: boolean;
   error: string | null;
 };
-type StartupPhase = "checking" | "locked" | "ready";
+type StartupPhase = "checking" | "locked" | "unlocking" | "ready";
 
 const EMPTY_MODEL_OPTIONS: string[] = [];
 const DRAFT_PREVIEW_DEBOUNCE_MS = 300;
-const INITIAL_DEFERRED_PREVIEW_DELAY_MS = 600;
 const HISTORY_PAGE_SIZE = 20;
-let profilesPagePreloadPromise: Promise<typeof import("./components/app/ProfilesPage.jsx")> | null = null;
+let profilesPagePreloadPromise: Promise<typeof import("./components/app/ProfilesPage.tsx")> | null = null;
 
 function preloadProfilesPageModule() {
-  profilesPagePreloadPromise ??= import("./components/app/ProfilesPage.jsx");
+  profilesPagePreloadPromise ??= import("./components/app/ProfilesPage.tsx");
   return profilesPagePreloadPromise;
+}
+
+function scheduleProfilesPagePreload(): () => void {
+  const preload = () => {
+    void preloadProfilesPageModule();
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    const id = window.requestIdleCallback(preload, { timeout: 2000 });
+    return () => window.cancelIdleCallback?.(id);
+  }
+  const id = window.setTimeout(preload, 800);
+  return () => window.clearTimeout(id);
 }
 
 const eagerAppPages = import.meta.env.MODE === "test"
   ? await Promise.all([
-      import("./components/app/ProfilesPage.jsx"),
-      import("./components/app/SessionsPage.jsx"),
-      import("./components/app/SettingsPage.jsx"),
-      import("./components/skills/SkillsPanel.jsx"),
+      import("./components/app/ProfilesPage.tsx"),
+      import("./components/app/SessionsPage.tsx"),
+      import("./components/app/SettingsPage.tsx"),
+      import("./components/skills/SkillsPanel.tsx"),
     ])
   : null;
 const EagerProfilesPage = eagerAppPages?.[0].ProfilesPage ?? null;
@@ -94,19 +112,17 @@ const EagerSessionsPage = eagerAppPages?.[1].SessionsPage ?? null;
 const EagerSettingsPage = eagerAppPages?.[2].SettingsPage ?? null;
 const EagerSkillsPanel = eagerAppPages?.[3].SkillsPanel ?? null;
 
-// App bundle 加载后立刻预热 Profiles 页 chunk，避免解锁完成后首次进入主界面仍停在 Suspense fallback。
-void preloadProfilesPageModule();
 const LazyProfilesPage = lazy(() =>
   preloadProfilesPageModule().then((module) => ({ default: module.ProfilesPage })),
 );
 const LazySessionsPage = lazy(() =>
-  import("./components/app/SessionsPage.jsx").then((module) => ({ default: module.SessionsPage })),
+  import("./components/app/SessionsPage.tsx").then((module) => ({ default: module.SessionsPage })),
 );
 const LazySettingsPage = lazy(() =>
-  import("./components/app/SettingsPage.jsx").then((module) => ({ default: module.SettingsPage })),
+  import("./components/app/SettingsPage.tsx").then((module) => ({ default: module.SettingsPage })),
 );
 const LazySkillsPanel = lazy(() =>
-  import("./components/skills/SkillsPanel.jsx").then((module) => ({ default: module.SkillsPanel })),
+  import("./components/skills/SkillsPanel.tsx").then((module) => ({ default: module.SkillsPanel })),
 );
 const ProfilesPageComponent = EagerProfilesPage ?? LazyProfilesPage;
 const SessionsPageComponent = EagerSessionsPage ?? LazySessionsPage;
@@ -160,6 +176,20 @@ async function resolveStartupCheckResult(): Promise<StartupCheckResult> {
   return startupCheckPromise;
 }
 
+function StartupLoading({ message }: { message: string }) {
+  return (
+    <div className="startup-screen">
+      <div className="unlock-card">
+        <h1>Skills Manager</h1>
+        <p>{message}</p>
+        <div className="startup-progress" role="progressbar" aria-label={message}>
+          <span className="startup-progress-bar" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function useEventCallback<T extends (...args: never[]) => unknown>(callback: T): T {
   const callbackRef = useRef(callback);
   useEffect(() => {
@@ -174,6 +204,23 @@ function emptyBalanceSessionDraft(): BalanceSessionDraftState {
     label: "",
     access_token: "",
     user_id: "",
+  };
+}
+
+function isEmptyNewBalanceSessionDraft(selection: string, draft: BalanceSessionDraftState): boolean {
+  return selection === "new"
+    && !draft.access_token.trim()
+    && !draft.user_id.trim();
+}
+
+function normalizeEmptyNewBalanceSessionDraft(draft: ProfileEditorDraft): ProfileEditorDraft {
+  if (!isEmptyNewBalanceSessionDraft(draft.balanceSessionSelection, draft.balanceSessionDraft)) {
+    return draft;
+  }
+  return {
+    ...draft,
+    balanceSessionSelection: "auto",
+    balanceSessionDraft: emptyBalanceSessionDraft(),
   };
 }
 
@@ -253,6 +300,7 @@ function sameSessionRequest(left: ListSessionsRequest | null, right: ListSession
 function App() {
   // ---- Tab 状态 ----
   const [activeTab, setActiveTab] = useState<TabId>("profiles");
+  const [sessionsView, setSessionsView] = useState<SessionsViewId>(PROVIDER_CLAUDE);
 
   // ---- Profile 状态 ----
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -280,6 +328,7 @@ function App() {
   const [draftSettingsFile, setDraftSettingsFile] = useState("");
   const [draftArgs, setDraftArgs] = useState("");
   const [draftExcludeUser, setDraftExcludeUser] = useState(true);
+  const [draftExtraEnv, setDraftExtraEnv] = useState<Record<string, string>>({});
   const [editorBaseline, setEditorBaseline] = useState<ProfileEditorDraft | null>(null);
   const [modelCatalogByBaseUrl, setModelCatalogByBaseUrl] = useState<Record<string, ModelCatalogCacheEntry>>({});
   const [modelCatalogFetchByBaseUrl, setModelCatalogFetchByBaseUrl] = useState<Record<string, ModelCatalogFetchState>>({});
@@ -326,10 +375,31 @@ function App() {
   );
 
   const activeProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
-  const historyRestoreProfileKey = resolveHistoryRestoreProfileKey(state, profiles, activeProvider);
+  const sessionFavorites = state?.session_favorites ?? [];
+  const sortedSessionFavorites = useMemo(
+    () => [...sessionFavorites].sort(
+      (left, right) => new Date(right.favorited_at).getTime() - new Date(left.favorited_at).getTime(),
+    ),
+    [sessionFavorites],
+  );
+  const sessionFavoriteKeys = useMemo(
+    () => new Set(sessionFavorites.map((session) => session.favorite_key)),
+    [sessionFavorites],
+  );
+  const visibleHistorySessions = useMemo(
+    () => sessionsView === "favorites"
+      ? sortedSessionFavorites
+      : historySessions.filter((session) => session.provider === activeProvider),
+    [activeProvider, historySessions, sessionsView, sortedSessionFavorites],
+  );
+  const selectedHistorySession = visibleHistorySessions.find(
+    (session) => getSessionFavoriteKey(session) === historySelectedSessionId,
+  );
+  const historyRestoreProvider = selectedHistorySession?.provider ?? activeProvider;
+  const historyRestoreProfileKey = resolveHistoryRestoreProfileKey(state, profiles, historyRestoreProvider);
   const historyRestoreProfiles = useMemo(
     () =>
-      listProfilesForProvider(profiles, activeProvider).map((profile) => {
+      listProfilesForProvider(profiles, historyRestoreProvider).map((profile) => {
         const key = itemKey(profile);
         return {
           key,
@@ -337,13 +407,8 @@ function App() {
           cwd: state?.runtime_by_profile[key]?.cwd.trim() || defaultWorkingDirectory,
         };
       }),
-    [activeProvider, defaultWorkingDirectory, profiles, state?.runtime_by_profile],
+    [defaultWorkingDirectory, historyRestoreProvider, profiles, state?.runtime_by_profile],
   );
-  const visibleHistorySessions = useMemo(
-    () => historySessions.filter((session) => session.provider === activeProvider),
-    [activeProvider, historySessions],
-  );
-  const selectedHistorySession = visibleHistorySessions.find((session) => session.session_id === historySelectedSessionId);
   const selectedHistoryRestoreProfile = historyRestoreProfiles.find((profile) => profile.key === historyRestoreProfileKey);
   const historyRestoreDisabled = !selectedHistorySession
     || !historyRestoreProfileKey
@@ -391,16 +456,7 @@ function App() {
     if (startupPhase !== "locked") {
       return;
     }
-
-    const preload = () => {
-      void preloadProfilesPageModule();
-    };
-    if (typeof window.requestIdleCallback === "function") {
-      const id = window.requestIdleCallback(preload, { timeout: 2000 });
-      return () => window.cancelIdleCallback(id);
-    }
-    const id = window.setTimeout(preload, 1000);
-    return () => window.clearTimeout(id);
+    return scheduleProfilesPagePreload();
   }, [startupPhase]);
 
   useEffect(() => {
@@ -415,6 +471,9 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!state?.global_settings?.theme_mode && document.documentElement.dataset.theme) {
+      return;
+    }
     const themeMode = normalizeThemeMode(state?.global_settings?.theme_mode);
     const effectiveTheme = resolveEffectiveTheme(themeMode, systemPrefersDark);
     document.documentElement.dataset.theme = effectiveTheme;
@@ -445,6 +504,7 @@ function App() {
     return window.profileManager.onUnlockError((message) => {
       setUnlockError(message);
       setIsBusy(false);
+      setStartupPhase((current) => current === "unlocking" ? "locked" : current);
     });
   }, []);
 
@@ -479,8 +539,10 @@ function App() {
 
   async function handleUnlock() {
     if (!window.profileManager) return;
+    if (!passphrase) return;
     setIsBusy(true);
     setUnlockError(null);
+    setStartupPhase("unlocking");
     logRendererEvent("unlock_submit", "Unlock submitted", {
       passphraseLength: passphrase.length,
       hasEncryptedConfig,
@@ -491,7 +553,6 @@ function App() {
       const data = unlockResult.bootstrap
         ? applyBootstrapResult(unlockResult.bootstrap)
         : await loadBootstrapData();
-      await preloadProfilesPageModule();
       setInitialPreviewDeferred(true);
       markProfilesSessionsHydrated(null);
       clearProfilesSessionsState();
@@ -508,6 +569,7 @@ function App() {
       });
     } catch (err) {
       setUnlockError(err instanceof Error ? err.message : "解锁失败");
+      setStartupPhase("locked");
     } finally {
       setIsBusy(false);
     }
@@ -603,6 +665,7 @@ function App() {
       command_base: draftCommandBase,
       settings_file: draftSettingsFile,
       launch_mode: "new" as const,
+      extra_env: { ...draftExtraEnv },
       extra_args: draftArgs,
       exclude_user_settings: draftExcludeUser,
     };
@@ -621,6 +684,7 @@ function App() {
     setDraftCommandBase(draft.command_base);
     setDraftSettingsFile(draft.settings_file);
     setDraftArgs(draft.extra_args);
+    setDraftExtraEnv({ ...draft.extra_env });
     setDraftExcludeUser(draft.exclude_user_settings);
   }
 
@@ -694,6 +758,7 @@ function App() {
           key: draft.key,
           selectedModelId: draft.selectedModelId,
           advancedModelMapping: draft.advancedModelMapping,
+          permissions: draft.permissions ?? undefined,
         },
         buildRuntimeSettingsFromDraft(draft),
         undefined,
@@ -759,20 +824,14 @@ function App() {
     draftExcludeUser,
   ]);
 
+  // 初始预览：ready 后立即计算（一次 IPC，实测约 2ms），不再 idle 延迟 600ms。
+  // 否则命令预览区会先显示一行空态、随后撑开为完整预览，造成 unlock 后的布局抖动。
   useEffect(() => {
     if (!initialPreviewDeferred || startupPhase !== "ready" || !state || !editorBaseline) {
       return;
     }
-    const run = () => {
-      logRendererMilestoneOnce("initial_preview_deferred_start", "Initial deferred preview started");
-      void refreshPreviewForDraft({ source: "initial_deferred" });
-    };
-    if (typeof window.requestIdleCallback === "function") {
-      const id = window.requestIdleCallback(run, { timeout: 1500 });
-      return () => window.cancelIdleCallback(id);
-    }
-    const id = window.setTimeout(run, INITIAL_DEFERRED_PREVIEW_DELAY_MS);
-    return () => window.clearTimeout(id);
+    logRendererMilestoneOnce("initial_preview_start", "Initial preview started");
+    void refreshPreviewForDraft({ source: "initial_deferred" });
   }, [
     initialPreviewDeferred,
     startupPhase,
@@ -784,15 +843,19 @@ function App() {
   async function saveCurrentProfile(options: {
     snapshot?: ProfileEditorDraft;
     showSuccess?: boolean;
+    treatEmptyNewBalanceSessionAsAuto?: boolean;
   } = {}): Promise<boolean> {
     if (!window.profileManager) return false;
     setIsBusy(true);
     setErrorMessage(null);
     try {
-      const snapshot = withDefaultWorkingDirectory(
+      const rawSnapshot = withDefaultWorkingDirectory(
         options.snapshot ?? currentDraftSnapshot(),
         defaultWorkingDirectory,
       );
+      const snapshot = options.treatEmptyNewBalanceSessionAsAuto === false
+        ? rawSnapshot
+        : normalizeEmptyNewBalanceSessionDraft(rawSnapshot);
       const siteSessions = getSiteBalanceSessionsForBaseUrl(siteBalanceSessionsByBaseUrl, snapshot.url);
       let balanceSessionId: string | undefined;
 
@@ -951,7 +1014,10 @@ function App() {
   }
 
   async function handleSaveBalanceSession() {
-    const saved = await saveCurrentProfile({ showSuccess: false });
+    const saved = await saveCurrentProfile({
+      showSuccess: false,
+      treatEmptyNewBalanceSessionAsAuto: false,
+    });
     if (saved) {
       setSuccessMessage("后台会话已保存");
     }
@@ -1067,6 +1133,17 @@ function App() {
     if (data && activeTab === "sessions") {
       await handleLoadHistorySessions(data.state);
     }
+  }
+
+  async function handleSessionsViewSwitch(view: SessionsViewId) {
+    if (view === "favorites") {
+      setSessionsView("favorites");
+      setHistorySelectedSessionId("");
+      setHistoryPreview(emptyPreview());
+      return;
+    }
+    setSessionsView(view);
+    await handleProviderSwitch(view);
   }
 
   async function handleReorder(orderedKeys: ProfileKey[]) {
@@ -1341,7 +1418,7 @@ function App() {
       setHistorySessions(combinedSessions);
       setHistoryHasMore(nextSessions.length >= HISTORY_PAGE_SIZE);
       setHistorySelectedSessionId((current) => (
-        current && !combinedSessions.some((session) => session.session_id === current) ? "" : current
+        current && !combinedSessions.some((session) => getSessionFavoriteKey(session) === current) ? "" : current
       ));
       setHistoryIsLoading(false);
       if (nextSessions.length >= HISTORY_PAGE_SIZE) {
@@ -1385,7 +1462,7 @@ function App() {
     if (!window.profileManager) {
       return;
     }
-    await window.profileManager.updateSessionsTabState(activeProvider, {
+    await window.profileManager.updateSessionsTabState(historyRestoreProvider, {
       restore_profile_key: profileKey,
     });
   }
@@ -1497,11 +1574,12 @@ function App() {
   }, [activeTab, state?.selected_provider, state?.selected_profile_key]);
 
   useEffect(() => {
-    if (activeTab === "sessions") {
+    if (activeTab === "sessions" && sessionsView !== "favorites") {
       void handleLoadHistorySessions();
     }
   }, [
     activeTab,
+    sessionsView,
     state?.selected_provider,
     state?.selected_profile_key,
   ]);
@@ -1513,9 +1591,11 @@ function App() {
   }, [
     activeTab,
     state?.selected_provider,
+    sessionsView,
     historySelectedSessionId,
     historyRestoreProfileKey,
     historySessions,
+    state?.session_favorites,
     defaultWorkingDirectory,
   ]);
 
@@ -1557,6 +1637,82 @@ function App() {
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "选择工作目录失败");
     }
+  }
+
+  async function saveWorkingDirectoryFavorites(favorites: string[]) {
+    if (!window.profileManager?.updateWorkingDirectoryFavorites) return;
+    const normalizedFavorites = normalizeWorkingDirectoryFavorites(favorites);
+    try {
+      const savedFavorites = await window.profileManager.updateWorkingDirectoryFavorites(normalizedFavorites);
+      setState((current) => current
+        ? { ...current, working_directory_favorites: savedFavorites }
+        : current);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "保存工作目录收藏失败");
+    }
+  }
+
+  async function handleToggleWorkingDirectoryFavorite() {
+    const cwd = draftCwd.trim();
+    if (!cwd) return;
+
+    const favorites = state?.working_directory_favorites ?? [];
+    const nextFavorites = favorites.includes(cwd)
+      ? favorites.filter((favorite) => favorite !== cwd)
+      : [cwd, ...favorites.filter((favorite) => favorite !== cwd)];
+    await saveWorkingDirectoryFavorites(nextFavorites);
+  }
+
+  async function handleSelectWorkingDirectoryFavorite(path: string) {
+    const cwd = path.trim();
+    if (!cwd) return;
+
+    const snapshot = { ...currentDraftSnapshot(), cwd };
+    setDraftCwd(cwd);
+    await persistCwdOnlyChangeAndRefreshSessions(snapshot);
+  }
+
+  function favoriteFromSession(session: SessionSummary): FavoriteSessionSummary | null {
+    return normalizeSessionFavorites([{
+      ...session,
+      favorite_key: getSessionFavoriteKey(session),
+      favorited_at: new Date().toISOString(),
+    }])[0] ?? null;
+  }
+
+  async function saveSessionFavorites(favorites: FavoriteSessionSummary[]) {
+    if (!window.profileManager?.updateSessionFavorites) return;
+    const normalizedFavorites = normalizeSessionFavorites(favorites);
+    try {
+      const savedFavorites = await window.profileManager.updateSessionFavorites(normalizedFavorites);
+      setState((current) => current
+        ? { ...current, session_favorites: savedFavorites }
+        : current);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "保存会话收藏失败");
+    }
+  }
+
+  async function handleToggleSessionFavorite(session: SessionSummary) {
+    const favoriteKey = getSessionFavoriteKey(session);
+    const favorites = state?.session_favorites ?? [];
+    const isFavorite = favorites.some((favorite) => favorite.favorite_key === favoriteKey);
+    if (isFavorite) {
+      const nextFavorites = favorites.filter((favorite) => favorite.favorite_key !== favoriteKey);
+      if (sessionsView === "favorites" && historySelectedSessionId === favoriteKey) {
+        setHistorySelectedSessionId("");
+        setHistoryPreview(emptyPreview());
+      }
+      await saveSessionFavorites(nextFavorites);
+      return;
+    }
+
+    const favorite = favoriteFromSession(session);
+    if (!favorite) {
+      setErrorMessage("无法收藏该会话，缺少会话标识。");
+      return;
+    }
+    await saveSessionFavorites([favorite, ...favorites]);
   }
 
   async function handleOpenBaseUrl() {
@@ -1684,6 +1840,7 @@ function App() {
   }, [state?.balance_checks_by_profile]);
 
   const selectedProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
+  const workingDirectoryFavorites = state?.working_directory_favorites ?? [];
   const profileDraft = useMemo(() => ({
     name: draftName,
     url: draftUrl,
@@ -1703,6 +1860,7 @@ function App() {
     cwd: draftCwd,
     command_base: draftCommandBase,
     settings_file: draftSettingsFile,
+    extra_env: draftExtraEnv,
     extra_args: draftArgs,
     launch_mode: "new" as const,
     exclude_user_settings: draftExcludeUser,
@@ -1710,6 +1868,7 @@ function App() {
     draftArgs,
     draftCommandBase,
     draftCwd,
+    draftExtraEnv,
     draftExcludeUser,
     draftSettingsFile,
   ]);
@@ -1781,23 +1940,41 @@ function App() {
       [field]: value,
     }));
   }, []);
-  const handleProfileRuntimeChange = useCallback((field: string, val: string | boolean) => {
+  const handleProfileRuntimeChange = useCallback((field: string, val: string | boolean | Record<string, string>) => {
     switch (field) {
       case "cwd": setDraftCwd(val as string); break;
       case "command_base": setDraftCommandBase(val as string); break;
       case "settings_file": setDraftSettingsFile(val as string); break;
       case "extra_args": setDraftArgs(val as string); break;
+      case "extra_env": setDraftExtraEnv(val as Record<string, string>); break;
       case "exclude_user_settings": setDraftExcludeUser(val as boolean); break;
     }
   }, []);
+
+  const resetEmptyNewBalanceSessionDraft = useCallback(() => {
+    if (!isEmptyNewBalanceSessionDraft(draftBalanceSessionSelection, draftBalanceSession)) {
+      return;
+    }
+    setDraftBalanceSessionSelection("auto");
+    setDraftBalanceSession(emptyBalanceSessionDraft());
+    setErrorMessage(null);
+  }, [draftBalanceSession, draftBalanceSessionSelection]);
+
   const stableSetActiveProfilesTab = useCallback(() => setActiveTab("profiles"), []);
-  const stableSetActiveSkillsTab = useCallback(() => setActiveTab("skills"), []);
-  const stableSetActiveSettingsTab = useCallback(() => setActiveTab("settings"), []);
+  const stableSetActiveSkillsTab = useCallback(() => {
+    resetEmptyNewBalanceSessionDraft();
+    setActiveTab("skills");
+  }, [resetEmptyNewBalanceSessionDraft]);
+  const stableSetActiveSettingsTab = useCallback(() => {
+    resetEmptyNewBalanceSessionDraft();
+    setActiveTab("settings");
+  }, [resetEmptyNewBalanceSessionDraft]);
   const stableSetGlobalSettingsSubTab = useCallback(() => setSettingsSubTab("global"), []);
   const stableSetParameterSettingsSubTab = useCallback(() => setSettingsSubTab("parameters"), []);
   const stableClearErrorMessage = useCallback(() => setErrorMessage(null), []);
   const stableClearSuccessMessage = useCallback(() => setSuccessMessage(null), []);
   const stableHandleProviderSwitch = useEventCallback(handleProviderSwitch);
+  const stableHandleSessionsViewSwitch = useEventCallback(handleSessionsViewSwitch);
   const stableHandleSelectProfile = useEventCallback(handleSelectProfile);
   const stableHandleReorder = useEventCallback(handleReorder);
   const stableHandleNewProfile = useEventCallback(handleNewProfile);
@@ -1812,12 +1989,15 @@ function App() {
   const stableHandleOpenBaseUrl = useEventCallback(handleOpenBaseUrl);
   const stableHandleSaveProfile = useEventCallback(handleSaveProfile);
   const stableHandlePickWorkingDirectory = useEventCallback(handlePickWorkingDirectory);
+  const stableHandleToggleWorkingDirectoryFavorite = useEventCallback(handleToggleWorkingDirectoryFavorite);
+  const stableHandleSelectWorkingDirectoryFavorite = useEventCallback(handleSelectWorkingDirectoryFavorite);
   const stableHandleLoadProfilesSessions = useEventCallback(handleLoadProfilesSessions);
   const stableHandleLaunch = useEventCallback(handleLaunch);
   const stableHandleLoadHistorySessions = useEventCallback(handleLoadHistorySessions);
   const stableHandleLoadMoreHistorySessions = useEventCallback(handleLoadMoreHistorySessions);
   const stableHandleHistoryRestoreProfileChange = useEventCallback(handleHistoryRestoreProfileChange);
   const stableHandleHistoryRestoreLaunch = useEventCallback(handleHistoryRestoreLaunch);
+  const stableHandleToggleSessionFavorite = useEventCallback(handleToggleSessionFavorite);
   const stableHandleGlobalSettingsChange = useEventCallback(handleGlobalSettingsChange);
   const stableHandleChangePassphrase = useEventCallback(handleChangePassphrase);
   const stableHandleParameterSettingsChange = useEventCallback(handleParameterSettingsChange);
@@ -1829,8 +2009,10 @@ function App() {
       ? { variant: "success" as const, text: successMessage, onDismiss: stableClearSuccessMessage }
       : null;
   const stableOpenSessionsTab = useCallback(() => {
+    resetEmptyNewBalanceSessionDraft();
+    setSessionsView(activeProvider);
     setActiveTab("sessions");
-  }, []);
+  }, [activeProvider, resetEmptyNewBalanceSessionDraft]);
   const stableSaveBalanceSessionAction = useCallback(() => void stableHandleSaveBalanceSession(), [stableHandleSaveBalanceSession]);
   const stableDeleteSiteBalanceSessionAction = useCallback(() => void stableHandleDeleteSiteBalanceSession(), [stableHandleDeleteSiteBalanceSession]);
   const stableDraftCommitAction = useCallback(
@@ -1846,6 +2028,14 @@ function App() {
   const stableSaveProfileAction = useCallback(() => void stableHandleSaveProfile(), [stableHandleSaveProfile]);
   const stableCancelProfileEditAction = useCallback(() => void stableHandleNewProfile(), [stableHandleNewProfile]);
   const stablePickWorkingDirectoryAction = useCallback(() => void stableHandlePickWorkingDirectory(), [stableHandlePickWorkingDirectory]);
+  const stableToggleWorkingDirectoryFavoriteAction = useCallback(
+    () => void stableHandleToggleWorkingDirectoryFavorite(),
+    [stableHandleToggleWorkingDirectoryFavorite],
+  );
+  const stableSelectWorkingDirectoryFavoriteAction = useCallback(
+    (path: string) => void stableHandleSelectWorkingDirectoryFavorite(path),
+    [stableHandleSelectWorkingDirectoryFavorite],
+  );
   const stableRefreshProfilesSessionsAction = useCallback(
     () => void stableHandleLoadProfilesSessions(state, undefined, { source: "manual" }),
     [stableHandleLoadProfilesSessions, state],
@@ -1889,14 +2079,11 @@ function App() {
   );
 
   if (startupPhase === "checking") {
-    return (
-      <div className="startup-screen">
-        <div className="unlock-card">
-          <h1>Skills Manager</h1>
-          <p>正在准备解锁界面...</p>
-        </div>
-      </div>
-    );
+    return <StartupLoading message="正在准备解锁界面..." />;
+  }
+
+  if (startupPhase === "unlocking") {
+    return <StartupLoading message="正在解锁并进入..." />;
   }
 
   // ---- 解锁界面 ----
@@ -1977,7 +2164,7 @@ function App() {
 
       {/* ===== PROFILES Tab ===== */}
       {activeTab === "profiles" && (
-        <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载 Profiles 页面...</p></div></div>}>
+        <Suspense fallback={<StartupLoading message="正在加载 Profiles 页面..." />}>
           <ProfilesPageComponent
             providerSwitchProps={{
               activeProvider: state?.selected_provider ?? PROVIDER_CLAUDE,
@@ -2023,6 +2210,7 @@ function App() {
               modelFetchBusy,
               modelFetchError,
               modelFetchSuccess,
+              workingDirectoryFavorites,
               onChange: handleProfileDraftChange,
               onAdvancedModelMappingChange: setDraftAdvancedModelMapping,
               onPermissionsChange: setDraftPermissions,
@@ -2034,6 +2222,8 @@ function App() {
               onSave: stableSaveProfileAction,
               onCancel: stableCancelProfileEditAction,
               onPickCwd: stablePickWorkingDirectoryAction,
+              onToggleWorkingDirectoryFavorite: stableToggleWorkingDirectoryFavoriteAction,
+              onSelectWorkingDirectoryFavorite: stableSelectWorkingDirectoryFavoriteAction,
               disabled: isBusy,
             }}
             launchPanelProps={{
@@ -2058,7 +2248,7 @@ function App() {
 
       {/* ===== SKILLS Tab ===== */}
       {activeTab === "skills" && (
-        <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载 Skills 页面...</p></div></div>}>
+        <Suspense fallback={<StartupLoading message="正在加载 Skills 页面..." />}>
           <SkillsPanelComponent
             onError={stableSetErrorMessage}
             onSuccess={stableSetSuccessMessage}
@@ -2069,17 +2259,19 @@ function App() {
 
       {/* ===== SESSIONS Tab ===== */}
       {activeTab === "sessions" && (
-        <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载会话页面...</p></div></div>}>
+        <Suspense fallback={<StartupLoading message="正在加载会话页面..." />}>
           <SessionsPageComponent
-            providerSwitchProps={{
-              activeProvider,
-              onSwitch: stableHandleProviderSwitch,
+            sessionViewSwitchProps={{
+              activeView: sessionsView,
+              onSwitch: stableHandleSessionsViewSwitch,
               disabled: isBusy,
             }}
             sessionListProps={{
-              provider: activeProvider,
+              provider: sessionsView === "favorites" ? "收藏" : activeProvider,
               sessions: visibleHistorySessions,
               selectedId: historySelectedSessionId,
+              getSessionKey: getSessionFavoriteKey,
+              favoriteSessionKeys: sessionFavoriteKeys,
               restoreProfiles: historyRestoreProfiles,
               selectedRestoreProfileKey: historyRestoreProfileKey,
               restoreHint: historyRestoreHint,
@@ -2087,12 +2279,15 @@ function App() {
               preview: historyPreview,
               onSelect: setHistorySelectedSessionId,
               onRefresh: stableRefreshHistorySessionsAction,
-              onLoadMore: stableLoadMoreHistorySessionsAction,
+              onLoadMore: sessionsView === "favorites" ? undefined : stableLoadMoreHistorySessionsAction,
               onSelectRestoreProfile: stableHistoryRestoreProfileChangeAction,
               onRestore: stableHistoryRestoreLaunchAction,
+              onToggleFavorite: stableHandleToggleSessionFavorite,
+              showRefresh: sessionsView !== "favorites",
               disabled: isBusy,
-              isLoading: historyIsLoading,
-              hasMoreSessions: historyHasMore,
+              isLoading: sessionsView === "favorites" ? false : historyIsLoading,
+              hasMoreSessions: sessionsView === "favorites" ? false : historyHasMore,
+              emptyMessage: sessionsView === "favorites" ? "暂无收藏会话" : "暂无会话记录",
             }}
           />
         </Suspense>
@@ -2100,7 +2295,7 @@ function App() {
 
       {/* ===== SETTINGS Tab ===== */}
       {activeTab === "settings" && (
-        <Suspense fallback={<div className="startup-screen"><div className="unlock-card"><p>正在加载设置页面...</p></div></div>}>
+        <Suspense fallback={<StartupLoading message="正在加载设置页面..." />}>
           {hasHydratedParameterSettings ? (
              <SettingsPageComponent
               settingsSubTab={settingsSubTab}
@@ -2119,11 +2314,7 @@ function App() {
               }}
             />
           ) : (
-            <div className="startup-screen">
-              <div className="unlock-card">
-                <p>正在加载设置页面...</p>
-              </div>
-            </div>
+            <StartupLoading message="正在加载设置页面..." />
           )}
         </Suspense>
       )}

@@ -19,7 +19,12 @@ import type { BalanceCheckItem, BalanceCheckState } from "../balance/types.js";
 import type { ParameterSettings } from "../parameter/types.js";
 import { normalizeParameterSettings } from "../parameter/types.js";
 import type { LocalState } from "./local-state.js";
-import { defaultLocalState, ensureInitialized } from "./local-state.js";
+import {
+  defaultLocalState,
+  ensureInitialized,
+  normalizeSessionFavorites,
+  normalizeWorkingDirectoryFavorites,
+} from "./local-state.js";
 import { isSessionListScope, type SessionListScope } from "../services/session-service.js";
 import { normalizeSessionsTabScope } from "../session-history-state.js";
 
@@ -37,6 +42,8 @@ interface RawState {
   parameter_settings?: ParameterSettings;
   sessions_tab_scope_by_provider: Record<string, SessionListScope>;
   sessions_tab_restore_profile_key_by_provider: Record<string, string>;
+  working_directory_favorites?: unknown;
+  session_favorites?: unknown;
 }
 
 export class LocalStateStore {
@@ -84,6 +91,10 @@ export class LocalStateStore {
       parameter_settings: normalizeParameterSettings(normalized.parameter_settings),
       sessions_tab_scope_by_provider: {},
       sessions_tab_restore_profile_key_by_provider: {},
+      working_directory_favorites: normalizeWorkingDirectoryFavorites(
+        normalized.working_directory_favorites,
+      ),
+      session_favorites: normalizeSessionFavorites(normalized.session_favorites),
     };
 
     // 序列化 selected keys by provider
@@ -156,6 +167,10 @@ function normalizeState(raw: RawState): LocalState {
   state.parameter_settings = normalizeParameterSettings(raw.parameter_settings);
   state.sessions_tab_scope_by_provider = {};
   state.sessions_tab_restore_profile_key_by_provider = {};
+  state.working_directory_favorites = normalizeWorkingDirectoryFavorites(
+    raw.working_directory_favorites,
+  );
+  state.session_favorites = normalizeSessionFavorites(raw.session_favorites);
 
   // selected_profile_key 处理
   state.selected_profile_key = normalizeKeyWithFallback(
@@ -256,6 +271,14 @@ export function cloneLocalState(state: LocalState): LocalState {
     parameter_settings: { ...state.parameter_settings },
     sessions_tab_scope_by_provider: { ...state.sessions_tab_scope_by_provider },
     sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
+    working_directory_favorites: [...state.working_directory_favorites],
+    session_favorites: state.session_favorites.map((session) => ({
+      ...session,
+      ...(session.user_prompts ? { user_prompts: [...session.user_prompts] } : {}),
+      ...(session.conversation_excerpts ? {
+        conversation_excerpts: session.conversation_excerpts.map((excerpt) => ({ ...excerpt })),
+      } : {}),
+    })),
   };
 }
 

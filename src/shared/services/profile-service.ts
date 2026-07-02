@@ -25,6 +25,7 @@ import {
   itemKey,
 } from "../profile/keys-internal.js";
 import type { LocalState } from "../state/local-state.js";
+import { normalizeWorkingDirectoryFavorites } from "../state/local-state.js";
 import { cloneLocalState } from "../state/store.js";
 import { getAdapter } from "../provider/registry.js";
 
@@ -124,6 +125,13 @@ export class ProfileService {
     }
 
     await this.stateAccessor.save(st);
+  }
+
+  async updateWorkingDirectoryFavorites(favorites: unknown): Promise<string[]> {
+    const st = this.getState();
+    st.working_directory_favorites = normalizeWorkingDirectoryFavorites(favorites);
+    await this.stateAccessor.save(st);
+    return st.working_directory_favorites;
   }
 
   // ---- 保存（创建/更新） ----

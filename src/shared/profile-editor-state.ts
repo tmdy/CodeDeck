@@ -138,7 +138,7 @@ export function hasProfileDraftChanges(
       current.command_base ||
       current.settings_file ||
       current.extra_args ||
-      Object.keys(current.extra_env).length > 0 ||
+      Object.keys(current.extra_env ?? {}).length > 0 ||
       current.exclude_user_settings !== true,
     );
   }
@@ -156,7 +156,7 @@ export function hasProfileDraftChanges(
     current.command_base !== baseline.command_base ||
     current.settings_file !== baseline.settings_file ||
     current.extra_args !== baseline.extra_args ||
-    !envMapsEqual(current.extra_env, baseline.extra_env) ||
+      !envMapsEqual(current.extra_env, baseline.extra_env) ||
     current.exclude_user_settings !== baseline.exclude_user_settings
   );
 }
@@ -250,13 +250,14 @@ function stringArraysEqual(left: readonly string[], right: readonly string[]): b
   return left.every((item, index) => item === right[index]);
 }
 
-function envMapsEqual(left: Record<string, string>, right: Record<string, string>): boolean {
-  const leftEntries = Object.entries(left);
-  const rightEntries = Object.entries(right);
+function envMapsEqual(left?: Record<string, string> | null, right?: Record<string, string> | null): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightMap = right ?? {};
+  const rightEntries = Object.entries(rightMap);
   if (leftEntries.length !== rightEntries.length) {
     return false;
   }
-  return leftEntries.every(([key, value]) => right[key] === value);
+  return leftEntries.every(([key, value]) => rightMap[key] === value);
 }
 
 function cloneEnvMap(value?: Record<string, string>): Record<string, string> {

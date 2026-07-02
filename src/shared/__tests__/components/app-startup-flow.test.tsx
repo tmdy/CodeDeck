@@ -18,6 +18,7 @@ import {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type MockProfileManager = NonNullable<Window["profileManager"]>;
+type UnlockResponse = Awaited<ReturnType<MockProfileManager["unlock"]>>;
 
 const baseProfile: Profile = {
   provider: "claude",
@@ -33,6 +34,7 @@ const baseRuntime: RuntimeSettings = {
   settings_file: "",
   launch_mode: "new",
   extra_args: "",
+  extra_env: {},
   exclude_user_settings: true,
 };
 
@@ -113,16 +115,18 @@ function installWindowStubs() {
 function createProfileManagerFixture(options: {
   hasEncryptedConfig: boolean;
   unlockBootstrap?: BootstrapResult;
+  unlockResult?: Promise<UnlockResponse>;
 }) {
   const state = createState(baseProfile);
   const bootstrapResult = options.unlockBootstrap ?? createBootstrapResult(state);
 
   const manager: MockProfileManager = {
     checkEncryptedConfig: vi.fn(async () => options.hasEncryptedConfig),
-    unlock: vi.fn(async () => (
-      options.unlockBootstrap
-        ? { success: true, bootstrap: options.unlockBootstrap }
-        : { success: true }
+    unlock: vi.fn(() => (
+      options.unlockResult
+        ?? Promise.resolve(options.unlockBootstrap
+          ? { success: true, bootstrap: options.unlockBootstrap }
+          : { success: true })
     )),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
@@ -202,6 +206,16 @@ async function flush() {
   });
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 async function renderApp(node: ReactNode) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -239,6 +253,54 @@ describe("App startup flow", () => {
     vi.restoreAllMocks();
   });
 
+  it("renders loading progress while startup auth status is pending", async () => {
+    installWindowStubs();
+    const fixture = createProfileManagerFixture({ hasEncryptedConfig: true });
+    const configCheck = createDeferred<boolean>();
+    fixture.manager.checkEncryptedConfig = vi.fn(() => configCheck.promise);
+    window.profileManager = fixture.manager;
+
+    const { container, root } = await renderApp(<App />);
+
+    expect(container.querySelector(".startup-screen")).toBeTruthy();
+    expect(container.querySelector(".startup-progress")).toBeTruthy();
+    expect(container.textContent).toContain("正在准备解锁界面");
+    expect(container.querySelector(".unlock-screen")).toBeFalsy();
+
+    await act(async () => {
+      configCheck.resolve(true);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("keeps the pre-seeded startup theme while app state is not loaded", async () => {
+    installWindowStubs();
+    document.documentElement.dataset.theme = "dark";
+    document.documentElement.dataset.themeMode = "dark";
+    const fixture = createProfileManagerFixture({ hasEncryptedConfig: true });
+    const configCheck = createDeferred<boolean>();
+    fixture.manager.checkEncryptedConfig = vi.fn(() => configCheck.promise);
+    window.profileManager = fixture.manager;
+
+    const { root } = await renderApp(<App />);
+
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.dataset.themeMode).toBe("dark");
+
+    await act(async () => {
+      configCheck.resolve(true);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("shows the unlock screen first and enters the main UI in the same root after unlocking", async () => {
     installWindowStubs();
     const fixture = createProfileManagerFixture({ hasEncryptedConfig: true });
@@ -266,6 +328,49 @@ describe("App startup flow", () => {
     expect(fixture.manager.bootstrap).toHaveBeenCalledTimes(1);
     expect(fixture.manager.listProfiles).not.toHaveBeenCalled();
     expect(container.querySelector(".unlock-screen")).toBeFalsy();
+    expect(container.textContent).toContain("AI CLI 工具统一管理");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("switches to unlock loading progress immediately after password submit", async () => {
+    installWindowStubs();
+    const unlockResult = createDeferred<UnlockResponse>();
+    const fixture = createProfileManagerFixture({
+      hasEncryptedConfig: true,
+      unlockResult: unlockResult.promise,
+    });
+    window.profileManager = fixture.manager;
+
+    const { container, root } = await renderApp(<App />);
+
+    const input = container.querySelector("input[type='password']");
+    expect(input).toBeInstanceOf(HTMLInputElement);
+
+    await setInputValue(input as HTMLInputElement, "pass-123");
+    await act(async () => {
+      getButtonByText(container, "解锁").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(fixture.manager.unlock).toHaveBeenCalledWith("pass-123");
+    expect(container.querySelector(".startup-screen")).toBeTruthy();
+    expect(container.querySelector(".startup-progress")).toBeTruthy();
+    expect(container.textContent).toContain("正在解锁并进入");
+    expect(container.querySelector("input[type='password']")).toBeFalsy();
+
+    await act(async () => {
+      unlockResult.resolve({
+        success: true,
+        bootstrap: createBootstrapResult(createState(baseProfile)),
+      });
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(fixture.manager.bootstrap).not.toHaveBeenCalled();
+    expect(container.querySelector(".startup-screen")).toBeFalsy();
     expect(container.textContent).toContain("AI CLI 工具统一管理");
 
     await act(async () => {

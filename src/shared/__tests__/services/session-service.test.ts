@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   encodeClaudeProjectPath,
@@ -529,6 +529,90 @@ describe("session-service", () => {
     });
   });
 
+  it("merges Codex session files with an existing stale session_index", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-stale-index-");
+    tempDirs.push(codexRoot);
+    await writeFile(
+      path.join(codexRoot, "session_index.jsonl"),
+      `${JSON.stringify({
+        id: "indexed-old",
+        thread_name: "Indexed old",
+        updated_at: "2026-05-04T10:20:00.000Z",
+        cwd: "C:/workspace/indexed",
+      })}\n`,
+      "utf-8",
+    );
+    await writeJsonl(
+      path.join(codexRoot, "sessions", "2026", "05", "04", "rollout-2026-05-04T10-40-00-file-new.jsonl"),
+      [
+        {
+          type: "session_meta",
+          payload: {
+            id: "file-new",
+            cwd: "C:/workspace/file",
+            updated_at: "2026-05-04T10:40:00.000Z",
+            thread_name: "File new",
+          },
+        },
+      ],
+    );
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, codexRoot);
+
+    expect(sessions.map((session) => session.session_id)).toEqual([
+      "file-new",
+      "indexed-old",
+    ]);
+    expect(sessions[0]).toMatchObject({
+      cwd: "C:/workspace/file",
+      preview: "File new",
+    });
+  });
+
+  it("finds Codex project sessions from files when session_index has no matching entry", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-project-file-");
+    tempDirs.push(codexRoot);
+    await writeFile(
+      path.join(codexRoot, "session_index.jsonl"),
+      `${JSON.stringify({
+        id: "indexed-other",
+        thread_name: "Indexed other",
+        updated_at: "2026-05-04T10:20:00.000Z",
+        cwd: "C:/workspace/other",
+      })}\n`,
+      "utf-8",
+    );
+    await writeJsonl(
+      path.join(codexRoot, "sessions", "2026", "05", "04", "rollout-2026-05-04T10-40-00-file-current.jsonl"),
+      [
+        {
+          type: "session_meta",
+          payload: {
+            id: "file-current",
+            cwd: "C:/workspace/current",
+            updated_at: "2026-05-04T10:40:00.000Z",
+            thread_name: "File current",
+          },
+        },
+      ],
+    );
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "project",
+      cwd: "C:/workspace/current",
+    }, codexRoot);
+
+    expect(sessions.map((session) => session.session_id)).toEqual(["file-current"]);
+    expect(sessions[0]).toMatchObject({
+      cwd: "C:/workspace/current",
+      preview: "File current",
+    });
+  });
+
   it("collects the first four Codex user prompts when reading session files", async () => {
     const codexRoot = await createTempDir("skills-manager-codex-prompts-");
     tempDirs.push(codexRoot);
@@ -647,6 +731,52 @@ describe("session-service", () => {
     }, codexRoot);
 
     expect(sessions[0]?.user_prompts).toEqual(["真正的第一条用户提问"]);
+  });
+
+  it("uses the first real Codex user prompt as the preview when leading records are scaffold text", async () => {
+    const codexRoot = await createTempDir("skills-manager-codex-preview-scaffold-");
+    tempDirs.push(codexRoot);
+    const sessionFile = path.join(
+      codexRoot,
+      "sessions",
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-35-00-019df0ff-preview-scaffold.jsonl",
+    );
+    await writeJsonl(sessionFile, [
+      {
+        type: "session_meta",
+        payload: {
+          id: "019df0ff-preview-scaffold",
+          cwd: "C:/workspace/codex-preview",
+        },
+      },
+      {
+        type: "event_msg",
+        payload: {
+          message: "<permissions instructions>\nFilesystem sandboxing defines which files can be read.",
+        },
+      },
+      {
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "当前软件启动codex的会话记录是在那里？" }],
+        },
+      },
+    ]);
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, codexRoot);
+
+    expect(sessions[0]).toMatchObject({
+      session_id: "019df0ff-preview-scaffold",
+      preview: "当前软件启动codex的会话记录是在那里？",
+    });
   });
 
   it("collects Codex opening conversation excerpts while skipping scaffold prompts", async () => {
@@ -1021,6 +1151,42 @@ describe("session-service", () => {
       sourceHome: globalHome,
       runtimeHome,
     })).rejects.toThrow("全局 .codex 中未找到该会话文件，无法导入恢复。");
+  });
+
+  it("writes a minimal runtime index when importing a global Codex session without source index", async () => {
+    const runtimeHome = await createTempDir("skills-manager-codex-runtime-file-import-");
+    const globalHome = await createTempDir("skills-manager-codex-global-file-import-");
+    tempDirs.push(runtimeHome, globalHome);
+    await writeJsonl(
+      path.join(globalHome, "sessions", "2026", "05", "04", "rollout-2026-05-04T10-30-00-global-file-only.jsonl"),
+      [
+        {
+          type: "session_meta",
+          payload: {
+            id: "global-file-only",
+            cwd: "C:/workspace/global-file",
+            updated_at: "2026-05-04T10:30:00.000Z",
+            thread_name: "Global file only",
+          },
+        },
+      ],
+    );
+
+    await importCodexSessionToRuntimeHome({
+      sessionId: "global-file-only",
+      sourceHome: globalHome,
+      runtimeHome,
+    });
+
+    const indexContent = await readFile(path.join(runtimeHome, "session_index.jsonl"), "utf-8");
+    const indexEntry = JSON.parse(indexContent.trim());
+
+    expect(indexEntry).toMatchObject({
+      id: "global-file-only",
+      thread_name: "Global file only",
+      updated_at: "2026-05-04T10:30:00.000Z",
+      cwd: "C:/workspace/global-file",
+    });
   });
 
   it("skips a bad JSONL file without affecting other sessions", async () => {

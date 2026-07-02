@@ -29,6 +29,8 @@ interface SessionListProps {
   provider: string;
   sessions: SessionSummary[];
   selectedId?: string;
+  getSessionKey?: (session: SessionSummary) => string;
+  favoriteSessionKeys?: ReadonlySet<string>;
   restoreProfiles: RestoreProfileOption[];
   selectedRestoreProfileKey?: ProfileKey;
   restoreHint?: string;
@@ -38,16 +40,21 @@ interface SessionListProps {
   onRefresh: () => void;
   onSelectRestoreProfile: (profileKey: ProfileKey) => void;
   onRestore: () => void;
+  onToggleFavorite?: (session: SessionSummary) => void;
   onLoadMore?: () => void;
+  showRefresh?: boolean;
   disabled?: boolean;
   isLoading?: boolean;
   hasMoreSessions?: boolean;
+  emptyMessage?: string;
 }
 
 export function SessionList({
   provider,
   sessions,
   selectedId,
+  getSessionKey = (session) => session.session_id,
+  favoriteSessionKeys,
   restoreProfiles,
   selectedRestoreProfileKey,
   restoreHint,
@@ -57,10 +64,13 @@ export function SessionList({
   onRefresh,
   onSelectRestoreProfile,
   onRestore,
+  onToggleFavorite,
   onLoadMore,
+  showRefresh = true,
   disabled,
   isLoading,
   hasMoreSessions: hasMoreSessionsProp,
+  emptyMessage = "暂无会话记录",
 }: SessionListProps) {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_SESSIONS);
 
@@ -68,18 +78,19 @@ export function SessionList({
     setVisibleCount(INITIAL_VISIBLE_SESSIONS);
   }, [provider, sessions]);
 
-  const selectedSession = sessions.find((session) => session.session_id === selectedId);
+  const selectedSession = sessions.find((session) => getSessionKey(session) === selectedId);
   const usesExternalPagination = !!onLoadMore;
   const visibleSessions = useMemo(() => {
     const base = usesExternalPagination ? sessions : sessions.slice(0, visibleCount);
     if (!selectedSession) {
       return base;
     }
-    if (base.some((session) => session.session_id === selectedSession.session_id)) {
+    const selectedKey = getSessionKey(selectedSession);
+    if (base.some((session) => getSessionKey(session) === selectedKey)) {
       return base;
     }
     return [...base, selectedSession];
-  }, [selectedSession, sessions, usesExternalPagination, visibleCount]);
+  }, [getSessionKey, selectedSession, sessions, usesExternalPagination, visibleCount]);
   const displayedCount = usesExternalPagination ? sessions.length : Math.min(visibleCount, sessions.length);
   const hasMoreSessions = hasMoreSessionsProp ?? displayedCount < sessions.length;
 
@@ -91,14 +102,16 @@ export function SessionList({
             <h3>历史会话</h3>
             <p className="muted">当前 Provider：{provider}</p>
           </div>
-          <button
-            type="button"
-            className="secondary-button small"
-            onClick={onRefresh}
-            disabled={disabled}
-          >
-            刷新
-          </button>
+          {showRefresh && (
+            <button
+              type="button"
+              className="secondary-button small"
+              onClick={onRefresh}
+              disabled={disabled}
+            >
+              刷新
+            </button>
+          )}
         </div>
       </div>
       <div className="sessions-detail-layout">
@@ -106,23 +119,47 @@ export function SessionList({
           {isLoading && sessions.length === 0 ? (
             <p className="empty-state">正在加载会话...</p>
           ) : sessions.length === 0 ? (
-            <p className="empty-state">暂无会话记录</p>
+            <p className="empty-state">{emptyMessage}</p>
           ) : (
             <>
-              {visibleSessions.map((s) => (
-                <button
-                  key={s.session_id}
-                  type="button"
-                  className={`session-item ${s.session_id === selectedId ? "selected" : ""}`}
-                  onClick={() => onSelect(s.session_id)}
-                  disabled={disabled}
-                >
-                  <span className="session-preview">{s.preview || "(无预览)"}</span>
-                  <span className="session-meta">
-                    {new Date(s.updated_at).toLocaleString()} · {s.cwd}
-                  </span>
-                </button>
-              ))}
+              {visibleSessions.map((s) => {
+                const sessionKey = getSessionKey(s);
+                const isFavorite = favoriteSessionKeys?.has(sessionKey) ?? false;
+                return (
+                  <div
+                    key={sessionKey}
+                    className={`session-item-row ${sessionKey === selectedId ? "selected" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className={`session-item ${sessionKey === selectedId ? "selected" : ""}`}
+                      onClick={() => onSelect(sessionKey)}
+                      disabled={disabled}
+                    >
+                      <span className="session-preview">{s.preview || "(无预览)"}</span>
+                      <span className="session-meta">
+                        {new Date(s.updated_at).toLocaleString()} · {s.cwd}
+                      </span>
+                    </button>
+                    {onToggleFavorite && (
+                      <button
+                        type="button"
+                        className={`session-favorite-btn ${isFavorite ? "active" : ""}`}
+                        aria-label={`${isFavorite ? "取消收藏" : "收藏"}会话：${s.preview || s.session_id}`}
+                        aria-pressed={isFavorite}
+                        title={isFavorite ? "取消收藏" : "收藏"}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onToggleFavorite(s);
+                        }}
+                        disabled={disabled}
+                      >
+                        {isFavorite ? "★" : "☆"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
               <div className="session-list-footer">
                 <span className="session-list-count">
                   已显示 {displayedCount}{hasMoreSessions ? "+" : ` / ${sessions.length}`}
@@ -145,7 +182,22 @@ export function SessionList({
           {selectedSession ? (
             <>
               <div className="session-detail-card">
-                <p className="session-picker-heading">会话详情</p>
+                <div className="session-detail-heading-row">
+                  <p className="session-picker-heading">会话详情</p>
+                  {onToggleFavorite && (
+                    <button
+                      type="button"
+                      className={`session-favorite-btn compact ${favoriteSessionKeys?.has(getSessionKey(selectedSession)) ? "active" : ""}`}
+                      aria-label={`${favoriteSessionKeys?.has(getSessionKey(selectedSession)) ? "取消收藏" : "收藏"}会话：${selectedSession.preview || selectedSession.session_id}`}
+                      aria-pressed={favoriteSessionKeys?.has(getSessionKey(selectedSession)) ?? false}
+                      title={favoriteSessionKeys?.has(getSessionKey(selectedSession)) ? "取消收藏" : "收藏"}
+                      onClick={() => onToggleFavorite(selectedSession)}
+                      disabled={disabled}
+                    >
+                      {favoriteSessionKeys?.has(getSessionKey(selectedSession)) ? "★" : "☆"}
+                    </button>
+                  )}
+                </div>
                 <p className="session-meta">Session ID</p>
                 <code>{selectedSession.session_id}</code>
                 <p className="session-meta">Provider</p>
