@@ -24,6 +24,7 @@ class MemoryStateAccessor implements LocalStateAccessor {
 }
 
 function makeRuntime(overrides: Partial<RuntimeSettings> = {}): RuntimeSettings {
+  const { extra_env: extraEnv, ...rest } = overrides;
   return {
     cwd: "C:/workspace/current-project",
     command_base: "claude",
@@ -31,8 +32,9 @@ function makeRuntime(overrides: Partial<RuntimeSettings> = {}): RuntimeSettings 
     settings_file: "",
     launch_mode: "new",
     extra_args: "",
+    extra_env: extraEnv ?? {},
     exclude_user_settings: true,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -120,7 +122,9 @@ describe("LaunchService permissions", () => {
     expect(plan.codexConfig?.content).toContain('sandbox_mode = "workspace-write"');
     expect(plan.codexConfig?.content).toContain('approval_policy = "on-request"');
     expect(plan.codexConfig?.content).toContain('web_search = "disabled"');
-    expect(plan.codexConfig?.content).toContain(".sandbox_workspace_write]");
+    expect(plan.codexConfig?.content).toContain("[windows]");
+    expect(plan.codexConfig?.content).toContain('sandbox = "elevated"');
+    expect(plan.codexConfig?.content).toContain("[sandbox_workspace_write]");
     expect(plan.codexConfig?.content).toContain("network_access = false");
     expect(plan.codexConfig?.content).toContain('writable_roots = ["C:/shared"]');
   });

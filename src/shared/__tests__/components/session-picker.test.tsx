@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -170,6 +172,54 @@ describe("SessionPicker", () => {
     expect(html).toContain("先看历史记录展示问题");
     expect(html).toContain("我会检查 SessionPicker 和 session-service。");
     expect(html).not.toContain("旧字段提问");
+  });
+
+  it("lets selected session details expand into the main page scroll", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const longImagePrompt = `<image name=[Image #1] path="C:\\Users\\99395\\AppData\\Local\\Temp\\codex-clipboard-xZdCCg.png">`;
+
+    await act(async () => {
+      root.render(
+        <SessionPicker
+          sessions={[
+            {
+              provider: "codex",
+              session_id: "session-image-prompt",
+              cwd: "C:/Users/99395/Sync/软件开发项目/skills管理/一个很长的目录/继续嵌套/直到足够长",
+              updated_at: "2026-06-09T10:00:00.000Z",
+              preview: longImagePrompt,
+              conversation_excerpts: [
+                { role: "user", text: longImagePrompt },
+                { role: "assistant", text: "我会先按本轮适用的技能说明看一下流程约束，再定位渲染边界。" },
+                { role: "assistant", text: "使用系统化调试，因为这是界面布局问题，需要先确认触发条件。" },
+                { role: "user", text: "好像是因为图片输入长度导致的" },
+              ],
+            },
+          ]}
+          selectedId="session-image-prompt"
+          onSelect={vi.fn()}
+          onRefresh={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector(".session-picker.has-selection")).toBeInstanceOf(HTMLElement);
+    expect(container.querySelector(".session-picker-selected-summary")).toBeInstanceOf(HTMLElement);
+
+    const css = readFileSync(join(process.cwd(), "src", "styles.css"), "utf8");
+    const selectedSummaryRule = css.match(/\.session-picker-selected-summary\s*\{(?<body>[^}]*)\}/s)?.groups?.body ?? "";
+    const selectedListRule = css.match(/\.session-picker\.has-selection\s+\.session-picker-list\s*\{(?<body>[^}]*)\}/s)?.groups?.body ?? "";
+    expect(css).toMatch(/\.session-picker\.has-selection\s+\.session-picker-list\s*\{[^}]*max-height:/s);
+    expect(selectedListRule).toMatch(/max-height:\s*min\(320px,\s*42vh\)/);
+    expect(selectedSummaryRule).not.toMatch(/max-height:/);
+    expect(selectedSummaryRule).not.toMatch(/overflow-y:\s*auto/);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 
   it("does not render the selected session prompts block when prompts are unavailable", () => {

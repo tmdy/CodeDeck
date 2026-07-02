@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProfilesLaunchPanel } from "../../../components/profiles/ProfilesLaunchPanel.jsx";
@@ -48,5 +50,14 @@ describe("ProfilesLaunchPanel", () => {
     expect(html).toContain("临时只读");
     expect(html).toContain("临时全权限");
     expect(html).not.toContain("模型映射");
+  });
+
+  it("uses compact launch controls to leave more room for session history", () => {
+    const css = readFileSync(join(process.cwd(), "src", "styles.css"), "utf8");
+    expect(css).toMatch(
+      /\.profiles-launch-panel\s+\.launch-controls\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s,
+    );
+    expect(css).toMatch(/\.profiles-launch-panel\s+\.launch-btn\.primary\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+    expect(css).toMatch(/\.profiles-launch-panel\s+\.launch-btn\s*\{[^}]*padding:\s*0\.38rem\s+0\.58rem/s);
   });
 });

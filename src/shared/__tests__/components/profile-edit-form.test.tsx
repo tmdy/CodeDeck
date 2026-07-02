@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ProfileEditForm } from "../../../components/profiles/ProfileEditForm.jsx";
 import { defaultProfilePermissions } from "../../profile/permissions.js";
 import type { AdvancedModelMapping } from "../../profile/types.js";
@@ -74,6 +76,7 @@ describe("ProfileEditForm", () => {
     expect(modelCardIndex).toBeGreaterThan(secondaryColumnIndex);
     expect(runtimeCardIndex).toBeGreaterThan(modelCardIndex);
     expect(commandPreviewIndex).toBeGreaterThan(runtimeCardIndex);
+    expect(html).toContain("glass-card profile-runtime-card");
     expect(html).toContain("命令基座");
     expect(html).toContain("当前配置专属");
     expect(html).toContain("当前模型 ID");
@@ -120,6 +123,12 @@ describe("ProfileEditForm", () => {
     expect(html).toContain("profile value");
     expect(html).toContain("CLAUDE_CODE_EFFORT_LEVEL");
     expect(html).toContain("max");
+  });
+
+  it("should keep profile runtime environment inputs aligned with form field typography", () => {
+    const css = readFileSync(join(process.cwd(), "src", "styles.css"), "utf8");
+
+    expect(css).toMatch(/\.profile-runtime-env-section > span,\s*\.profile-runtime-env-row input\s*\{[^}]*font-size:\s*0\.86rem;[^}]*font-weight:\s*600;/s);
   });
 
   it("should add, update and remove profile runtime environment variables", async () => {
@@ -196,6 +205,102 @@ describe("ProfileEditForm", () => {
       root.unmount();
     });
     container.remove();
+  });
+
+  it("should expose working directory favorite controls", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onToggleWorkingDirectoryFavorite = vi.fn();
+    const onSelectWorkingDirectoryFavorite = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "C:/workspace/alpha",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="claude"
+          modelOptions={[]}
+          workingDirectoryFavorites={["C:/workspace/alpha", "C:/workspace/beta"]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onToggleWorkingDirectoryFavorite={onToggleWorkingDirectoryFavorite}
+          onSelectWorkingDirectoryFavorite={onSelectWorkingDirectoryFavorite}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const favoriteButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.getAttribute("aria-label") === "取消收藏当前工作目录",
+    );
+    expect(favoriteButton).toBeDefined();
+    expect(favoriteButton?.textContent).toBe("★");
+
+    await act(async () => {
+      favoriteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onToggleWorkingDirectoryFavorite).toHaveBeenCalledTimes(1);
+
+    const favoriteSelect = Array.from(container.querySelectorAll("select")).find(
+      (select) => select.getAttribute("aria-label") === "选择收藏的工作目录",
+    );
+    expect(favoriteSelect).toBeInstanceOf(HTMLSelectElement);
+    expect(favoriteSelect?.textContent).toContain("C:/workspace/beta");
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      valueSetter?.call(favoriteSelect, "C:/workspace/beta");
+      favoriteSelect?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(onSelectWorkingDirectoryFavorite).toHaveBeenCalledWith("C:/workspace/beta");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("should disable the working directory favorite button when cwd is empty", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        workingDirectoryFavorites={["C:/workspace/alpha"]}
+        onChange={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onToggleWorkingDirectoryFavorite={vi.fn()}
+        onSelectWorkingDirectoryFavorite={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("aria-label=\"收藏当前工作目录\"");
+    expect(html).toContain("disabled=\"\"");
   });
 
   it("should render Claude single-model compatibility controls without explanatory helper text", () => {

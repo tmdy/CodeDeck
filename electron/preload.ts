@@ -13,6 +13,15 @@ import type {
   ProjectRecord,
   SkillHost,
 } from "../src/shared/types.js";
+import { parseSerializedStartupTheme } from "../src/shared/startup-theme.js";
+
+const STARTUP_THEME_ARG_PREFIX = "--skills-manager-startup-theme=";
+
+const startupTheme = parseSerializedStartupTheme(
+  process.argv
+    .find((arg) => arg.startsWith(STARTUP_THEME_ARG_PREFIX))
+    ?.slice(STARTUP_THEME_ARG_PREFIX.length),
+);
 
 // ---- Skills Manager API（保持不变） ----
 
@@ -99,6 +108,8 @@ const profileApi = {
     ipcRenderer.invoke("profile:reorder", provider, orderedKeys),
   activateProvider: (provider: string): Promise<void> =>
     ipcRenderer.invoke("profile:activate-provider", provider),
+  updateWorkingDirectoryFavorites: (favorites: string[]): Promise<string[]> =>
+    ipcRenderer.invoke("profile:update-working-directory-favorites", favorites),
   saveSiteBalanceSession: (baseUrl: string, draft: unknown): Promise<unknown> =>
     ipcRenderer.invoke("profile:save-site-balance-session", baseUrl, draft),
   deleteSiteBalanceSession: (baseUrl: string, sessionId: string): Promise<void> =>
@@ -128,6 +139,8 @@ const profileApi = {
     ipcRenderer.invoke("session:refresh", provider),
   updateSessionsTabState: (provider: string, patch: unknown): Promise<void> =>
     ipcRenderer.invoke("session:update-tab-state", provider, patch),
+  updateSessionFavorites: (favorites: unknown[]): Promise<unknown[]> =>
+    ipcRenderer.invoke("session:update-favorites", favorites),
 
   testBalance: (profileKey: string): Promise<void> =>
     ipcRenderer.invoke("balance:test", profileKey),
@@ -188,3 +201,4 @@ const profileApi = {
 
 contextBridge.exposeInMainWorld("skillsManager", skillsApi);
 contextBridge.exposeInMainWorld("profileManager", profileApi);
+contextBridge.exposeInMainWorld("__SKILLS_MANAGER_STARTUP_THEME__", startupTheme);

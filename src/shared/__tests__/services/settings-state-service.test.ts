@@ -62,6 +62,7 @@ describe("SettingsStateService", () => {
           model: "",
           launch_mode: "new",
           extra_args: "",
+          extra_env: {},
           exclude_user_settings: true,
         },
       },
@@ -79,6 +80,7 @@ describe("SettingsStateService", () => {
       model: "",
       launch_mode: "new",
       extra_args: "",
+      extra_env: {},
       exclude_user_settings: true,
     });
   });

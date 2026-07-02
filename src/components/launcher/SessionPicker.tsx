@@ -50,7 +50,7 @@ export const SessionPicker = memo(function SessionPicker({
   const listboxId = "profile-session-picker-listbox";
 
   return (
-    <GlassCard title="恢复会话" className="session-picker">
+    <GlassCard title="恢复会话" className={`session-picker${selectedSession ? " has-selection" : ""}`}>
       <div className="session-picker-toolbar">
         <div className="session-picker-title">
           <span className="session-picker-heading">请选择最近会话</span>
@@ -109,7 +109,7 @@ export const SessionPicker = memo(function SessionPicker({
             ))}
           </div>
           {selectedSession ? (
-            <div className="session-picker-summary">
+            <div className="session-picker-summary session-picker-selected-summary">
               <p className="session-picker-heading">当前选中</p>
               <p className="session-preview">{selectedSession.preview || "(无预览)"}</p>
               {selectedExcerpts.length > 0 && (

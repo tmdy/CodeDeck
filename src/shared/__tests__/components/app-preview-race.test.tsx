@@ -27,17 +27,17 @@ const profile: Profile = {
 };
 const DEFAULT_DOWNLOADS_CWD = "C:/Users/99395/Downloads";
 
-function createState(runtime: RuntimeSettings): LocalState {
-  const key = itemKey(profile);
+function createState(runtime: RuntimeSettings, sourceProfile: Profile = profile): LocalState {
+  const key = itemKey(sourceProfile);
   return {
     ...defaultLocalState(),
-    selected_provider: profile.provider,
+    selected_provider: sourceProfile.provider,
     selected_profile_key: key,
     selected_profile_key_by_provider: {
-      [profile.provider]: key,
+      [sourceProfile.provider]: key,
     },
     profile_order_by_provider: {
-      [profile.provider]: [key],
+      [sourceProfile.provider]: [key],
     },
     runtime_by_profile: {
       [key]: runtime,
@@ -65,7 +65,8 @@ function createBootstrapState(state: LocalState): BootstrapLocalState {
   };
 }
 
-function createProfileManagerFixture(options: { initialCwd?: string } = {}) {
+function createProfileManagerFixture(options: { initialCwd?: string; profile?: Profile } = {}) {
+  const fixtureProfile = options.profile ?? profile;
   const runtime: RuntimeSettings = {
     cwd: options.initialCwd ?? "C:/workspace/initial",
     command_base: "claude",
@@ -73,10 +74,11 @@ function createProfileManagerFixture(options: { initialCwd?: string } = {}) {
     settings_file: "",
     launch_mode: "new",
     extra_args: "",
+    extra_env: {},
     exclude_user_settings: true,
   };
-  let state = createState(runtime);
-  let currentProfile = { ...profile };
+  let state = createState(runtime, fixtureProfile);
+  let currentProfile = { ...fixtureProfile };
   const firstPreview = createDeferred<CommandPreview>();
   const secondPreview = createDeferred<CommandPreview>();
 
@@ -107,7 +109,7 @@ function createProfileManagerFixture(options: { initialCwd?: string } = {}) {
     })),
     saveProfile: vi.fn(async (_targetKey, draft, runtimeDraft) => {
       currentProfile = { ...draft };
-      state = createState(runtimeDraft);
+      state = createState(runtimeDraft, currentProfile);
       return currentProfile;
     }),
     deleteProfile: vi.fn(async () => undefined),
@@ -188,19 +190,18 @@ function createSession(profileKey: string, cwd: string, preview: string): Sessio
 }
 
 function createProfileSessionSwitchFixture(options: { delayAlpha?: boolean; delayBeta?: boolean } = {}) {
-  const alphaProfile: Profile = {
+  let alphaProfile: Profile = {
     provider: "claude",
     name: "Alpha",
     url: "https://alpha.example.com/v1",
     key: "sk-alpha",
   };
-  const betaProfile: Profile = {
+  let betaProfile: Profile = {
     provider: "claude",
     name: "Beta",
     url: "https://beta.example.com/v1",
     key: "sk-beta",
   };
-  const profiles = [alphaProfile, betaProfile];
   const alphaKey = itemKey(alphaProfile);
   const betaKey = itemKey(betaProfile);
   const alphaRuntime = {
@@ -210,6 +211,7 @@ function createProfileSessionSwitchFixture(options: { delayAlpha?: boolean; dela
     settings_file: "",
     launch_mode: "new" as const,
     extra_args: "",
+    extra_env: {},
     exclude_user_settings: true,
   };
   const betaRuntime = {
@@ -252,23 +254,34 @@ function createProfileSessionSwitchFixture(options: { delayAlpha?: boolean; dela
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
     bootstrap: vi.fn(async () => ({
-      profiles: profiles.map((profile) => ({ ...profile })),
+      profiles: [alphaProfile, betaProfile].map((profile) => ({ ...profile })),
       state: createBootstrapState(state),
       siteBalanceSessionsByBaseUrl: {},
       defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
     })),
     listProfiles: vi.fn(async () => ({
-      profiles: profiles.map((profile) => ({ ...profile })),
+      profiles: [alphaProfile, betaProfile].map((profile) => ({ ...profile })),
       state: cloneLocalStateForTest(state),
       siteBalanceSessionsByBaseUrl: {},
       defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
     })),
-    saveProfile: vi.fn(async (_targetKey, draft, runtimeDraft) => {
+    saveProfile: vi.fn(async (targetKey, draft, runtimeDraft) => {
+      if (targetKey === alphaKey) {
+        alphaProfile = { ...draft };
+      } else if (targetKey === betaKey) {
+        betaProfile = { ...draft };
+      }
+      const savedKey = itemKey(draft);
       state = {
         ...state,
+        selected_profile_key: savedKey,
+        selected_profile_key_by_provider: {
+          ...state.selected_profile_key_by_provider,
+          claude: savedKey,
+        },
         runtime_by_profile: {
           ...state.runtime_by_profile,
-          [_targetKey]: runtimeDraft,
+          [savedKey]: runtimeDraft,
         },
       };
       return draft;
@@ -340,6 +353,8 @@ function createProfileSessionSwitchFixture(options: { delayAlpha?: boolean; dela
     betaSession,
     alphaSessions,
     betaSessions,
+    getAlphaProfile: () => ({ ...alphaProfile }),
+    getBetaProfile: () => ({ ...betaProfile }),
   };
 }
 
@@ -424,15 +439,7 @@ describe("App command preview", () => {
     const fixture = createProfileManagerFixture();
     const { container, root } = await renderUnlockedApp(fixture.manager);
 
-    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(0);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(599);
-    });
-
-    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(0);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
-    });
+    // 初始预览：ready 后立即计算（不再延迟 600ms）
     expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(1);
 
     const nameInput = Array.from(container.querySelectorAll("input")).find(
@@ -494,6 +501,41 @@ describe("App command preview", () => {
     container.remove();
   });
 
+  it("includes draft permissions when refreshing the command preview", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture({
+      profile: {
+        ...profile,
+        permissions: {
+          preset: "full_access",
+          fullAccessConfirmed: true,
+        },
+      },
+    });
+    const { root } = await renderUnlockedApp(fixture.manager);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.previewForDraft).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        permissions: expect.objectContaining({
+          preset: "full_access",
+          fullAccessConfirmed: true,
+        }),
+      }),
+      expect.anything(),
+      undefined,
+      undefined,
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it("clears stale profile sessions while loading sessions for the selected profile", async () => {
     vi.useFakeTimers();
     const fixture = createProfileSessionSwitchFixture({ delayBeta: true });
@@ -548,6 +590,52 @@ describe("App command preview", () => {
 
     expect(container.textContent).toContain("Beta project session");
     expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("saves the current profile draft before switching to another profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture();
+    fixture.manager.promptUnsavedProfileAction = vi.fn(async () => "save" as const);
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    const nameInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "输入 Profile 名称",
+    );
+    expect(nameInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(nameInput, "Alpha Saved");
+      nameInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.manager.promptUnsavedProfileAction).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.saveProfile).toHaveBeenCalledWith(
+      fixture.alphaKey,
+      expect.objectContaining({ name: "Alpha Saved" }),
+      expect.any(Object),
+    );
+    expect(fixture.manager.selectProfile).toHaveBeenCalledWith("claude", fixture.betaKey);
+    expect(fixture.manager.saveProfile.mock.invocationCallOrder[0]).toBeLessThan(
+      fixture.manager.selectProfile.mock.invocationCallOrder[0],
+    );
+    expect(fixture.getAlphaProfile().name).toBe("Alpha Saved");
+    expect(fixture.getBetaProfile().name).toBe("Beta");
 
     await act(async () => {
       root.unmount();

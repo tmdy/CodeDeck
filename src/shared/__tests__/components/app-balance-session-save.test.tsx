@@ -80,6 +80,7 @@ function createProfileManagerFixture(
     settings_file: "",
     launch_mode: "new",
     extra_args: "",
+    extra_env: {},
     exclude_user_settings: true,
   };
   let profiles: Profile[] = initialProfiles.map((profile) => ({ ...profile }));
@@ -291,6 +292,30 @@ describe("App balance session autosave", () => {
     button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
 
+  function clickExactButtonByText(container: HTMLElement, text: string) {
+    const button = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.trim() === text,
+    );
+    expect(button).toBeInstanceOf(HTMLButtonElement);
+    button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  function findBalanceSessionSelect(container: HTMLElement) {
+    const select = Array.from(container.querySelectorAll("select")).find((candidate) =>
+      Array.from(candidate.options).some((option) => option.value === "new" && option.textContent === "新建会话"),
+    );
+    expect(select).toBeInstanceOf(HTMLSelectElement);
+    return select as HTMLSelectElement;
+  }
+
+  async function selectBalanceSessionOption(select: HTMLSelectElement, value: string) {
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      valueSetter?.call(select, value);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
   it("renders fetched model count after refreshing the site model list", async () => {
     const fixture = createProfileManagerFixture();
     fixture.manager.fetchSiteModels = vi.fn(async () => ({
@@ -462,20 +487,64 @@ describe("App balance session autosave", () => {
     container.remove();
   });
 
+  it("resets an empty new balance session draft when leaving and returning to Profiles", async () => {
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    const balanceSessionSelect = findBalanceSessionSelect(container);
+    await selectBalanceSessionOption(balanceSessionSelect, "new");
+
+    expect(findBalanceSessionSelect(container).value).toBe("new");
+    expect(container.textContent).not.toContain("Access Token 不能为空");
+
+    await act(async () => {
+      clickButtonByText(container, "设置");
+    });
+    await act(async () => {
+      clickButtonByText(container, "Profiles");
+    });
+
+    expect(findBalanceSessionSelect(container).value).toBe("auto");
+    expect(fixture.saveSiteBalanceSession).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Access Token 不能为空");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("saves an empty new balance session selection as API key auto without creating a session", async () => {
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+
+    await act(async () => {
+      clickExactButtonByText(container, "保存");
+    });
+
+    expect(fixture.saveSiteBalanceSession).not.toHaveBeenCalled();
+    expect(fixture.saveProfile).toHaveBeenCalledWith(
+      itemKey(baseProfile),
+      expect.objectContaining({
+        balance_session_id: undefined,
+      }),
+      expect.any(Object),
+    );
+    expect(container.textContent).not.toContain("Access Token 不能为空");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("persists session-only changes before balance testing", async () => {
     const fixture = createProfileManagerFixture();
     const { container, root } = await renderAppWithFixture(fixture);
 
-    const balanceSessionSelect = Array.from(container.querySelectorAll("select")).find((select) =>
-      Array.from(select.options).some((option) => option.value === "new" && option.textContent === "新建会话"),
-    );
-    expect(balanceSessionSelect).toBeInstanceOf(HTMLSelectElement);
-
-    await act(async () => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-      valueSetter?.call(balanceSessionSelect, "new");
-      balanceSessionSelect?.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
 
     const inputs = Array.from(container.querySelectorAll("input"));
     const tokenInput = inputs.find((input) => input.placeholder === "输入后台 Access Token 或 Session");

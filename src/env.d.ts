@@ -19,7 +19,7 @@ import type { CommandPreview, LaunchRequest } from "./shared/launcher/types.js";
 import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ModelMappingsState } from "./shared/model-mapping/config-types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
-import type { BootstrapResult, LocalState } from "./shared/state/local-state.js";
+import type { BootstrapResult, FavoriteSessionSummary, LocalState } from "./shared/state/local-state.js";
 import type { ListSessionsRequest, SessionListScope } from "./shared/services/session-service.js";
 import type {
   SiteBalanceSession,
@@ -28,7 +28,13 @@ import type {
 } from "./shared/balance/site-balance-sessions.js";
 
 declare global {
+  interface SkillsManagerStartupTheme {
+    themeMode: "system" | "light" | "dark";
+    effectiveTheme: "light" | "dark";
+  }
+
   interface Window {
+    __SKILLS_MANAGER_STARTUP_THEME__?: SkillsManagerStartupTheme | null;
     skillsManager?: {
       scan: () => Promise<ScanResult>;
       loadCachedSnapshot: () => Promise<SkillsSnapshotResult | null>;
@@ -74,6 +80,7 @@ declare global {
       selectProfile: (provider: string, key: ProfileKey) => Promise<void>;
       reorderProfiles: (provider: string, orderedKeys: ProfileKey[]) => Promise<void>;
       activateProvider: (provider: string) => Promise<void>;
+      updateWorkingDirectoryFavorites?: (favorites: string[]) => Promise<string[]>;
       saveSiteBalanceSession: (baseUrl: string, draft: SiteBalanceSessionDraft) => Promise<SiteBalanceSession>;
       deleteSiteBalanceSession: (baseUrl: string, sessionId: string) => Promise<void>;
       pickWorkingDirectory: () => Promise<string | undefined>;
@@ -96,6 +103,7 @@ declare global {
         provider: string,
         patch: { scope?: SessionListScope; restore_profile_key?: ProfileKey },
       ) => Promise<void>;
+      updateSessionFavorites?: (favorites: FavoriteSessionSummary[]) => Promise<FavoriteSessionSummary[]>;
 
       // Balance
       testBalance: (profileKey: ProfileKey) => Promise<void>;

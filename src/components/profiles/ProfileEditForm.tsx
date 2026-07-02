@@ -41,6 +41,7 @@ interface ProfileEditFormProps {
   modelFetchError?: string | null;
   modelFetchSuccess?: string | null;
   commandPreview?: ReactNode;
+  workingDirectoryFavorites?: string[];
   onChange: (field: string, value: string | boolean) => void;
   onPermissionsChange?: (permissions: ProfilePermissions | null) => void;
   onDraftCommit?: (field: string, value?: string | boolean) => void;
@@ -50,6 +51,8 @@ interface ProfileEditFormProps {
   onFetchModels: () => void;
   onOpenBaseUrl?: () => void;
   onPickCwd: () => void;
+  onToggleWorkingDirectoryFavorite?: () => void;
+  onSelectWorkingDirectoryFavorite?: (path: string) => void;
   onSave: () => void;
   onCancel: () => void;
   disabled?: boolean;
@@ -57,6 +60,8 @@ interface ProfileEditFormProps {
 
 const noopPermissionsChange = () => {};
 const noopOpenBaseUrl = () => {};
+const noopToggleWorkingDirectoryFavorite = () => {};
+const noopSelectWorkingDirectoryFavorite = () => {};
 
 export const ProfileEditForm = memo(function ProfileEditForm({
   draft,
@@ -69,6 +74,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   modelFetchError,
   modelFetchSuccess,
   commandPreview,
+  workingDirectoryFavorites = [],
   onChange,
   onPermissionsChange,
   onDraftCommit,
@@ -78,6 +84,8 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   onFetchModels,
   onOpenBaseUrl = noopOpenBaseUrl,
   onPickCwd,
+  onToggleWorkingDirectoryFavorite = noopToggleWorkingDirectoryFavorite,
+  onSelectWorkingDirectoryFavorite = noopSelectWorkingDirectoryFavorite,
   onSave,
   onCancel,
   disabled,
@@ -115,6 +123,11 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   const showModelPicker = modelPickerOpen && !disabled && modelOptions.length > 0;
   const runtimeEnv = runtime.extra_env ?? {};
   const runtimeEnvEntries = Object.entries(runtimeEnv);
+  const normalizedCwd = runtime.cwd.trim();
+  const cwdIsFavorite = normalizedCwd
+    ? workingDirectoryFavorites.includes(normalizedCwd)
+    : false;
+  const favoriteButtonLabel = cwdIsFavorite ? "取消收藏当前工作目录" : "收藏当前工作目录";
 
   const updateRuntimeEnvKey = useCallback((currentKey: string, nextKey: string, value: string) => {
     const nextEnv = { ...runtimeEnv };
@@ -488,7 +501,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
             {modelFetchError && <div className="banner error">{modelFetchError}</div>}
           </GlassCard>
 
-          <GlassCard title="当前配置专属运行时设置">
+          <GlassCard title="当前配置专属运行时设置" className="profile-runtime-card">
             <label>
               工作目录
               <div className="path-field">
@@ -499,6 +512,36 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                   placeholder="默认使用下载目录"
                   disabled={disabled}
                 />
+                <button
+                  type="button"
+                  className={`secondary-button icon-button ${cwdIsFavorite ? "active" : ""}`}
+                  aria-label={favoriteButtonLabel}
+                  title={favoriteButtonLabel}
+                  onClick={onToggleWorkingDirectoryFavorite}
+                  disabled={disabled || !normalizedCwd}
+                >
+                  {cwdIsFavorite ? "★" : "☆"}
+                </button>
+                {workingDirectoryFavorites.length > 0 && (
+                  <select
+                    aria-label="选择收藏的工作目录"
+                    value=""
+                    onChange={(event) => {
+                      const selectedPath = event.target.value;
+                      if (selectedPath) {
+                        onSelectWorkingDirectoryFavorite(selectedPath);
+                      }
+                    }}
+                    disabled={disabled}
+                  >
+                    <option value="">收藏</option>
+                    {workingDirectoryFavorites.map((path) => (
+                      <option key={path} value={path}>
+                        {path}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <button type="button" className="secondary-button" onClick={onPickCwd} disabled={disabled}>
                   选择
                 </button>

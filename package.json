@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:build:electron:watch\" \"npm:dev:electron\"",
     "dev:renderer": "vite --port 5173 --strictPort",
-    "dev:electron": "wait-on tcp:5173 dist-electron/electron/main.js && set VITE_DEV_SERVER_URL=http://localhost:5173&& electron ./dist-electron/electron/main.js",
+    "dev:electron": "wait-on tcp:5173 dist-electron/electron/main.js http-get://localhost:5173/src/main.tsx http-get://localhost:5173/src/App.tsx && set VITE_DEV_SERVER_URL=http://localhost:5173&& electron ./dist-electron/electron/main.js",
     "build:electron": "tsc -p tsconfig.node.json",
     "build:electron:watch": "tsc -p tsconfig.node.json --watch",
     "merge:translations": "node ./scripts/merge-generated-translations.mjs",
@@ -20,6 +20,7 @@
     "build": "npm run typecheck && vite build && npm run build:electron",
     "dist:win": "npm run build && npm run prepare:package && electron-builder --win nsis --x64 --publish never",
     "dist:win:dir": "npm run build && npm run prepare:package && electron-builder --win dir --x64 --publish never",
+    "dist:win:zip": "npm run build && npm run prepare:package && electron-builder --win zip --x64 --publish never",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -52,13 +53,28 @@
     "productName": "Skills Manager",
     "copyright": "Copyright © 2026 99395",
     "artifactName": "${productName}-Setup-${version}.${ext}",
+    "compression": "maximum",
     "directories": {
       "output": "release",
       "buildResources": "build"
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*",
+      {
+        "from": "dist-electron",
+        "to": "dist-electron",
+        "filter": [
+          "**/*",
+          "!**/__tests__/**",
+          "!**/*.map",
+          "!**/*.d.ts",
+          "!**/*.md",
+          "!**/*.txt",
+          "!**/*.test.*",
+          "!**/*.spec.*",
+          "!vite.config.js"
+        ]
+      },
       "package.json"
     ],
     "extraResources": [

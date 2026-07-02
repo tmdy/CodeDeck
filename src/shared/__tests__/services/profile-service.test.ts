@@ -52,6 +52,7 @@ function makeRuntime(): RuntimeSettings {
     settings_file: "",
     launch_mode: "new",
     extra_args: "",
+    extra_env: {},
     exclude_user_settings: true,
   };
 }

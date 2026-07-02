@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import App from "../../../App.jsx";
 
+function normalizeNewlines(value: string): string {
+  return value.replace(/\r\n/g, "\n");
+}
+
 describe("App startup route", () => {
   afterEach(() => {
     window.history.replaceState(null, "", "/");
@@ -17,13 +21,69 @@ describe("App startup route", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain('class="startup-screen"');
+    expect(html).toContain('class="startup-progress"');
     expect(html).toContain("Skills Manager");
     expect(html).toContain("正在准备解锁界面");
     expect(html).not.toContain("AI CLI 工具统一管理");
   });
 
+  it("should render the static startup gate before the renderer bundle executes", async () => {
+    const html = normalizeNewlines(await readFile(path.join(process.cwd(), "index.html"), "utf8"));
+
+    expect(html).toContain("window.__SKILLS_MANAGER_STARTUP_THEME__");
+    expect(html).toContain("document.documentElement.dataset.theme = startupTheme.effectiveTheme");
+    expect(html).toContain('<body class="unlock-route">');
+    expect(html).toContain('<div id="root">');
+    expect(html).toContain('class="startup-screen"');
+    expect(html).toContain('class="startup-progress"');
+    expect(html).toContain("正在准备解锁界面");
+    expect(html).toContain("@keyframes startup-progress-slide");
+    expect(html).toContain(':root[data-theme="dark"]');
+  });
+
+  it("should pass the startup theme snapshot into the renderer before loading the app", async () => {
+    const source = normalizeNewlines(await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8"));
+    const createWindowStart = source.indexOf("async function createMainWindow(): Promise<void> {");
+    const createWindowEnd = source.indexOf("// ---- 注册所有 IPC 处理器 ----", createWindowStart);
+    const createWindowBlock = source.slice(createWindowStart, createWindowEnd);
+    const devLoadIndex = createWindowBlock.indexOf("await browserWindow.loadURL(devServerUrl);");
+    const distLoadIndex = createWindowBlock.indexOf("await browserWindow.loadFile(resolveDistIndexPath());");
+    const additionalArgsIndex = createWindowBlock.indexOf("additionalArguments");
+
+    expect(source).toContain("await syncNativeThemeFromLocalState();");
+    expect(source).toContain("getStartupThemeArgument()");
+    expect(source).toContain("additionalArguments");
+    expect(additionalArgsIndex).toBeGreaterThanOrEqual(0);
+    expect(additionalArgsIndex).toBeLessThan(devLoadIndex);
+    expect(additionalArgsIndex).toBeLessThan(distLoadIndex);
+  });
+
+  it("should show an inline startup shell before loading the real renderer", async () => {
+    const source = normalizeNewlines(await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8"));
+    const createWindowStart = source.indexOf("async function createMainWindow(): Promise<void> {");
+    const createWindowEnd = source.indexOf("// ---- 注册所有 IPC 处理器 ----", createWindowStart);
+    const createWindowBlock = source.slice(createWindowStart, createWindowEnd);
+    const mainWindowAssignedIndex = createWindowBlock.indexOf("mainWindow = browserWindow;");
+    const shellLoadIndex = createWindowBlock.indexOf("await showStartupShell(browserWindow);");
+    const devLoadIndex = createWindowBlock.indexOf("await browserWindow.loadURL(devServerUrl);");
+    const distLoadIndex = createWindowBlock.indexOf("await browserWindow.loadFile(resolveDistIndexPath());");
+
+    // show: true 让窗口在渲染器冷启动期间立即显示纯色背景（与 shell 同色），
+    // 避免 app ready 后数秒无窗口反馈；startup shell 仍在真实 renderer 之前加载。
+    expect(createWindowBlock).toContain("show: true,");
+    expect(createWindowBlock).toContain('title: "Skills Manager",');
+    expect(source).toContain("function createStartupShellHtml(");
+    expect(source).toContain("function showStartupShell(");
+    expect(source).toContain('class="startup-screen"');
+    expect(source).toContain('class="startup-progress"');
+    expect(source).toContain("正在准备解锁界面");
+    expect(shellLoadIndex).toBeGreaterThan(mainWindowAssignedIndex);
+    expect(shellLoadIndex).toBeLessThan(devLoadIndex);
+    expect(shellLoadIndex).toBeLessThan(distLoadIndex);
+  });
+
   it("should keep the main header compact", async () => {
-    const css = await readFile(path.join(process.cwd(), "src", "styles.css"), "utf8");
+    const css = normalizeNewlines(await readFile(path.join(process.cwd(), "src", "styles.css"), "utf8"));
 
     expect(css).toContain(".app-shell-v2 {\n  padding: 12px 14px;\n  display: grid;\n  gap: 10px;");
     expect(css).toContain(".hero-v2 {\n  border: 1px solid var(--app-border);");
@@ -42,29 +102,34 @@ describe("App startup route", () => {
   });
 
   it("should mount a single App entry instead of routing to UnlockApp by hash", async () => {
-    const source = await readFile(path.join(process.cwd(), "src", "main.tsx"), "utf8");
+    const source = normalizeNewlines(await readFile(path.join(process.cwd(), "src", "main.tsx"), "utf8"));
 
-    expect(source).not.toContain('import("./UnlockApp.js")');
-    expect(source).toContain('import("./App.js")');
+    expect(source).not.toContain('import("./UnlockApp');
+    expect(source).toMatch(/import\("\.\/App(?:\.js)?"\)/);
     expect(source).not.toContain('window.location.hash.includes("/unlock")');
-    expect(source).toContain('rootElement.innerHTML = `');
+    expect(source).toContain('rootElement.innerHTML = createStartupShell("正在准备解锁界面...")');
+    expect(source).toContain('class="startup-progress"');
     expect(source).toContain("正在准备解锁界面");
   });
 
-  it("should lazy-load app pages and warm the Profiles page while locked", async () => {
-    const source = await readFile(path.join(process.cwd(), "src", "App.tsx"), "utf8");
+  it("should lazy-load app pages and schedule Profiles page preload after the unlock gate renders", async () => {
+    const source = normalizeNewlines(await readFile(path.join(process.cwd(), "src", "App.tsx"), "utf8"));
 
     expect(source).toContain("function preloadProfilesPageModule()");
+    expect(source).toContain("function scheduleProfilesPagePreload()");
     expect(source).toContain('const LazyProfilesPage = lazy(() =>');
     expect(source).toContain('preloadProfilesPageModule().then((module) => ({ default: module.ProfilesPage }))');
-    expect(source).toContain('import("./components/app/SessionsPage.jsx").then((module) => ({ default: module.SessionsPage }))');
-    expect(source).toContain('import("./components/app/SettingsPage.jsx").then((module) => ({ default: module.SettingsPage }))');
-    expect(source).toContain('import("./components/skills/SkillsPanel.jsx").then((module) => ({ default: module.SkillsPanel }))');
-    expect(source).toContain("void preloadProfilesPageModule()");
-    expect(source).not.toContain('import { SessionsPage } from "./components/app/SessionsPage.jsx";');
-    expect(source).not.toContain('import { SettingsPage } from "./components/app/SettingsPage.jsx";');
-    expect(source).not.toContain('import { SkillsPanel } from "./components/skills/SkillsPanel.jsx";');
-    expect(source).not.toContain('import { ProfilesPage } from "./components/app/ProfilesPage.jsx";');
+    expect(source).toMatch(/import\("\.\/components\/app\/SessionsPage\.(?:tsx|jsx|js)"\)\.then/);
+    expect(source).toMatch(/import\("\.\/components\/app\/SettingsPage\.(?:tsx|jsx|js)"\)\.then/);
+    expect(source).toMatch(/import\("\.\/components\/skills\/SkillsPanel\.(?:tsx|jsx|js)"\)\.then/);
+    expect(source).toContain('if (startupPhase !== "locked")');
+    expect(source).toContain("return scheduleProfilesPagePreload();");
+    expect(source).not.toContain("\nvoid preloadProfilesPageModule();\nconst LazyProfilesPage");
+    expect(source).not.toContain("await preloadProfilesPageModule();");
+    expect(source).not.toContain('import { SessionsPage } from "./components/app/SessionsPage');
+    expect(source).not.toContain('import { SettingsPage } from "./components/app/SettingsPage');
+    expect(source).not.toContain('import { SkillsPanel } from "./components/skills/SkillsPanel');
+    expect(source).not.toContain('import { ProfilesPage } from "./components/app/ProfilesPage');
   });
 
   it("should register IPC handlers before the first main window is created", async () => {
@@ -86,17 +151,19 @@ describe("App startup route", () => {
     expect(source).not.toContain("await initSkillsService();");
   });
 
-  it("should defer profile storage initialization until after the first main window", async () => {
-    const source = await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8");
+  it("should start profile storage warmup after IPC registration without blocking window creation", async () => {
+    const source = normalizeNewlines(await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8"));
     const readyBlockStart = source.indexOf("app.whenReady().then(async () => {");
     const readyBlockEnd = source.indexOf('app.on("activate"', readyBlockStart);
     const readyBlock = source.slice(readyBlockStart, readyBlockEnd);
+    const registerIpcIndex = readyBlock.indexOf("registerAllIpcHandlers();");
+    const warmupIndex = readyBlock.indexOf("warmProfileStoresInBackground();");
+    const createWindowIndex = readyBlock.indexOf("await createMainWindow();");
 
     expect(readyBlock).not.toContain("await initProfileServices();");
-    expect(readyBlock).toContain("void ensureProfileStoresReady()");
-    expect(readyBlock.indexOf("await createMainWindow();")).toBeLessThan(
-      readyBlock.indexOf("void ensureProfileStoresReady()"),
-    );
+    expect(readyBlock).not.toContain("await ensureProfileStoresReady();");
+    expect(warmupIndex).toBeGreaterThan(registerIpcIndex);
+    expect(warmupIndex).toBeLessThan(createWindowIndex);
   });
 
   it("should expose a dedicated bootstrap API for unlock-time hydration", async () => {

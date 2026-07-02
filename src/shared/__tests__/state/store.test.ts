@@ -70,6 +70,122 @@ describe("LocalStateStore", () => {
     expect(loaded.parameter_settings.inherit_global_capabilities).toBe(true);
   });
 
+  it("should normalize global working directory favorites", async () => {
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    await writeFile(
+      rawPath,
+      JSON.stringify({
+        selected_provider: "claude",
+        selected_profile_key: "",
+        selected_profile_key_by_provider: {},
+        profile_order_by_provider: {},
+        runtime_by_profile: {},
+        global_settings: defaultLocalState().global_settings,
+        working_directory_favorites: [
+          " C:/workspace/alpha ",
+          "",
+          "C:/workspace/beta",
+          "C:/workspace/alpha",
+          123,
+        ],
+      }),
+      "utf-8",
+    );
+
+    const loaded = await store.load();
+    await store.save(loaded);
+    const persisted = JSON.parse(await readFile(rawPath, "utf-8"));
+
+    expect(loaded.working_directory_favorites).toEqual([
+      "C:/workspace/alpha",
+      "C:/workspace/beta",
+    ]);
+    expect(persisted.working_directory_favorites).toEqual([
+      "C:/workspace/alpha",
+      "C:/workspace/beta",
+    ]);
+  });
+
+  it("should normalize saved session favorites and de-duplicate by source", async () => {
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    await writeFile(
+      rawPath,
+      JSON.stringify({
+        selected_provider: "codex",
+        selected_profile_key: "",
+        selected_profile_key_by_provider: {},
+        profile_order_by_provider: {},
+        runtime_by_profile: {},
+        global_settings: defaultLocalState().global_settings,
+        session_favorites: [
+          {
+            provider: "codex",
+            session_id: " codex-fav-1 ",
+            cwd: " C:/repo-codex ",
+            updated_at: "2026-06-13T08:00:00.000Z",
+            preview: " Important Codex session ",
+            source_kind: "global_codex",
+            source_home: " C:/Users/99395/.codex ",
+            favorited_at: "2026-06-13T09:00:00.000Z",
+            user_prompts: [" first prompt ", "", 42],
+            conversation_excerpts: [
+              { role: "user", text: " first prompt " },
+              { role: "assistant", text: " first answer " },
+              { role: "tool", text: "ignored" },
+            ],
+          },
+          {
+            provider: "codex",
+            session_id: "codex-fav-1",
+            cwd: "C:/repo-codex-duplicate",
+            updated_at: "2026-06-13T08:30:00.000Z",
+            preview: "Duplicate",
+            source_kind: "global_codex",
+            source_home: "C:/Users/99395/.codex",
+            favorited_at: "2026-06-13T09:30:00.000Z",
+          },
+          {
+            provider: "unknown",
+            session_id: "bad-provider",
+            cwd: "C:/repo",
+            updated_at: "2026-06-13T08:00:00.000Z",
+            preview: "Bad provider",
+            favorited_at: "2026-06-13T09:00:00.000Z",
+          },
+        ],
+      }),
+      "utf-8",
+    );
+
+    const loaded = await store.load();
+    await store.save(loaded);
+    const persisted = JSON.parse(await readFile(rawPath, "utf-8"));
+
+    expect((loaded as unknown as { session_favorites: unknown[] }).session_favorites).toEqual([
+      {
+        favorite_key: "codex|global_codex|C:/Users/99395/.codex|codex-fav-1",
+        provider: "codex",
+        session_id: "codex-fav-1",
+        cwd: "C:/repo-codex",
+        updated_at: "2026-06-13T08:00:00.000Z",
+        preview: "Important Codex session",
+        source_kind: "global_codex",
+        source_home: "C:/Users/99395/.codex",
+        favorited_at: "2026-06-13T09:00:00.000Z",
+        user_prompts: ["first prompt"],
+        conversation_excerpts: [
+          { role: "user", text: "first prompt" },
+          { role: "assistant", text: "first answer" },
+        ],
+      },
+    ]);
+    expect(persisted.session_favorites).toEqual(
+      (loaded as unknown as { session_favorites: unknown[] }).session_favorites,
+    );
+  });
+
   it("should persist balance check snapshots by profile", async () => {
     const store = await makeStore();
     const state = defaultLocalState();
@@ -270,6 +386,7 @@ describe("LocalStateStore", () => {
       settings_file: "",
       launch_mode: "new",
       extra_args: "",
+      extra_env: {},
       exclude_user_settings: true,
     });
     const persisted = JSON.parse(await readFile(rawPath, "utf-8"));

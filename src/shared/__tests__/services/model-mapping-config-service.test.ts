@@ -97,7 +97,7 @@ describe("ModelMappingConfigService", () => {
     expect(saved.model_mappings).toBeUndefined();
   });
 
-  it("should write app-managed shared Codex config from multiple profile sites without dropping existing tables", async () => {
+  it("should write standalone Codex profile configs while keeping base config global-only", async () => {
     const root = await makeTempDir();
     const service = createService(root);
     const configPath = path.join(service.getCodexRuntimeHome(), "config.toml");
@@ -129,6 +129,7 @@ describe("ModelMappingConfigService", () => {
       ].join("\n"),
     });
 
+    const secondProfileName = buildCodexSiteProfileName("codex::other");
     const secondPath = await service.writeCodexProfile({
       profileId: "codex::other",
       providerId: buildCodexSiteProviderId("codex::other"),
@@ -149,17 +150,27 @@ describe("ModelMappingConfigService", () => {
         "",
       ].join("\n"),
     });
-    expect(secondPath).toBe(firstPath);
-    const content = await readFile(firstPath, "utf8");
-    expect(firstPath).toBe(configPath);
-    expect(content).toContain('[mcp_servers.playwright]');
-    expect(content).toContain('[projects."C:/repo"]');
-    expect(content).toContain(`[profiles.${JSON.stringify(buildCodexSiteProfileName("codex::demo"))}]`);
-    expect(content).toContain(`[profiles.${JSON.stringify(buildCodexSiteProfileName("codex::other"))}]`);
-    expect(content).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
-    expect(content).toContain(`[model_providers.${buildCodexSiteProviderId("codex::other")}]`);
-    expect(content).not.toContain("codex__demo");
-    expect((await readdir(path.dirname(firstPath))).some((name) => /^config\.toml\.bak\./.test(name))).toBe(true);
+    const baseContent = await readFile(configPath, "utf8");
+    const firstContent = await readFile(firstPath, "utf8");
+    const secondContent = await readFile(secondPath, "utf8");
+
+    expect(firstPath).toBe(path.join(service.getCodexRuntimeHome(), `${buildCodexSiteProfileName("codex::demo")}.config.toml`));
+    expect(secondPath).toBe(path.join(service.getCodexRuntimeHome(), `${secondProfileName}.config.toml`));
+    expect(baseContent).toContain('[mcp_servers.playwright]');
+    expect(baseContent).toContain('[projects."C:/repo"]');
+    expect(baseContent).not.toContain("[profiles.");
+    expect(baseContent).not.toContain("profile =");
+    expect(firstContent).toContain('model = "glm-4.5"');
+    expect(firstContent).toContain(`model_provider = ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}`);
+    expect(firstContent).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
+    expect(firstContent).toContain('base_url = "https://open.bigmodel.cn/api/paas/v4"');
+    expect(firstContent).toContain(`env_key = ${JSON.stringify(buildCodexSiteApiKeyEnv("codex::demo"))}`);
+    expect(firstContent).toContain('wire_api = "responses"');
+    expect(firstContent).not.toContain("[profiles.");
+    expect(secondContent).toContain('model = "kimi-k2-0711-preview"');
+    expect(secondContent).toContain(`[model_providers.${buildCodexSiteProviderId("codex::other")}]`);
+    expect(secondContent).not.toContain("[profiles.");
+    expect((await readdir(path.dirname(firstPath))).some((name) => /^config\.toml\.bak\./.test(name))).toBe(false);
   });
 
   it("should resolve a generic hash-based Codex profile directory without display names", async () => {
@@ -240,14 +251,34 @@ describe("ModelMappingConfigService", () => {
     const content = await readFile(configPath, "utf8");
     expect(content).not.toContain("model =");
     expect(content).not.toContain("model_provider =");
-    expect(content).toContain(`[profiles.${JSON.stringify(buildCodexSiteProfileName("codex::demo"))}]`);
     expect(content).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
     expect(content).toContain('base_url = "https://api.openai.com/v1"');
+    expect(content).not.toContain("[profiles.");
   });
 
-  it("should upsert provided Codex profile config content into shared config", async () => {
+  it("should migrate provided legacy Codex profile content into standalone profile config", async () => {
     const root = await makeTempDir();
     const service = createService(root);
+    const profileName = buildCodexSiteProfileName("codex::demo");
+    const baseConfigPath = path.join(service.getCodexRuntimeHome(), "config.toml");
+    await mkdir(path.dirname(baseConfigPath), { recursive: true });
+    await writeFile(
+      baseConfigPath,
+      [
+        `profile = ${JSON.stringify(profileName)}`,
+        "",
+        `[profiles.${JSON.stringify(profileName)}]`,
+        'model = "old"',
+        "",
+        `[model_providers.${buildCodexSiteProviderId("codex::demo")}]`,
+        'name = "Old Site"',
+        "",
+        '[projects."C:/repo"]',
+        'trust_level = "trusted"',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
 
     const configPath = await service.writeCodexProfile({
       profileId: "codex::demo",
@@ -256,10 +287,104 @@ describe("ModelMappingConfigService", () => {
       baseUrl: "https://api.openai.com/v1",
       apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
       targetModel: "gpt-5.4",
-      content: `[profiles.${JSON.stringify(buildCodexSiteProfileName("codex::demo"))}]\nmodel = "gpt-5.4"\n\n[mcp_servers.playwright]\ncommand = "cmd"\n`,
+      content: [
+        `profile = ${JSON.stringify(profileName)}`,
+        "",
+        `[profiles.${JSON.stringify(profileName)}]`,
+        'model = "gpt-5.4"',
+        `model_provider = ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}`,
+        'sandbox_mode = "workspace-write"',
+        'approval_policy = "on-request"',
+        'web_search = "live"',
+        "",
+        `[profiles.${JSON.stringify(profileName)}.sandbox_workspace_write]`,
+        "network_access = true",
+        'writable_roots = ["C:/repo"]',
+        "",
+        `[model_providers.${buildCodexSiteProviderId("codex::demo")}]`,
+        'name = "Current Site"',
+        'base_url = "https://api.openai.com/v1"',
+        `env_key = ${JSON.stringify(buildCodexSiteApiKeyEnv("codex::demo"))}`,
+        'wire_api = "responses"',
+        "",
+        "[mcp_servers.playwright]",
+        'command = "cmd"',
+        "",
+      ].join("\n"),
     });
 
-    expect(await readFile(configPath, "utf8")).toContain(`[profiles.${JSON.stringify(buildCodexSiteProfileName("codex::demo"))}]\nmodel = "gpt-5.4"`);
-    expect(await readFile(configPath, "utf8")).toContain("[mcp_servers.playwright]\ncommand = \"cmd\"");
+    const profileContent = await readFile(configPath, "utf8");
+    const baseContent = await readFile(path.join(service.getCodexRuntimeHome(), "config.toml"), "utf8");
+
+    expect(configPath).toBe(path.join(service.getCodexRuntimeHome(), `${profileName}.config.toml`));
+    expect(profileContent).toContain('model = "gpt-5.4"');
+    expect(profileContent).toContain(`model_provider = ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}`);
+    expect(profileContent).toContain('sandbox_mode = "workspace-write"');
+    expect(profileContent).toContain('approval_policy = "on-request"');
+    expect(profileContent).toContain('web_search = "live"');
+    expect(profileContent).toContain("[sandbox_workspace_write]");
+    expect(profileContent).toContain("network_access = true");
+    expect(profileContent).toContain('writable_roots = ["C:/repo"]');
+    expect(profileContent).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
+    expect(profileContent).not.toContain("[profiles.");
+    expect(baseContent).toContain("[mcp_servers.playwright]\ncommand = \"cmd\"");
+    expect(baseContent).toContain('[projects."C:/repo"]');
+    expect(baseContent).not.toContain("[profiles.");
+    expect(baseContent).not.toContain("profile =");
+    expect(baseContent).not.toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
+    expect((await readdir(path.dirname(configPath))).some((name) => /^config\.toml\.bak\./.test(name))).toBe(true);
+  });
+
+  it("should preserve Windows sandbox config when rewriting Codex profile configs", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+    const baseConfigPath = path.join(service.getCodexRuntimeHome(), "config.toml");
+    await mkdir(path.dirname(baseConfigPath), { recursive: true });
+    await writeFile(
+      baseConfigPath,
+      [
+        '[windows]',
+        'sandbox = "unelevated"',
+        "",
+        '[projects."C:/repo"]',
+        'trust_level = "trusted"',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const configPath = await service.writeCodexProfile({
+      profileId: "codex::demo",
+      providerId: buildCodexSiteProviderId("codex::demo"),
+      providerName: "Current Site",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      targetModel: "gpt-5.4",
+    });
+
+    const baseContent = await readFile(baseConfigPath, "utf8");
+    const profileContent = await readFile(configPath, "utf8");
+
+    expect(baseContent).toContain("[windows]\nsandbox = \"unelevated\"");
+    expect(baseContent).toContain('[projects."C:/repo"]');
+    expect(profileContent).toContain("[windows]\nsandbox = \"elevated\"");
+  });
+
+  it("should avoid backup churn when Codex config content is unchanged", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+    const options = {
+      profileId: "codex::demo",
+      providerId: buildCodexSiteProviderId("codex::demo"),
+      providerName: "Current Site",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      targetModel: "gpt-5.4",
+    };
+
+    const configPath = await service.writeCodexProfile(options);
+    await service.writeCodexProfile(options);
+
+    expect((await readdir(path.dirname(configPath))).some((name) => /\.bak\./.test(name))).toBe(false);
   });
 });

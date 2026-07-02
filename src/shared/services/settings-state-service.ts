@@ -9,6 +9,7 @@ import { type SessionListScope } from "./session-service.js";
 import { normalizeSessionsTabScope } from "../session-history-state.js";
 import { normalizeKeyWithFallback } from "../profile/keys-internal.js";
 import { normalizeProvider, type ProfileKey } from "../profile/types.js";
+import { normalizeSessionFavorites, type FavoriteSessionSummary } from "../state/local-state.js";
 
 export interface SessionsTabStatePatch {
   scope?: SessionListScope;
@@ -70,5 +71,12 @@ export class SettingsStateService {
     }
 
     await this.stateAccessor.save(state);
+  }
+
+  async updateSessionFavorites(favorites: unknown): Promise<FavoriteSessionSummary[]> {
+    const state = cloneLocalState(this.stateAccessor.get());
+    state.session_favorites = normalizeSessionFavorites(favorites);
+    await this.stateAccessor.save(state);
+    return state.session_favorites;
   }
 }

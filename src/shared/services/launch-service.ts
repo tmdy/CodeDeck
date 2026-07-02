@@ -319,6 +319,7 @@ export class LaunchService {
     const extraArgs = [
       this.getCombinedExtraArgs(runtime),
       `--profile ${JSON.stringify(siteProfileName)}`,
+      ...this.buildCodexPermissionCliArgs(permissions),
       advancedOverride ? `--model ${JSON.stringify(advancedOverride)}` : "",
     ].filter(Boolean).join(" ").trim();
     const commandBase = normalizeCommandExecutable(runtime.command_base, DEFAULT_CODEX_COMMAND);
@@ -371,6 +372,17 @@ export class LaunchService {
       },
       permissionSummary: summarizePermissions(profile.provider, permissions),
     };
+  }
+
+  private buildCodexPermissionCliArgs(permissions: ProfilePermissions): string[] {
+    if (permissions.preset !== "full_access") {
+      return [];
+    }
+    const codexPermissions = toCodexPermissionConfig(permissions.preset);
+    return [
+      `--sandbox ${JSON.stringify(codexPermissions.sandboxMode)}`,
+      `--ask-for-approval ${JSON.stringify(codexPermissions.approvalPolicy)}`,
+    ];
   }
 
   private validateProviderConfiguration(profile: Profile): string[] {
@@ -516,11 +528,10 @@ export class LaunchService {
   }): string {
     const targetModel = options.targetModel.trim();
     const codexPermissions = toCodexPermissionConfig(options.permissions.preset);
-    const profileHeader = `profiles.${JSON.stringify(options.profileName)}`;
     const webSearchMode = options.permissions.common.allowNetwork ? "live" : "disabled";
     const workspaceLines = codexPermissions.sandboxMode === "workspace-write"
       ? [
-          `[${profileHeader}.sandbox_workspace_write]`,
+          "[sandbox_workspace_write]",
           `network_access = ${options.permissions.common.allowNetwork ? "true" : "false"}`,
           `writable_roots = [${options.permissions.common.additionalWritableRoots.map((item) => JSON.stringify(item)).join(", ")}]`,
           "",
@@ -528,7 +539,6 @@ export class LaunchService {
       : [];
     const topLevelLines = targetModel
       ? [
-          `[${profileHeader}]`,
           `model = ${JSON.stringify(targetModel)}`,
           `model_provider = ${JSON.stringify(options.providerId)}`,
           `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
@@ -537,7 +547,6 @@ export class LaunchService {
           "",
         ]
       : [
-          `[${profileHeader}]`,
           `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
           `approval_policy = ${JSON.stringify(codexPermissions.approvalPolicy)}`,
           `web_search = ${JSON.stringify(webSearchMode)}`,
@@ -552,6 +561,9 @@ export class LaunchService {
       `base_url = ${JSON.stringify(options.baseUrl)}`,
       `env_key = ${JSON.stringify(options.apiKeyEnv)}`,
       'wire_api = "responses"',
+      "",
+      "[windows]",
+      'sandbox = "elevated"',
       "",
       globalMcpToml,
     ].join("\n");

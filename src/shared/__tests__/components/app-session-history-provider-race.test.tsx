@@ -18,6 +18,10 @@ import type { SessionSummary } from "../../services/session-service.js";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type MockProfileManager = NonNullable<Window["profileManager"]>;
+type FavoriteSessionSummaryForTest = SessionSummary & {
+  favorite_key: string;
+  favorited_at: string;
+};
 
 function runtime(cwd: string, commandBase: string): RuntimeSettings {
   return {
@@ -27,6 +31,7 @@ function runtime(cwd: string, commandBase: string): RuntimeSettings {
     settings_file: "",
     launch_mode: "new",
     extra_args: "",
+    extra_env: {},
     exclude_user_settings: true,
   };
 }
@@ -44,7 +49,7 @@ function cloneState(state: LocalState): LocalState {
 }
 
 function createBootstrapState(state: LocalState): BootstrapLocalState {
-  return {
+  const bootstrapState = {
     selected_provider: state.selected_provider,
     selected_profile_key: state.selected_profile_key,
     selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
@@ -53,6 +58,12 @@ function createBootstrapState(state: LocalState): BootstrapLocalState {
     balance_checks_by_profile: { ...state.balance_checks_by_profile },
     global_settings: { ...state.global_settings },
   };
+  const sessionFavorites = (state as unknown as { session_favorites?: FavoriteSessionSummaryForTest[] }).session_favorites;
+  if (sessionFavorites) {
+    (bootstrapState as unknown as { session_favorites: FavoriteSessionSummaryForTest[] }).session_favorites =
+      sessionFavorites.map((session) => ({ ...session }));
+  }
+  return bootstrapState;
 }
 
 function createProviderRaceFixture() {
@@ -200,6 +211,128 @@ function createSession(index: number): SessionSummary {
     updated_at: `2026-05-06T${String(index % 24).padStart(2, "0")}:00:00.000Z`,
     preview: `Codex session ${index}`,
   };
+}
+
+function createFavoritesFixture() {
+  const claudeProfile: Profile = {
+    provider: "claude",
+    name: "Claude Official",
+    url: "https://claude.example.com/v1",
+    key: "sk-claude",
+  };
+  const codexProfile: Profile = {
+    provider: "codex",
+    name: "Codex AI",
+    url: "https://codex.example.com/v1",
+    key: "sk-codex",
+  };
+  const profiles = [claudeProfile, codexProfile];
+  const claudeKey = itemKey(claudeProfile);
+  const codexKey = itemKey(codexProfile);
+  const claudeFavorite: FavoriteSessionSummaryForTest = {
+    favorite_key: "claude|||claude-favorite",
+    favorited_at: "2026-06-13T09:00:00.000Z",
+    provider: "claude",
+    session_id: "claude-favorite",
+    cwd: "C:/repo-claude",
+    updated_at: "2026-06-13T08:00:00.000Z",
+    preview: "Claude favorite session",
+  };
+
+  let state: LocalState = {
+    ...defaultLocalState(),
+    selected_provider: "codex",
+    selected_profile_key: codexKey,
+    selected_profile_key_by_provider: {
+      claude: claudeKey,
+      codex: codexKey,
+    },
+    profile_order_by_provider: {
+      claude: [claudeKey],
+      codex: [codexKey],
+    },
+    runtime_by_profile: {
+      [claudeKey]: runtime("C:/repo-claude", "claude"),
+      [codexKey]: runtime("C:/repo-codex", "codex"),
+    },
+  };
+  (state as unknown as { session_favorites: FavoriteSessionSummaryForTest[] }).session_favorites = [claudeFavorite];
+
+  const manager: MockProfileManager = {
+    checkEncryptedConfig: vi.fn(async () => false),
+    unlock: vi.fn(async () => ({ success: true })),
+    initializeEncryption: vi.fn(async () => ({ success: true })),
+    changePassphrase: vi.fn(async () => ({ success: true })),
+    bootstrap: vi.fn(async () => ({
+      profiles: profiles.map((profile) => ({ ...profile })),
+      state: createBootstrapState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+    })),
+    listProfiles: vi.fn(async () => ({
+      profiles: profiles.map((profile) => ({ ...profile })),
+      state: cloneState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+    })),
+    saveProfile: vi.fn(async (_targetKey, draft) => draft),
+    deleteProfile: vi.fn(async () => undefined),
+    cloneProfile: vi.fn(async () => ({ ...claudeProfile })),
+    selectProfile: vi.fn(async () => undefined),
+    reorderProfiles: vi.fn(async () => undefined),
+    activateProvider: vi.fn(async (provider) => {
+      state = {
+        ...state,
+        selected_provider: provider,
+        selected_profile_key: provider === "claude" ? claudeKey : codexKey,
+      };
+    }),
+    saveSiteBalanceSession: vi.fn(async (_baseUrl, draft) => ({
+      id: draft.id ?? "site-session-1",
+      label: draft.label,
+      base_url: _baseUrl,
+      access_token: draft.access_token,
+      user_id: draft.user_id,
+      updated_at: "2026-05-06T02:00:00.000Z",
+    })),
+    deleteSiteBalanceSession: vi.fn(async () => undefined),
+    pickWorkingDirectory: vi.fn(async () => undefined),
+    openBaseUrl: vi.fn(async () => undefined),
+    previewForDraft: vi.fn(async (profile, _runtime, _mappings, sessionId) => ({
+      command: `${profile.provider} --resume ${sessionId}`,
+      cwd: profile.provider === "claude" ? "C:/repo-claude" : "C:/repo-codex",
+      env: [],
+      valid: true,
+    })),
+    previewForProfile: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
+    launch: vi.fn(async () => undefined),
+    listSessions: vi.fn(async () => []),
+    refreshSessions: vi.fn(async () => undefined),
+    updateSessionsTabState: vi.fn(async (provider, patch) => {
+      state = {
+        ...state,
+        sessions_tab_restore_profile_key_by_provider: patch.restore_profile_key !== undefined
+          ? { ...state.sessions_tab_restore_profile_key_by_provider, [provider]: patch.restore_profile_key }
+          : state.sessions_tab_restore_profile_key_by_provider,
+      };
+    }),
+    testBalance: vi.fn(async () => undefined),
+    getBalanceState: vi.fn(async () => defaultBalanceCheckState()),
+    getModelMappings: vi.fn(async () => createDefaultModelMappingsState()),
+    saveModelMappings: vi.fn(async (value) => value),
+    fetchSiteModels: vi.fn(async () => ({ models: [] })),
+    getGlobalSettings: vi.fn(async () => state.global_settings),
+    updateGlobalSettings: vi.fn(async (settings) => ({ ...state.global_settings, ...settings })),
+    getParameterSettings: vi.fn(async () => state.parameter_settings),
+    updateParameterSettings: vi.fn(async (settings) => ({ ...state.parameter_settings, ...settings })),
+    promptUnsavedProfileAction: vi.fn(async () => "discard" as const),
+    promptLaunchWithUnsavedChanges: vi.fn(async () => "launch_saved" as const),
+    onStateChanged: vi.fn(() => () => undefined),
+    onBalanceProgress: vi.fn(() => () => undefined),
+    onUnlockError: vi.fn(() => () => undefined),
+  };
+
+  return { manager };
 }
 
 function createPrefetchFixture() {
@@ -491,6 +624,69 @@ describe("App session history provider switching", () => {
       offset: 40,
     });
     expect(container.textContent).toContain("Codex session 21");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("restores a favorite with the favorite session provider instead of the active provider", async () => {
+    const fixture = createFavoritesFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    const sessionsTab = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "会话",
+    );
+    expect(sessionsTab).toBeDefined();
+
+    await act(async () => {
+      sessionsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const favoritesButton = await waitForButtonText(container, "收藏");
+    expect(favoritesButton).toBeDefined();
+
+    await act(async () => {
+      favoritesButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitForText(container, "Claude favorite session");
+    const favoriteSessionButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.classList.contains("session-item") && button.textContent?.includes("Claude favorite session"),
+    );
+    expect(favoriteSessionButton).toBeDefined();
+
+    await act(async () => {
+      favoriteSessionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitForText(container, "claude-favorite");
+    const detailText = container.querySelector(".session-detail-panel")?.textContent ?? "";
+    expect(detailText).toContain("Claude Official");
+    expect(detailText).not.toContain("Codex AI");
+
+    const restoreButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "恢复选中会话",
+    );
+    expect(restoreButton).toBeDefined();
+
+    await act(async () => {
+      restoreButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.launch).toHaveBeenCalledWith(expect.objectContaining({
+      profile_key: "claude::Claude Official",
+      provider: "claude",
+      session_id: "claude-favorite",
+    }));
 
     await act(async () => {
       root.unmount();
