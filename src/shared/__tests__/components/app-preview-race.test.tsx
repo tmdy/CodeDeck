@@ -631,8 +631,8 @@ describe("App command preview", () => {
       expect.any(Object),
     );
     expect(fixture.manager.selectProfile).toHaveBeenCalledWith("claude", fixture.betaKey);
-    expect(fixture.manager.saveProfile.mock.invocationCallOrder[0]).toBeLessThan(
-      fixture.manager.selectProfile.mock.invocationCallOrder[0],
+    expect(vi.mocked(fixture.manager.saveProfile).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(fixture.manager.selectProfile).mock.invocationCallOrder[0],
     );
     expect(fixture.getAlphaProfile().name).toBe("Alpha Saved");
     expect(fixture.getBetaProfile().name).toBe("Beta");
