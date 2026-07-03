@@ -1,4 +1,51 @@
 tmp/
+
+# Local application runtime data
+app-data/**
+!app-data/
+!app-data/generated-translations/
+!app-data/generated-translations/*.json
+!app-data/tags.json
+!app-data/translations.json
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Chat/session history, logs, caches, and local databases
+*.log
+*.out.log
+*.err.log
+*.jsonl
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+logs/
+cache/
+.cache/
+
+# Frontend/Electron build outputs and package artifacts
+dist/
+dist-electron/
+release/
+release-*/
+*.blockmap
+
+# Local browser/test artifacts
+.playwright-mcp/
+playwright-report/
+test-results/
+
 # Python
 __pycache__/
 *.py[cod]
