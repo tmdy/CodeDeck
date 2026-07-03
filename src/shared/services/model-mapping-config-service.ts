@@ -21,7 +21,10 @@ export interface WriteCodexProfileOptions {
   baseUrl: string;
   apiKeyEnv: string;
   targetModel: string;
+  wireApi?: string;
+  skipGitRepoCheck?: boolean;
   content?: string;
+  rulesContent?: string;
   globalConfigContent?: string;
 }
 
@@ -131,26 +134,37 @@ export class ModelMappingConfigService {
     if (existingBaseConfig || nextBaseConfig.trim()) {
       await writeTextWithBackupIfChanged(baseConfigPath, nextBaseConfig);
     }
+    if (options.rulesContent !== undefined) {
+      await writeTextWithBackupIfChanged(
+        path.join(runtimeHome, "rules", "managed-permissions.rules"),
+        normalizeTomlContent(options.rulesContent),
+      );
+    }
     await writeTextWithBackupIfChanged(profileConfigPath, profileContent);
     return profileConfigPath;
   }
 
   buildCodexProfileContent(options: WriteCodexProfileOptions): string {
     const targetModel = options.targetModel.trim();
+    const wireApi = options.wireApi?.trim() || "responses";
+    const skipGitRepoCheckLines = options.skipGitRepoCheck
+      ? ["skip_git_repo_check = true"]
+      : [];
     const profileLines = targetModel
       ? [
           `model = ${JSON.stringify(targetModel)}`,
           `model_provider = ${JSON.stringify(options.providerId)}`,
+          ...skipGitRepoCheckLines,
           "",
         ]
-      : [];
+      : [...skipGitRepoCheckLines, ...(skipGitRepoCheckLines.length > 0 ? [""] : [])];
     return [
       ...profileLines,
       `[model_providers.${options.providerId}]`,
       `name = ${JSON.stringify(options.providerName.trim())}`,
       `base_url = ${JSON.stringify(options.baseUrl.trim())}`,
       `env_key = ${JSON.stringify(options.apiKeyEnv.trim())}`,
-      'wire_api = "responses"',
+      `wire_api = ${JSON.stringify(wireApi)}`,
       "",
       "[windows]",
       'sandbox = "elevated"',
@@ -313,6 +327,10 @@ function profileHeaderCandidates(profileName: string): string[] {
 function isCodexGlobalConfigHeader(header: string): boolean {
   return header === "mcp_servers"
     || header.startsWith("mcp_servers.")
+    || header === "marketplaces"
+    || header.startsWith("marketplaces.")
+    || header === "plugins"
+    || header.startsWith("plugins.")
     || header === "projects"
     || header.startsWith("projects.");
 }

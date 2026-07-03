@@ -33,16 +33,59 @@ function extractExecutableName(commandBase: string): string {
   return firstToken ?? "";
 }
 
+function toCmdToken(value: string): string {
+  if (!value) {
+    return "\"\"";
+  }
+  if (!/[ \t"&()^|<>]/.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/"/g, "\"\"")}"`;
+}
+
 function buildPowerShellSessionScript(plan: LaunchExecutionPlan): string {
   const envLines = Object.entries(plan.env).map(([name, value]) => `$env:${name} = ${toPowerShellLiteral(value)}`);
   const commandArgsJson = JSON.stringify(plan.commandArgs);
+  // Codex must keep a real terminal attached; redirected stdio makes it exit with "stdin is not a terminal".
+  const invokeLines = shouldUseCodexAutoContinue(plan)
+    ? [
+        ...buildCodexAutoContinueScript(plan),
+        `& ${toPowerShellLiteral(plan.commandExecutable)} @commandArgs`,
+      ]
+    : [`& ${toPowerShellLiteral(plan.commandExecutable)} @commandArgs`];
   return [
     "$ErrorActionPreference = 'Stop'",
     `Set-Location -LiteralPath ${toPowerShellLiteral(plan.cwd)}`,
     ...envLines,
     `$commandArgs = @((ConvertFrom-Json ${toPowerShellLiteral(commandArgsJson)}))`,
-    `& ${toPowerShellLiteral(plan.commandExecutable)} @commandArgs`,
+    ...invokeLines,
   ].join("; ");
+}
+
+function shouldUseCodexAutoContinue(plan: LaunchExecutionPlan): boolean {
+  return plan.provider.trim().toLowerCase() === "codex"
+    && plan.codexAutoContinue?.enabled === true
+    && Number.isFinite(plan.codexAutoContinue.limit)
+    && (plan.codexAutoContinue.limit === -1 || plan.codexAutoContinue.limit > 0)
+    && plan.codexAutoContinue.prompt.trim().length > 0
+    && plan.codexAutoContinue.keywords.some((item) => item.trim().length > 0);
+}
+
+function buildCodexAutoContinueScript(plan: LaunchExecutionPlan): string[] {
+  const autoContinue = plan.codexAutoContinue;
+  const rawLimit = Math.floor(autoContinue?.limit ?? 1);
+  const limit = rawLimit === -1 ? -1 : Math.max(1, rawLimit);
+  const prompt = autoContinue?.prompt.trim() || "继续";
+  const keywordLiterals = (autoContinue?.keywords ?? [])
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map(toPowerShellLiteral);
+  const patterns = keywordLiterals.length > 0 ? keywordLiterals.join(", ") : toPowerShellLiteral("high demand");
+  return [
+    `$autoContinueLimit = ${limit}`,
+    `$autoContinuePrompt = ${toPowerShellLiteral(prompt)}`,
+    `$autoContinuePatterns = @(${patterns})`,
+  ];
 }
 
 export function buildWindowsExternalTerminalLaunchSpec(plan: LaunchExecutionPlan): ExternalTerminalLaunchSpec {
@@ -56,6 +99,17 @@ export function buildWindowsExternalTerminalLaunchSpec(plan: LaunchExecutionPlan
   return {
     filePath: "powershell.exe",
     args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+    cwd: plan.cwd,
+  };
+}
+
+export function buildWindowsPtyLaunchSpec(plan: LaunchExecutionPlan): ExternalTerminalLaunchSpec {
+  const commandLine = [plan.commandExecutable, ...plan.commandArgs]
+    .map(toCmdToken)
+    .join(" ");
+  return {
+    filePath: "cmd.exe",
+    args: ["/d", "/s", "/c", commandLine],
     cwd: plan.cwd,
   };
 }

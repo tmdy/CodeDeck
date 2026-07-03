@@ -14,16 +14,26 @@ import type {
   SkillHost,
 } from "../src/shared/types.js";
 import { parseSerializedStartupTheme } from "../src/shared/startup-theme.js";
+import {
+  LEGACY_STARTUP_THEME_ARG_PREFIX,
+  STARTUP_THEME_ARG_PREFIX,
+  STARTUP_THEME_GLOBAL_NAME,
+} from "../src/shared/branding.js";
 
-const STARTUP_THEME_ARG_PREFIX = "--skills-manager-startup-theme=";
+function getStartupThemeArgumentValue(): string | undefined {
+  const currentArg = process.argv.find((arg) => arg.startsWith(STARTUP_THEME_ARG_PREFIX));
+  if (currentArg) {
+    return currentArg.slice(STARTUP_THEME_ARG_PREFIX.length);
+  }
+  const legacyArg = process.argv.find((arg) => arg.startsWith(LEGACY_STARTUP_THEME_ARG_PREFIX));
+  return legacyArg?.slice(LEGACY_STARTUP_THEME_ARG_PREFIX.length);
+}
 
 const startupTheme = parseSerializedStartupTheme(
-  process.argv
-    .find((arg) => arg.startsWith(STARTUP_THEME_ARG_PREFIX))
-    ?.slice(STARTUP_THEME_ARG_PREFIX.length),
+  getStartupThemeArgumentValue(),
 );
 
-// ---- Skills Manager API（保持不变） ----
+// ---- Skills API（保持不变） ----
 
 const skillsApi = {
   scan: (): Promise<ScanResult> => ipcRenderer.invoke("skills-manager:scan"),
@@ -129,7 +139,7 @@ const profileApi = {
     ipcRenderer.invoke("launcher:preview-for-draft", draft, runtime, mappingsState, sessionId),
   previewForProfile: (profileKey: string): Promise<unknown> =>
     ipcRenderer.invoke("launcher:preview-for-profile", profileKey),
-  launch: (request: unknown): Promise<void> =>
+  launch: (request: unknown): Promise<unknown> =>
     ipcRenderer.invoke("launcher:launch", request),
 
   // Sessions
@@ -146,6 +156,8 @@ const profileApi = {
     ipcRenderer.invoke("balance:test", profileKey),
   getBalanceState: (profileKey: string): Promise<unknown> =>
     ipcRenderer.invoke("balance:get-state", profileKey),
+  clearBalanceState: (profileKey: string): Promise<void> =>
+    ipcRenderer.invoke("balance:clear-state", profileKey),
 
   // Model Mappings
   getModelMappings: (): Promise<unknown> =>
@@ -199,6 +211,36 @@ const profileApi = {
   },
 };
 
+const terminalApi = {
+  attachSession: (sessionId: string): Promise<unknown> =>
+    ipcRenderer.invoke("terminal:attach", sessionId),
+  sendInput: (sessionId: string, data: string): Promise<void> =>
+    ipcRenderer.invoke("terminal:send-input", sessionId, data),
+  resizeSession: (sessionId: string, cols: number, rows: number): Promise<void> =>
+    ipcRenderer.invoke("terminal:resize", sessionId, cols, rows),
+  closeSession: (sessionId: string): Promise<void> =>
+    ipcRenderer.invoke("terminal:close", sessionId),
+  readClipboardText: (): Promise<string> =>
+    ipcRenderer.invoke("terminal:read-clipboard-text"),
+  writeClipboardText: (text: string): Promise<void> =>
+    ipcRenderer.invoke("terminal:write-clipboard-text", text),
+  onOutput: (callback: (sessionId: string, chunk: string) => void): (() => void) => {
+    const handler = (_event: unknown, sessionId: string, chunk: string) => callback(sessionId, chunk);
+    ipcRenderer.on("terminal:output", handler);
+    return () => {
+      ipcRenderer.removeListener("terminal:output", handler);
+    };
+  },
+  onStatus: (callback: (snapshot: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, snapshot: unknown) => callback(snapshot);
+    ipcRenderer.on("terminal:status", handler);
+    return () => {
+      ipcRenderer.removeListener("terminal:status", handler);
+    };
+  },
+};
+
 contextBridge.exposeInMainWorld("skillsManager", skillsApi);
 contextBridge.exposeInMainWorld("profileManager", profileApi);
-contextBridge.exposeInMainWorld("__SKILLS_MANAGER_STARTUP_THEME__", startupTheme);
+contextBridge.exposeInMainWorld("terminalManager", terminalApi);
+contextBridge.exposeInMainWorld(STARTUP_THEME_GLOBAL_NAME, startupTheme);

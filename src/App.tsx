@@ -8,8 +8,7 @@ import {
   normalizeWorkingDirectoryFavorites,
   type FavoriteSessionSummary,
 } from "./shared/state/local-state.js";
-import type { CommandPreview } from "./shared/launcher/types.js";
-import type { LaunchSessionSource } from "./shared/launcher/types.js";
+import type { CommandPreview, LaunchRequest, LaunchSessionSource } from "./shared/launcher/types.js";
 import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
 import type {
@@ -39,6 +38,7 @@ import {
   hasOnlyProfileDraftSelectedModelIdChange,
   type ProfileEditorDraft,
 } from "./shared/profile-editor-state.js";
+import { APP_NAME } from "./shared/branding.js";
 
 // Components
 import {
@@ -180,7 +180,7 @@ function StartupLoading({ message }: { message: string }) {
   return (
     <div className="startup-screen">
       <div className="unlock-card">
-        <h1>Skills Manager</h1>
+        <h1>{APP_NAME}</h1>
         <p>{message}</p>
         <div className="startup-progress" role="progressbar" aria-label={message}>
           <span className="startup-progress-bar" />
@@ -230,6 +230,40 @@ function emptyPreview(): CommandPreview {
     cwd: "",
     env: [],
     valid: false,
+  };
+}
+
+function buildLaunchPanelTerminalSummary(
+  provider: "claude" | "codex",
+  monitorModeEnabled: boolean,
+  parameterSettings: ParameterSettings | undefined,
+): string | undefined {
+  if (provider === PROVIDER_CLAUDE) {
+    return "Claude 终端：系统直连";
+  }
+  if (!monitorModeEnabled) {
+    return "Codex 终端：系统直连（不接管交互）";
+  }
+  const codexSettings = parameterSettings?.cli_settings?.codex;
+  if (!codexSettings?.auto_continue_on_failure) {
+    return "Codex 终端：受监控独立窗口（自动继续关闭）";
+  }
+  if (codexSettings.auto_continue_limit === -1) {
+    return "Codex 终端：受监控独立窗口（自动继续已启用，不限次数）";
+  }
+  return `Codex 终端：受监控独立窗口（自动继续已启用，最多 ${codexSettings?.auto_continue_limit ?? 1} 次）`;
+}
+
+function withLaunchPanelTerminalSummary(
+  preview: CommandPreview,
+  provider: "claude" | "codex",
+  monitorModeEnabled: boolean,
+  parameterSettings: ParameterSettings | undefined,
+): CommandPreview {
+  return {
+    ...preview,
+    terminalSummary: buildLaunchPanelTerminalSummary(provider, monitorModeEnabled, parameterSettings)
+      ?? preview.terminalSummary,
   };
 }
 
@@ -335,6 +369,7 @@ function App() {
 
   // 命令预览 & 余额检测
   const [preview, setPreview] = useState<CommandPreview>(emptyPreview());
+  const [profilesLaunchMonitorModeEnabled, setProfilesLaunchMonitorModeEnabled] = useState(true);
   const [balanceState, setBalanceState] = useState<BalanceCheckState | null>(null);
   const [balanceKey, setBalanceKey] = useState<ProfileKey>("");
 
@@ -342,7 +377,7 @@ function App() {
   const [profilesSessions, setProfilesSessions] = useState<SessionSummary[]>([]);
   const [profilesSelectedSessionId, setProfilesSelectedSessionId] = useState<string>("");
   const [profilesSessionsLoading, setProfilesSessionsLoading] = useState(false);
-  const [profilesSessionsHydratedProvider, setProfilesSessionsHydratedProvider] = useState<string | null>(null);
+  const [profilesSessionsHydratedRequest, setProfilesSessionsHydratedRequest] = useState<ListSessionsRequest | null>(null);
   const [historySessions, setHistorySessions] = useState<SessionSummary[]>([]);
   const [historySelectedSessionId, setHistorySelectedSessionId] = useState<string>("");
   const [historyPreview, setHistoryPreview] = useState<CommandPreview>(emptyPreview());
@@ -359,6 +394,7 @@ function App() {
   const profilesSessionsRequestSeqRef = useRef(0);
   const previewRequestSeqRef = useRef(0);
   const profilesSessionsHydratedProviderRef = useRef<string | null>(null);
+  const profilesSessionsHydratedRequestRef = useRef<ListSessionsRequest | null>(null);
 
   // 设置
   const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>("global");
@@ -375,6 +411,15 @@ function App() {
   );
 
   const activeProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
+  const launchPanelPreview = useMemo(
+    () => withLaunchPanelTerminalSummary(
+      preview,
+      activeProvider,
+      profilesLaunchMonitorModeEnabled,
+      state?.parameter_settings,
+    ),
+    [activeProvider, preview, profilesLaunchMonitorModeEnabled, state?.parameter_settings],
+  );
   const sessionFavorites = state?.session_favorites ?? [];
   const sortedSessionFavorites = useMemo(
     () => [...sessionFavorites].sort(
@@ -433,7 +478,18 @@ function App() {
     }
     return describeBalanceSessionHint(selectedProfile, siteBalanceSessionsByBaseUrl);
   }, [profiles, siteBalanceSessionsByBaseUrl, state?.selected_profile_key]);
-  const profilesSessionsUninitialized = profilesSessionsHydratedProvider !== activeProvider;
+  const currentProfilesSessionsRequest = useMemo(
+    () => buildProfilesSessionsRequest(state, undefined, { preferDraftCwd: false }),
+    [
+      defaultWorkingDirectory,
+      state?.runtime_by_profile,
+      state?.selected_profile_key,
+      state?.selected_provider,
+    ],
+  );
+  const profilesSessionsUninitialized = currentProfilesSessionsRequest
+    ? !sameSessionRequest(profilesSessionsHydratedRequest, currentProfilesSessionsRequest)
+    : false;
 
   // ---- 初始化 ----
   useEffect(() => {
@@ -479,6 +535,15 @@ function App() {
     document.documentElement.dataset.theme = effectiveTheme;
     document.documentElement.dataset.themeMode = themeMode;
   }, [state?.global_settings?.theme_mode, systemPrefersDark]);
+
+  useEffect(() => {
+    if (activeProvider !== PROVIDER_CODEX) {
+      return;
+    }
+    setProfilesLaunchMonitorModeEnabled(
+      (state?.parameter_settings?.cli_settings?.codex?.terminal_mode ?? "monitored") !== "direct",
+    );
+  }, [activeProvider, state?.parameter_settings?.cli_settings?.codex?.terminal_mode]);
 
   useEffect(() => {
     if (startupPhase !== "ready") {
@@ -575,9 +640,10 @@ function App() {
     }
   }
 
-  function markProfilesSessionsHydrated(provider: string | null) {
+  function markProfilesSessionsHydrated(provider: string | null, request: ListSessionsRequest | null = null) {
     profilesSessionsHydratedProviderRef.current = provider;
-    setProfilesSessionsHydratedProvider(provider);
+    profilesSessionsHydratedRequestRef.current = request;
+    setProfilesSessionsHydratedRequest(request);
   }
 
   function normalizeListProfilesResult(result: {
@@ -924,12 +990,14 @@ function App() {
   }
 
   async function persistCwdOnlyChangeAndRefreshSessions(snapshot = currentDraftSnapshot()): Promise<boolean> {
+    const shouldRefreshSessions = activeTab === "profiles"
+      && state
+      && profilesSessionsHydratedProviderRef.current === state.selected_provider;
     const saved = await persistCwdOnlyChange(snapshot);
     if (
       saved
-      && activeTab === "profiles"
+      && shouldRefreshSessions
       && state
-      && profilesSessionsHydratedProviderRef.current === state.selected_provider
     ) {
       await handleLoadProfilesSessions(state, snapshot.cwd, { source: "followup" });
     }
@@ -971,9 +1039,12 @@ function App() {
     historyPrefetchedOffsetRef.current = null;
   }
 
-  function clearProfilesSessionsState(options: { loading?: boolean } = {}) {
+  function clearProfilesSessionsState(options: { loading?: boolean; resetHydration?: boolean } = {}) {
     profilesSessionsRequestSeqRef.current += 1;
     latestProfilesSessionsRequestRef.current = null;
+    if (options.resetHydration !== false) {
+      markProfilesSessionsHydrated(null);
+    }
     setProfilesSessions((current) => (current.length === 0 ? current : []));
     setProfilesSelectedSessionId((current) => (current ? "" : current));
     setProfilesSessionsLoading((current) => {
@@ -1049,6 +1120,21 @@ function App() {
       defaultWorkingDirectory,
     );
     setEditingKey("");
+    applyDraftSnapshot(snapshot);
+    setEditorBaseline(snapshot);
+  }
+
+  function handleCancelProfileEdit() {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    if (editorBaseline) {
+      applyDraftSnapshot(editorBaseline);
+      return;
+    }
+    const snapshot = withDefaultWorkingDirectory(
+      buildNewProfileDraft(state?.selected_provider ?? PROVIDER_CLAUDE),
+      defaultWorkingDirectory,
+    );
     applyDraftSnapshot(snapshot);
     setEditorBaseline(snapshot);
   }
@@ -1204,17 +1290,28 @@ function App() {
       cwd: runtime.cwd.trim() || defaultWorkingDirectory,
     };
 
-    const request = {
+    const requestedTerminalMode = launchState.selected_provider === PROVIDER_CODEX
+      ? profilesLaunchMonitorModeEnabled ? "monitored" : "direct"
+      : undefined;
+    const request: LaunchRequest = {
       profile_key: launchState.selected_profile_key,
       provider: launchState.selected_provider,
       runtime_settings: { ...launchRuntime, launch_mode: mode },
+      terminal_mode: requestedTerminalMode,
       session_id: sessionId,
       session_source: sessionSource,
       permission_override: permissionOverride,
     };
 
     try {
-      await window.profileManager.launch(request);
+      const launchResult = await window.profileManager.launch(request);
+      const prefersMonitoredCodex = launchState.selected_provider === PROVIDER_CODEX
+        && requestedTerminalMode === "monitored";
+      if (launchResult?.monitoringActive) {
+        setSuccessMessage("已打开受监控终端窗口。");
+      } else if (prefersMonitoredCodex && launchResult?.terminalMode === "direct") {
+        setSuccessMessage("监控终端不可用，已回退到系统直连启动。");
+      }
       if (profilesSessionsHydratedProviderRef.current === launchState.selected_provider) {
         await handleLoadProfilesSessions(launchState, launchRuntime.cwd, { source: "followup" });
       }
@@ -1241,6 +1338,17 @@ function App() {
     }
   }
 
+  async function handleClearBalanceState() {
+    if (!window.profileManager || !state?.selected_profile_key) return;
+    const key = state.selected_profile_key;
+    try {
+      await window.profileManager.clearBalanceState?.(key);
+      setBalanceState(null);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "清除余额检测结果失败");
+    }
+  }
+
   useEffect(() => {
     const selectedKey = state?.selected_profile_key ?? "";
     setBalanceKey(selectedKey);
@@ -1258,23 +1366,21 @@ function App() {
   }, [balanceKey]);
 
   // ---- 会话 ----
-  async function handleLoadProfilesSessions(
+  function buildProfilesSessionsRequest(
     nextState: LocalState | null = state,
     cwdOverride?: string,
-    options: { source?: "manual" | "followup" } = {},
-  ) {
-    if (!window.profileManager || !nextState?.selected_profile_key) {
-      clearProfilesSessionsState();
-      return;
+    options: { preferDraftCwd?: boolean } = {},
+  ): ListSessionsRequest | null {
+    if (!nextState?.selected_profile_key) {
+      return null;
     }
     const runtime = nextState.runtime_by_profile[nextState.selected_profile_key];
-    const cwd = cwdOverride ?? (draftCwd.trim() || runtime?.cwd.trim() || defaultWorkingDirectory);
+    const preferredDraftCwd = options.preferDraftCwd === false ? "" : draftCwd.trim();
+    const cwd = cwdOverride ?? (preferredDraftCwd || runtime?.cwd.trim() || defaultWorkingDirectory);
     if (!cwd.trim()) {
-      clearProfilesSessionsState();
-      return;
+      return null;
     }
-
-    const request: ListSessionsRequest = {
+    return {
       provider: nextState.selected_provider,
       scope: "project",
       cwd,
@@ -1282,16 +1388,38 @@ function App() {
       limit: HISTORY_PAGE_SIZE,
       offset: 0,
     };
+  }
+
+  async function handleLoadProfilesSessions(
+    nextState: LocalState | null = state,
+    cwdOverride?: string,
+    options: { source?: "manual" | "auto" | "followup" } = {},
+  ) {
+    if (!window.profileManager) {
+      clearProfilesSessionsState();
+      return;
+    }
+    const request = buildProfilesSessionsRequest(nextState, cwdOverride);
+    if (!request) {
+      clearProfilesSessionsState();
+      return;
+    }
+
+    const shouldKeepExisting = sameSessionRequest(profilesSessionsHydratedRequestRef.current, request);
+    if (options.source === "manual" || options.source === "auto" || !shouldKeepExisting) {
+      markProfilesSessionsHydrated(request.provider, request);
+    }
     if (options.source === "manual") {
-      markProfilesSessionsHydrated(nextState.selected_provider);
       logRendererMilestoneOnce("profiles_sessions_manual_load_start", "Profiles sessions manual load started", {
-        cwd,
+        cwd: request.cwd,
       });
     }
     const requestSeq = ++profilesSessionsRequestSeqRef.current;
     latestProfilesSessionsRequestRef.current = request;
-    setProfilesSessions([]);
-    setProfilesSelectedSessionId("");
+    if (!shouldKeepExisting) {
+      setProfilesSessions([]);
+      setProfilesSelectedSessionId("");
+    }
     setProfilesSessionsLoading(true);
 
     try {
@@ -1311,7 +1439,7 @@ function App() {
       if (options.source === "manual") {
         logRendererMilestoneOnce("profiles_sessions_manual_load_ready", "Profiles sessions manual load ready", {
           count: nextSessions.length,
-          cwd,
+          cwd: request.cwd,
         });
       }
     } catch (err) {
@@ -1321,8 +1449,10 @@ function App() {
       ) {
         return;
       }
-      setProfilesSessions([]);
-      setProfilesSelectedSessionId("");
+      if (!shouldKeepExisting) {
+        setProfilesSessions([]);
+        setProfilesSelectedSessionId("");
+      }
       setProfilesSessionsLoading(false);
       setErrorMessage(err instanceof Error ? err.message : "加载会话失败");
     }
@@ -1550,20 +1680,20 @@ function App() {
     if (activeTab !== "profiles") {
       return;
     }
-    if (!state?.selected_profile_key) {
+    if (!state?.selected_profile_key || !currentProfilesSessionsRequest) {
       if (profilesSessions.length > 0 || profilesSelectedSessionId || profilesSessionsLoading) {
         clearProfilesSessionsState();
       }
       return;
     }
-    if (profilesSessionsHydratedProviderRef.current !== state.selected_provider) {
-      if (profilesSessions.length > 0 || profilesSelectedSessionId || profilesSessionsLoading) {
-        clearProfilesSessionsState();
-      }
-      return;
+    const loadSource = sameSessionRequest(profilesSessionsHydratedRequestRef.current, currentProfilesSessionsRequest)
+      ? "followup"
+      : "auto";
+    if (loadSource === "auto" && (profilesSessions.length > 0 || profilesSelectedSessionId || !profilesSessionsLoading)) {
+      clearProfilesSessionsState({ loading: true });
     }
 
-    const run = () => void handleLoadProfilesSessions(state, undefined, { source: "followup" });
+    const run = () => void handleLoadProfilesSessions(state, currentProfilesSessionsRequest.cwd, { source: loadSource });
     if (typeof window.requestIdleCallback === "function") {
       const id = window.requestIdleCallback(run, { timeout: 1500 });
       return () => window.cancelIdleCallback(id);
@@ -1571,7 +1701,12 @@ function App() {
 
     const id = window.setTimeout(run, 800);
     return () => window.clearTimeout(id);
-  }, [activeTab, state?.selected_provider, state?.selected_profile_key]);
+  }, [
+    activeTab,
+    currentProfilesSessionsRequest?.cwd,
+    currentProfilesSessionsRequest?.profile_key,
+    currentProfilesSessionsRequest?.provider,
+  ]);
 
   useEffect(() => {
     if (activeTab === "sessions" && sessionsView !== "favorites") {
@@ -1978,9 +2113,11 @@ function App() {
   const stableHandleSelectProfile = useEventCallback(handleSelectProfile);
   const stableHandleReorder = useEventCallback(handleReorder);
   const stableHandleNewProfile = useEventCallback(handleNewProfile);
+  const stableHandleCancelProfileEdit = useEventCallback(handleCancelProfileEdit);
   const stableHandleCloneProfile = useEventCallback(handleCloneProfile);
   const stableHandleDeleteProfile = useEventCallback(handleDeleteProfile);
   const stableHandleTestBalance = useEventCallback(handleTestBalance);
+  const stableHandleClearBalanceState = useEventCallback(handleClearBalanceState);
   const stableHandleSaveBalanceSession = useEventCallback(handleSaveBalanceSession);
   const stableHandleDeleteSiteBalanceSession = useEventCallback(handleDeleteSiteBalanceSession);
   const stableHandleDraftCommit = useEventCallback(handleDraftCommit);
@@ -2026,7 +2163,7 @@ function App() {
   const stableFetchModelsAction = useCallback(() => void stableHandleFetchSiteModels(), [stableHandleFetchSiteModels]);
   const stableOpenBaseUrlAction = useCallback(() => void stableHandleOpenBaseUrl(), [stableHandleOpenBaseUrl]);
   const stableSaveProfileAction = useCallback(() => void stableHandleSaveProfile(), [stableHandleSaveProfile]);
-  const stableCancelProfileEditAction = useCallback(() => void stableHandleNewProfile(), [stableHandleNewProfile]);
+  const stableCancelProfileEditAction = useCallback(() => void stableHandleCancelProfileEdit(), [stableHandleCancelProfileEdit]);
   const stablePickWorkingDirectoryAction = useCallback(() => void stableHandlePickWorkingDirectory(), [stableHandlePickWorkingDirectory]);
   const stableToggleWorkingDirectoryFavoriteAction = useCallback(
     () => void stableHandleToggleWorkingDirectoryFavorite(),
@@ -2091,7 +2228,7 @@ function App() {
     return (
       <div className="unlock-screen">
         <div className="unlock-card">
-          <h1>Skills Manager</h1>
+          <h1>{APP_NAME}</h1>
           <input
             type="password"
             value={passphrase}
@@ -2197,6 +2334,7 @@ function App() {
             balanceTestProps={{
               state: balanceState,
               onTest: stableHandleTestBalance,
+              onClear: stableHandleClearBalanceState,
               disabled: isBusy || !state?.selected_profile_key,
               sessionHint: savedBalanceSessionHint,
             }}
@@ -2227,11 +2365,14 @@ function App() {
               disabled: isBusy,
             }}
             launchPanelProps={{
-              preview,
+              provider: activeProvider,
+              preview: launchPanelPreview,
+              monitorModeEnabled: profilesLaunchMonitorModeEnabled,
+              onMonitorModeChange: setProfilesLaunchMonitorModeEnabled,
               disabled: isBusy || !state?.selected_profile_key,
               resumeDisabled: !profilesSelectedSessionId,
               sessions: profilesSessions,
-              sessionsLoading: profilesSessionsLoading,
+              sessionsLoading: profilesSessionsLoading || profilesSessionsUninitialized,
               sessionsUninitialized: profilesSessionsUninitialized,
               selectedSessionId: profilesSelectedSessionId,
               onSelectSession: setProfilesSelectedSessionId,

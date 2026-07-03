@@ -309,7 +309,7 @@ describe("App startup flow", () => {
     const { container, root } = await renderApp(<App />);
 
     expect(container.querySelector(".unlock-screen")).toBeTruthy();
-    expect(container.textContent).toContain("Skills Manager");
+    expect(container.textContent).toContain("CodeDeck");
     expect(container.textContent).toContain("解锁");
     expect(container.textContent).not.toContain("AI CLI 工具统一管理");
 

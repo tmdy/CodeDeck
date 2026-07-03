@@ -94,7 +94,8 @@ body.unlock-route {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -119,13 +120,21 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
+  display: block;
   border: 1px solid var(--app-accent-border);
   border-radius: 8px;
   padding: 0.54rem 0.68rem;
   background: var(--app-input-bg);
   color: var(--app-text);
+}
+
+textarea {
+  min-height: 4.4rem;
+  line-height: 1.35;
+  resize: vertical;
 }
 
 #root {
@@ -1248,6 +1257,10 @@ ul {
   line-height: 1.25;
 }
 
+.profiles-launch-panel .launch-monitor-toggle {
+  grid-column: 1 / -1;
+}
+
 .profiles-launch-panel .launch-btn {
   padding: 0.38rem 0.58rem;
   min-height: 34px;
@@ -1265,6 +1278,27 @@ ul {
   display: grid;
   grid-template-columns: 1fr;
   gap: 6px;
+}
+
+.launch-monitor-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.launch-monitor-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--app-accent);
 }
 
 .launch-btn {
@@ -2233,6 +2267,55 @@ button.skills-inline-status:hover:not(:disabled) {
 .skills-empty-state {
   display: grid;
   gap: 8px;
+}
+
+.terminal-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background:
+    radial-gradient(circle at top, rgba(244, 184, 96, 0.12), transparent 30%),
+    linear-gradient(180deg, #111927 0%, #0b1119 100%);
+  color: #dce6f2;
+}
+
+.terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 20px 10px;
+  border-bottom: 1px solid rgba(220, 230, 242, 0.1);
+  background: rgba(9, 14, 21, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.terminal-header h1 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.terminal-status,
+.terminal-error {
+  margin: 6px 0 0;
+  font-size: 0.88rem;
+}
+
+.terminal-status {
+  color: rgba(220, 230, 242, 0.72);
+}
+
+.terminal-error {
+  color: #fca5a5;
+}
+
+.terminal-stage {
+  min-height: 0;
+  padding: 10px 12px 14px;
+}
+
+.terminal-stage .xterm {
+  height: 100%;
 }
 
 .skills-preview-card.compact {

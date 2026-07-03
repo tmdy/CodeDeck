@@ -37,8 +37,8 @@ describe("session-service", () => {
   });
 
   it("encodes Claude project directories from cwd", () => {
-    expect(encodeClaudeProjectPath("C:/Users/example/Sync/projects/skills-manager"))
-      .toBe("C--Users-example-Sync-projects-skills-manager");
+    expect(encodeClaudeProjectPath("C:/Users/example/Sync/projects/codedeck"))
+      .toBe("C--Users-example-Sync-projects-codedeck");
   });
 
   it("encodes Claude project directories by replacing underscores and dots with hyphens", () => {

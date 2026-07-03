@@ -15,12 +15,13 @@ import type {
 
 // Profile Manager types
 import type { Profile, ProfileKey, RuntimeSettings, GlobalSettings } from "./shared/profile/types.js";
-import type { CommandPreview, LaunchRequest } from "./shared/launcher/types.js";
+import type { CommandPreview, LaunchRequest, LaunchResult } from "./shared/launcher/types.js";
 import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ModelMappingsState } from "./shared/model-mapping/config-types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
 import type { BootstrapResult, FavoriteSessionSummary, LocalState } from "./shared/state/local-state.js";
 import type { ListSessionsRequest, SessionListScope } from "./shared/services/session-service.js";
+import type { TerminalSessionSnapshot } from "./shared/electron/terminal-session-manager.js";
 import type {
   SiteBalanceSession,
   SiteBalanceSessionDraft,
@@ -28,13 +29,13 @@ import type {
 } from "./shared/balance/site-balance-sessions.js";
 
 declare global {
-  interface SkillsManagerStartupTheme {
+  interface CodeDeckStartupTheme {
     themeMode: "system" | "light" | "dark";
     effectiveTheme: "light" | "dark";
   }
 
   interface Window {
-    __SKILLS_MANAGER_STARTUP_THEME__?: SkillsManagerStartupTheme | null;
+    __CODEDECK_STARTUP_THEME__?: CodeDeckStartupTheme | null;
     skillsManager?: {
       scan: () => Promise<ScanResult>;
       loadCachedSnapshot: () => Promise<SkillsSnapshotResult | null>;
@@ -94,7 +95,7 @@ declare global {
         sessionId?: string,
       ) => Promise<CommandPreview>;
       previewForProfile: (profileKey: ProfileKey) => Promise<CommandPreview>;
-      launch: (request: LaunchRequest) => Promise<void>;
+      launch: (request: LaunchRequest) => Promise<LaunchResult | void>;
 
       // Sessions
       listSessions: (request: ListSessionsRequest) => Promise<unknown[]>;
@@ -108,6 +109,7 @@ declare global {
       // Balance
       testBalance: (profileKey: ProfileKey) => Promise<void>;
       getBalanceState: (profileKey: ProfileKey) => Promise<BalanceCheckState>;
+      clearBalanceState?: (profileKey: ProfileKey) => Promise<void>;
 
       // Model Mappings
       getModelMappings: () => Promise<ModelMappingsState>;
@@ -127,6 +129,17 @@ declare global {
       onBalanceProgress: (callback: (key: ProfileKey, state: BalanceCheckState) => void) => () => void;
       onUnlockError: (callback: (message: string) => void) => () => void;
       logRendererEvent?: (event: string, message: string, context?: unknown) => void;
+    };
+
+    terminalManager?: {
+      attachSession: (sessionId: string) => Promise<TerminalSessionSnapshot>;
+      sendInput: (sessionId: string, data: string) => Promise<void>;
+      resizeSession: (sessionId: string, cols: number, rows: number) => Promise<void>;
+      closeSession: (sessionId: string) => Promise<void>;
+      readClipboardText: () => Promise<string>;
+      writeClipboardText: (text: string) => Promise<void>;
+      onOutput: (callback: (sessionId: string, chunk: string) => void) => () => void;
+      onStatus: (callback: (snapshot: TerminalSessionSnapshot) => void) => () => void;
     };
   }
 }

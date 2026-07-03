@@ -9,6 +9,7 @@ export interface LaunchRequest {
   profile_key: ProfileKey;
   provider: string;
   runtime_settings: RuntimeSettings;
+  terminal_mode?: "direct" | "monitored";
   session_id?: string;
   session_source?: LaunchSessionSource;
   model_mappings_state?: ModelMappingsState;
@@ -26,6 +27,13 @@ export interface LaunchCapabilityOverlay {
   codex?: CodexCapabilityOverlay;
 }
 
+export interface LaunchResult {
+  launched: boolean;
+  terminalMode: "direct" | "monitored";
+  monitoringActive: boolean;
+  terminalSessionId?: string;
+}
+
 export interface PreviewEnvVar {
   name: string;
   present: boolean;
@@ -41,4 +49,5 @@ export interface CommandPreview {
   error?: string;
   permissionSummary?: string;
   capabilitySummary?: string;
+  terminalSummary?: string;
 }

@@ -31,12 +31,12 @@ describe("app workspace", () => {
       resolveWorkspaceLayout({
         cwd: "C:/repo",
         isPackaged: true,
-        resourcesPath: "C:/Program Files/Skills Manager/resources",
-        userDataPath: "C:/Users/test/AppData/Roaming/Skills Manager",
+        resourcesPath: "C:/Program Files/CodeDeck/resources",
+        userDataPath: "C:/Users/test/AppData/Roaming/CodeDeck",
       }),
     ).toEqual({
-      workspaceRoot: path.join("C:/Users/test/AppData/Roaming/Skills Manager", "workspace"),
-      seedRoot: path.join("C:/Program Files/Skills Manager/resources", "workspace-seed"),
+      workspaceRoot: path.join("C:/Users/test/AppData/Roaming/CodeDeck", "workspace"),
+      seedRoot: path.join("C:/Program Files/CodeDeck/resources", "workspace-seed"),
     });
   });
 
@@ -55,7 +55,7 @@ describe("app workspace", () => {
   });
 
   it("seeds library and translations into packaged workspace only when missing", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-workspace-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-workspace-"));
     tempRoots.push(root);
     const seedRoot = path.join(root, "workspace-seed");
     const workspaceRoot = path.join(root, "workspace");

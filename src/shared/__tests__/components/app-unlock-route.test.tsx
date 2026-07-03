@@ -22,7 +22,7 @@ describe("App startup route", () => {
 
     expect(html).toContain('class="startup-screen"');
     expect(html).toContain('class="startup-progress"');
-    expect(html).toContain("Skills Manager");
+    expect(html).toContain("CodeDeck");
     expect(html).toContain("正在准备解锁界面");
     expect(html).not.toContain("AI CLI 工具统一管理");
   });
@@ -30,7 +30,7 @@ describe("App startup route", () => {
   it("should render the static startup gate before the renderer bundle executes", async () => {
     const html = normalizeNewlines(await readFile(path.join(process.cwd(), "index.html"), "utf8"));
 
-    expect(html).toContain("window.__SKILLS_MANAGER_STARTUP_THEME__");
+    expect(html).toContain("window.__CODEDECK_STARTUP_THEME__");
     expect(html).toContain("document.documentElement.dataset.theme = startupTheme.effectiveTheme");
     expect(html).toContain('<body class="unlock-route">');
     expect(html).toContain('<div id="root">');
@@ -71,7 +71,8 @@ describe("App startup route", () => {
     // show: true 让窗口在渲染器冷启动期间立即显示纯色背景（与 shell 同色），
     // 避免 app ready 后数秒无窗口反馈；startup shell 仍在真实 renderer 之前加载。
     expect(createWindowBlock).toContain("show: true,");
-    expect(createWindowBlock).toContain('title: "Skills Manager",');
+    expect(createWindowBlock).toContain("title: APP_NAME,");
+    expect(source).toContain('APP_NAME,\n  CODEDECK_PROJECT_ROOT_ENV,');
     expect(source).toContain("function createStartupShellHtml(");
     expect(source).toContain("function showStartupShell(");
     expect(source).toContain('class="startup-screen"');

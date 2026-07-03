@@ -4,8 +4,8 @@ import { resolveElectronRuntimePaths } from "./electron-runtime-paths.js";
 
 describe("resolveElectronRuntimePaths", () => {
   it("uses appRoot instead of workspaceRoot for dev preload and dist paths", () => {
-    const appRoot = "C:/repo/skills-manager";
-    const workspaceRoot = "C:/Users/test/.skills-manager/workspace";
+    const appRoot = "C:/repo/codedeck";
+    const workspaceRoot = "C:/Users/test/.codedeck/workspace";
 
     const resolved = resolveElectronRuntimePaths({
       appRoot,
@@ -23,19 +23,19 @@ describe("resolveElectronRuntimePaths", () => {
   });
 
   it("uses packaged relative paths and resources when packaged", () => {
-    const mainDirname = "C:/Program Files/Skills Manager/resources/app.asar/dist-electron/electron";
+    const mainDirname = "C:/Program Files/CodeDeck/resources/app.asar/dist-electron/electron";
     const resolved = resolveElectronRuntimePaths({
-      appRoot: "C:/repo/skills-manager",
-      workspaceRoot: "C:/Users/test/AppData/Roaming/Skills Manager/workspace",
+      appRoot: "C:/repo/codedeck",
+      workspaceRoot: "C:/Users/test/AppData/Roaming/CodeDeck/workspace",
       isPackaged: true,
       mainDirname,
-      resourcesPath: "C:/Program Files/Skills Manager/resources",
+      resourcesPath: "C:/Program Files/CodeDeck/resources",
     });
 
     expect(resolved.preloadPath).toBe(path.join(mainDirname, "preload.js"));
     expect(resolved.distIndexPath).toBe(path.join(mainDirname, "..", "..", "dist", "index.html"));
     expect(resolved.iconCandidates).toEqual([
-      path.join("C:/Program Files/Skills Manager/resources", "icon.png"),
+      path.join("C:/Program Files/CodeDeck/resources", "icon.png"),
     ]);
   });
 });

@@ -80,6 +80,7 @@ describe("App page containers", () => {
           onCancel: vi.fn(),
         }}
         launchPanelProps={{
+          provider: PROVIDER_CLAUDE,
           preview: {
             command: "claude",
             cwd: "C:/repo",

@@ -62,7 +62,7 @@ describe("balance presentation helpers", () => {
     });
   });
 
-  it("maps unsupported and failed states to lightweight list labels", () => {
+  it("maps unsupported states to lightweight list labels and hides failed list badges", () => {
     expect(
       buildBalanceListEntry(
         makeState({
@@ -86,8 +86,8 @@ describe("balance presentation helpers", () => {
         }),
       ),
     ).toEqual({
-      label: "失败",
-      status: "fail",
+      label: "",
+      status: "",
     });
   });
 });

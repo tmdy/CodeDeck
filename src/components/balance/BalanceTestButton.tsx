@@ -10,6 +10,7 @@ import { StatusBadge } from "../common/StatusBadge.jsx";
 interface BalanceTestButtonProps {
   state: BalanceCheckState | null;
   onTest: () => void;
+  onClear?: () => void;
   sessionHint?: string;
   disabled?: boolean;
 }
@@ -17,10 +18,19 @@ interface BalanceTestButtonProps {
 export const BalanceTestButton = memo(function BalanceTestButton({
   state,
   onTest,
+  onClear,
   sessionHint,
   disabled,
 }: BalanceTestButtonProps) {
   const summary = useMemo(() => summarizeBalanceState(state), [state]);
+  const canClearFailure = !!(
+    state
+    && !state.running
+    && !state.success
+    && state.supported
+    && onClear
+    && (state.message || state.finished_at_display)
+  );
 
   return (
     <div className="balance-test">
@@ -33,6 +43,11 @@ export const BalanceTestButton = memo(function BalanceTestButton({
             label={summary}
             variant={balanceStateVariant(state)}
           />
+        )}
+        {canClearFailure && (
+          <button type="button" onClick={onClear} disabled={disabled}>
+            清除结果
+          </button>
         )}
       </div>
       {state?.success && state.items.length > 0 && (

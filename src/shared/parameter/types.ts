@@ -9,14 +9,20 @@ export interface ProviderParameterDefaults {
 
 export interface ClaudeCLISettings {
   setting_sources: string;
-  permission_mode: string;
   max_turns?: number;
 }
+
+export type CodexTerminalMode = "direct" | "monitored";
 
 export interface CodexCLISettings {
   wire_api: string;
   sandbox_mode?: string;
   skip_git_repo_check: boolean;
+  terminal_mode: CodexTerminalMode;
+  auto_continue_on_failure: boolean;
+  auto_continue_limit: number;
+  auto_continue_prompt: string;
+  auto_continue_keywords: string[];
 }
 
 export interface CLISpecificSettings {
@@ -24,9 +30,15 @@ export interface CLISpecificSettings {
   codex: CodexCLISettings;
 }
 
+export const DEFAULT_CODEX_AUTO_CONTINUE_KEYWORDS = [
+  "high demand",
+  "temporary errors",
+  "temporarily unavailable",
+  "rate limit",
+  "overloaded",
+];
+
 export interface ParameterSettings {
-  /** 启动超时（毫秒） */
-  launch_timeout_ms: number;
   /** 启动时继承全局 MCP 和 Skills，但不继承普通全局设置 */
   inherit_global_capabilities: boolean;
   /** 余额检测超时（毫秒）。字段名沿用旧配置以避免迁移。 */
@@ -51,6 +63,8 @@ function stripWrappingSingleQuotes(value: string): string {
 
 export function normalizeParameterSettings(settings?: Partial<ParameterSettings> | null): ParameterSettings {
   const defaults = defaultParameterSettings();
+  const rawClaude = settings?.cli_settings?.claude;
+  const rawCodex = settings?.cli_settings?.codex;
   const launchModeArgs = {
     ...defaults.launch_mode_args,
     ...(settings?.launch_mode_args ?? {}),
@@ -62,7 +76,6 @@ export function normalizeParameterSettings(settings?: Partial<ParameterSettings>
     launchModeArgs.continue_last = settings.launch_mode_args.continue;
   }
   const normalized: ParameterSettings = {
-    launch_timeout_ms: settings?.launch_timeout_ms ?? defaults.launch_timeout_ms,
     inherit_global_capabilities:
       settings?.inherit_global_capabilities ?? defaults.inherit_global_capabilities,
     connectivity_test_timeout_ms:
@@ -72,12 +85,12 @@ export function normalizeParameterSettings(settings?: Partial<ParameterSettings>
     extra_env: settings?.extra_env ?? defaults.extra_env,
     cli_settings: {
       claude: {
-        ...defaults.cli_settings.claude,
-        ...(settings?.cli_settings?.claude ?? {}),
+        setting_sources: rawClaude?.setting_sources ?? defaults.cli_settings.claude.setting_sources,
+        ...(rawClaude?.max_turns !== undefined ? { max_turns: rawClaude.max_turns } : {}),
       },
       codex: {
         ...defaults.cli_settings.codex,
-        ...(settings?.cli_settings?.codex ?? {}),
+        ...(rawCodex ?? {}),
       },
     },
   };
@@ -85,19 +98,40 @@ export function normalizeParameterSettings(settings?: Partial<ParameterSettings>
   normalized.cli_settings.claude.setting_sources = stripWrappingSingleQuotes(
     normalized.cli_settings.claude.setting_sources,
   );
-  normalized.cli_settings.claude.permission_mode = stripWrappingSingleQuotes(
-    normalized.cli_settings.claude.permission_mode,
-  );
   normalized.cli_settings.codex.wire_api = stripWrappingSingleQuotes(
     normalized.cli_settings.codex.wire_api,
+  );
+  normalized.cli_settings.codex.terminal_mode = normalizeCodexTerminalMode(
+    normalized.cli_settings.codex.terminal_mode,
+  );
+  const rawAutoContinueLimit = Math.floor(Number(normalized.cli_settings.codex.auto_continue_limit) || 1);
+  normalized.cli_settings.codex.auto_continue_limit = rawAutoContinueLimit === -1
+    ? -1
+    : Math.max(1, rawAutoContinueLimit);
+  normalized.cli_settings.codex.auto_continue_prompt =
+    normalized.cli_settings.codex.auto_continue_prompt?.trim() || "继续";
+  normalized.cli_settings.codex.auto_continue_keywords = normalizeAutoContinueKeywords(
+    normalized.cli_settings.codex.auto_continue_keywords,
   );
 
   return normalized;
 }
 
+function normalizeAutoContinueKeywords(value?: string[]): string[] {
+  const keywords = Array.from(new Set(
+    (Array.isArray(value) ? value : [])
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ));
+  return keywords.length > 0 ? keywords : [...DEFAULT_CODEX_AUTO_CONTINUE_KEYWORDS];
+}
+
+function normalizeCodexTerminalMode(value: string | undefined): CodexTerminalMode {
+  return value === "direct" ? "direct" : "monitored";
+}
+
 export function defaultParameterSettings(): ParameterSettings {
   return {
-    launch_timeout_ms: 30000,
     inherit_global_capabilities: true,
     connectivity_test_timeout_ms: 60000,
     provider_defaults: {},
@@ -112,11 +146,15 @@ export function defaultParameterSettings(): ParameterSettings {
     cli_settings: {
       claude: {
         setting_sources: "project,local",
-        permission_mode: "acceptEdits",
       },
       codex: {
         wire_api: "responses",
         skip_git_repo_check: false,
+        terminal_mode: "monitored",
+        auto_continue_on_failure: true,
+        auto_continue_limit: 1,
+        auto_continue_prompt: "继续",
+        auto_continue_keywords: [...DEFAULT_CODEX_AUTO_CONTINUE_KEYWORDS],
       },
     },
   };

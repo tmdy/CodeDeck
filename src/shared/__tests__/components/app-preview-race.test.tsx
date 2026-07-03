@@ -189,7 +189,11 @@ function createSession(profileKey: string, cwd: string, preview: string): Sessio
   };
 }
 
-function createProfileSessionSwitchFixture(options: { delayAlpha?: boolean; delayBeta?: boolean } = {}) {
+function createProfileSessionSwitchFixture(options: {
+  delayAlpha?: boolean;
+  delayAlphaAfterFirst?: boolean;
+  delayBeta?: boolean;
+} = {}) {
   let alphaProfile: Profile = {
     provider: "claude",
     name: "Alpha",
@@ -238,8 +242,15 @@ function createProfileSessionSwitchFixture(options: { delayAlpha?: boolean; dela
     },
   };
 
+  let alphaRequestCount = 0;
   const listSessions = vi.fn((request) => {
-    if (request.profile_key === alphaKey && options.delayAlpha) {
+    if (request.profile_key === alphaKey) {
+      alphaRequestCount += 1;
+    }
+    if (
+      request.profile_key === alphaKey
+      && (options.delayAlpha || (options.delayAlphaAfterFirst && alphaRequestCount > 1))
+    ) {
       return alphaSessions.promise;
     }
     if (request.profile_key === betaKey && options.delayBeta) {
@@ -367,18 +378,6 @@ async function flushAsyncWork(times = 4) {
 async function flushProfileSessionLoad() {
   await vi.advanceTimersByTimeAsync(800);
   await flushAsyncWork();
-}
-
-async function clickProfileSessionsLoadButton(container: HTMLElement) {
-  const loadButton = Array.from(container.querySelectorAll("button")).find(
-    (button) => button.textContent?.trim() === "加载会话",
-  );
-  expect(loadButton).toBeDefined();
-  await act(async () => {
-    loadButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await Promise.resolve();
-    await Promise.resolve();
-  });
 }
 
 async function setInputValue(input: HTMLInputElement, value: string) {
@@ -542,10 +541,10 @@ describe("App command preview", () => {
     const { container, root } = await renderUnlockedApp(fixture.manager);
 
     expect(fixture.manager.listSessions).toHaveBeenCalledTimes(0);
-    expect(container.textContent).toContain("尚未加载当前工作目录的会话。");
+    expect(container.textContent).toContain("正在加载会话...");
 
     await act(async () => {
-      await clickProfileSessionsLoadButton(container);
+      await flushProfileSessionLoad();
     });
 
     expect(fixture.manager.listSessions).toHaveBeenCalledWith({
@@ -643,12 +642,95 @@ describe("App command preview", () => {
     container.remove();
   });
 
+  it("restores the selected profile draft when canceling profile edits", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    const nameInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "输入 Profile 名称",
+    );
+    expect(nameInput).toBeInstanceOf(HTMLInputElement);
+
+    await setInputValue(nameInput as HTMLInputElement, "Relay Draft");
+    expect((nameInput as HTMLInputElement).value).toBe("Relay Draft");
+
+    const cancelButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "取消",
+    );
+    expect(cancelButton).toBeDefined();
+
+    await act(async () => {
+      cancelButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.manager.promptUnsavedProfileAction).not.toHaveBeenCalled();
+    expect(fixture.manager.saveProfile).not.toHaveBeenCalled();
+    expect((nameInput as HTMLInputElement).value).toBe("Relay");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("keeps loaded profile sessions visible while refreshing the same profile after returning", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ delayAlphaAfterFirst: true });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(container.textContent).toContain("Alpha project session");
+
+    const skillsTab = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Skills",
+    );
+    expect(skillsTab).toBeDefined();
+
+    await act(async () => {
+      skillsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    const profilesTab = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Profiles",
+    );
+    expect(profilesTab).toBeDefined();
+
+    await act(async () => {
+      profilesTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Alpha project session");
+
+    await act(async () => {
+      fixture.alphaSessions.resolve([fixture.alphaSession]);
+      await flushAsyncWork();
+    });
+
+    expect(container.textContent).toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("ignores late profile session responses from a previously selected profile", async () => {
     vi.useFakeTimers();
     const fixture = createProfileSessionSwitchFixture({ delayAlpha: true, delayBeta: true });
     const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
-      await clickProfileSessionsLoadButton(container);
+      await flushProfileSessionLoad();
     });
 
     expect(fixture.listSessions).toHaveBeenCalledWith({
@@ -708,13 +790,23 @@ describe("App command preview", () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture({ initialCwd: "" });
     const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
 
     const cwdInput = Array.from(container.querySelectorAll("input")).find(
       (input) => input.placeholder === "默认使用下载目录",
     );
     expect(cwdInput).toBeInstanceOf(HTMLInputElement);
     expect((cwdInput as HTMLInputElement).value).toBe(DEFAULT_DOWNLOADS_CWD);
-    expect(fixture.manager.listSessions).not.toHaveBeenCalled();
+    expect(fixture.manager.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: DEFAULT_DOWNLOADS_CWD,
+      profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
+    });
 
     await act(async () => {
       root.unmount();
@@ -726,6 +818,9 @@ describe("App command preview", () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture({ initialCwd: "" });
     const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
 
     const saveButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "保存",
@@ -744,7 +839,7 @@ describe("App command preview", () => {
       expect.objectContaining({ name: "Relay" }),
       expect.objectContaining({ cwd: DEFAULT_DOWNLOADS_CWD }),
     );
-    expect(fixture.manager.listSessions).not.toHaveBeenCalled();
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       root.unmount();
@@ -756,6 +851,9 @@ describe("App command preview", () => {
     vi.useFakeTimers();
     const fixture = createProfileManagerFixture({ initialCwd: "" });
     const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
 
     const launchButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "直接启动",
@@ -775,7 +873,15 @@ describe("App command preview", () => {
         runtime_settings: expect.objectContaining({ cwd: DEFAULT_DOWNLOADS_CWD }),
       }),
     );
-    expect(fixture.manager.listSessions).not.toHaveBeenCalled();
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(2);
+    expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: DEFAULT_DOWNLOADS_CWD,
+      profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
+    });
 
     await act(async () => {
       root.unmount();
@@ -788,7 +894,7 @@ describe("App command preview", () => {
     const fixture = createProfileManagerFixture();
     const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
-      await clickProfileSessionsLoadButton(container);
+      await flushProfileSessionLoad();
     });
 
     expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
@@ -848,7 +954,7 @@ describe("App command preview", () => {
     const fixture = createProfileManagerFixture();
     const { container, root } = await renderUnlockedApp(fixture.manager);
     await act(async () => {
-      await clickProfileSessionsLoadButton(container);
+      await flushProfileSessionLoad();
     });
 
     expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);

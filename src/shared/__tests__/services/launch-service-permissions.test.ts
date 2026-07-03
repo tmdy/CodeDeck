@@ -129,6 +129,92 @@ describe("LaunchService permissions", () => {
     expect(plan.codexConfig?.content).toContain('writable_roots = ["C:/shared"]');
   });
 
+  it("should add managed Claude settings for common protection switches", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Claude Guarded",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+      permissions: {
+        preset: "safe",
+        common: {
+          denyEnvFiles: true,
+          denyGitPush: true,
+          denyDangerousDelete: true,
+          allowNetwork: false,
+          additionalWritableRoots: ["C:/shared", ""],
+        },
+      },
+    };
+
+    const plan = makeLaunchService(profile).buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime(),
+    });
+    const settings = JSON.parse(plan.claudeSettings?.content ?? "{}") as {
+      permissions?: {
+        deny?: string[];
+        additionalDirectories?: string[];
+      };
+      sandbox?: {
+        filesystem?: {
+          allowWrite?: string[];
+        };
+        network?: {
+          deniedDomains?: string[];
+        };
+      };
+    };
+
+    expect(plan.valid).toBe(true);
+    expect(plan.claudeSettings?.settingsPath).toMatch(/claude-runtime\/permissions\/claude-permissions-[a-f0-9]{16}\.json$/);
+    expect(plan.commandArgs).toEqual(expect.arrayContaining(["--settings", plan.claudeSettings?.settingsPath]));
+    expect(settings.permissions?.deny).toEqual(expect.arrayContaining([
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(git push *)",
+      "Bash(rm -rf *)",
+      "WebFetch",
+    ]));
+    expect(settings.permissions?.additionalDirectories).toEqual(["C:/shared"]);
+    expect(settings.sandbox?.filesystem?.allowWrite).toEqual(["C:/shared"]);
+    expect(settings.sandbox?.network?.deniedDomains).toEqual(["*"]);
+  });
+
+  it("should add Codex managed rules and shell environment policy for common protection switches", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "Codex Guarded",
+      url: "https://api.openai.com/v1",
+      key: "sk-openai",
+      permissions: {
+        preset: "safe",
+        common: {
+          denyEnvFiles: true,
+          denyGitPush: true,
+          denyDangerousDelete: true,
+          allowNetwork: true,
+          additionalWritableRoots: [],
+        },
+      },
+    };
+
+    const plan = makeLaunchService(profile).buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex" }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.codexConfig?.rulesContent).toContain('pattern = ["git", "push"]');
+    expect(plan.codexConfig?.rulesContent).toContain('decision = "forbidden"');
+    expect(plan.codexConfig?.rulesContent).toContain('pattern = ["rm", "-rf"]');
+    expect(plan.codexConfig?.rulesContent).toContain('pattern = ["Remove-Item", "-Recurse"]');
+    expect(plan.codexConfig?.content).toContain("[shell_environment_policy]");
+    expect(plan.codexConfig?.content).toContain('exclude = ["*KEY*", "*TOKEN*", "*SECRET*", "*PASSWORD*", "CODEX_SITE_API_KEY_*"]');
+  });
+
   it("should let a temporary readonly override beat profile and global permissions", () => {
     const profile: Profile = {
       provider: "codex",

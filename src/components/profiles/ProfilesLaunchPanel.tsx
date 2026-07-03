@@ -5,6 +5,9 @@ import type { SessionSummary } from "../../shared/services/session-service.js";
 import type { CommandPreview } from "../../shared/launcher/types.js";
 
 interface ProfilesLaunchPanelProps {
+  provider: "claude" | "codex";
+  monitorModeEnabled?: boolean;
+  onMonitorModeChange?: (enabled: boolean) => void;
   preview: CommandPreview;
   disabled?: boolean;
   resumeDisabled?: boolean;
@@ -22,6 +25,9 @@ interface ProfilesLaunchPanelProps {
 }
 
 export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
+  provider,
+  monitorModeEnabled,
+  onMonitorModeChange,
   preview,
   disabled,
   resumeDisabled,
@@ -40,6 +46,9 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
   return (
     <div className="profiles-launch-panel">
       <LaunchControls
+        provider={provider}
+        monitorModeEnabled={monitorModeEnabled}
+        onMonitorModeChange={onMonitorModeChange}
         onDirectLaunch={onDirectLaunch}
         onContinueLaunch={onContinueLaunch}
         onResumeLaunch={onResumeLaunch}
