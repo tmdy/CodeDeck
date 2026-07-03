@@ -202,6 +202,16 @@ flowchart TD
 - `src/shared/services/capability-overlay-service.ts` 继承全局 Claude/Codex 能力，必要时使用目录链接或复制 fallback。
 - `src/shared/services/session-service.ts` 读取 Claude/Codex 会话文件，合并 Codex index 与实际 session 文件，并支持导入全局 Codex 会话到应用 runtime home。
 
+### 内部命名与 IPC
+
+CodeDeck 的 Skills 能力仍然面向 Claude/Codex skills 目录，但内部入口已经统一使用 CodeDeck 品牌命名：
+
+- Electron IPC 通道集中定义在 `src/shared/code-deck-ipc.ts`，当前前缀为 `codedeck:skills:*`。
+- 主进程服务类为 `CodeDeckSkillsService`，实现文件为 `src/shared/skills-service.ts`。
+- preload 暴露给渲染进程的受控 API 为 `window.codeDeckSkills`。
+
+不再新增旧品牌 IPC、旧服务类名或旧 window API。新增 Skills 相关能力时，应复用 `CODEDECK_SKILLS_IPC_CHANNELS`，避免重新散落硬编码通道字符串。
+
 ## 开发指南
 
 常用开发命令：
@@ -221,8 +231,23 @@ npm run build
 - UI 控件按页面域放在 `src/components/`，避免把文件系统或 CLI 细节写进组件。
 - 新增用户可见能力时，同步更新 `README.md` 和 `docs/specs/` 中对应主题文档。
 - 修改权限、启动、Profile、会话或终端行为后，至少运行 `npm run typecheck` 和 `npm test`。
+- 本机运行数据、会话记录、日志、构建产物和密钥文件由 `.gitignore` 拦截；提交前仍建议使用 `git status --short --untracked-files=no` 和白名单 `git add -- <files>` 复核。
 
 当前仓库没有配置 ESLint、Prettier、Husky 或 CI workflow；不要在 README 中假设存在 lint 或自动发布流程。
+
+### 本地数据与提交安全
+
+`app-data/` 下会产生 Profile 加密文件、Codex/Claude runtime、session JSONL、日志、缓存、备份和运行时 overlay。除仓库已有的公开翻译/标签 JSON 外，这些内容默认不应进入 Git。
+
+`.gitignore` 已覆盖以下高风险本地产物：
+
+- `app-data/**`，但保留已有公开翻译/标签 JSON 例外。
+- `.env*`、证书/私钥文件、数据库文件。
+- `*.jsonl`、`*.log`、会话历史和本地日志。
+- `dist/`、`dist-electron/`、`release/`、`release-*` 等构建/打包产物。
+- `.playwright-mcp/`、`playwright-report/`、`test-results/` 等本地测试产物。
+
+提交前不要使用无差别 `git add .`。涉及敏感配置或运行产物时，优先用白名单方式 stage 需要的源码和文档文件。
 
 ## 测试
 
