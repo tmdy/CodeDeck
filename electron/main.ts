@@ -10,9 +10,10 @@ import { resolveElectronRuntimePaths } from "../src/shared/electron-runtime-path
 import {
   resolveDefaultPaths,
   type PreviewAction,
-  SkillsManagerService,
+  CodeDeckSkillsService,
 } from "../src/shared/skills-service.js";
 import type { ProjectBatchAction, SkillHost } from "../src/shared/types.js";
+import { CODEDECK_SKILLS_IPC_CHANNELS } from "../src/shared/code-deck-ipc.js";
 
 // ---- Profile 相关导入 ----
 import { EncryptedConfigStore } from "../src/shared/crypto/store.js";
@@ -82,7 +83,6 @@ import {
   APP_ID,
   APP_NAME,
   CODEDECK_PROJECT_ROOT_ENV,
-  LEGACY_PROJECT_ROOT_ENV,
   STARTUP_THEME_ARG_PREFIX,
 } from "../src/shared/branding.js";
 
@@ -97,7 +97,7 @@ const CONFIG_PASSWORD_ENV = "CLAUDE_PROFILE_LAUNCHER_PASSPHRASE";
 
 const appRoot = process.cwd();
 let projectRoot = process.cwd();
-let skillsService: SkillsManagerService | null = null;
+let skillsService: CodeDeckSkillsService | null = null;
 
 // ---- Profile 服务实例 ----
 let profileService: ProfileService | null = null;
@@ -421,7 +421,7 @@ if (!gotSingleInstanceLock) {
 // ---- Skills 服务 ----
 
 function getConfiguredProjectRootEnv(): string | undefined {
-  return process.env[CODEDECK_PROJECT_ROOT_ENV] || process.env[LEGACY_PROJECT_ROOT_ENV];
+  return process.env[CODEDECK_PROJECT_ROOT_ENV];
 }
 
 function resolveCurrentWorkspaceLayout(): WorkspaceLayout {
@@ -454,7 +454,7 @@ async function initSkillsService(layout = resolveProjectRoot()): Promise<void> {
   projectRoot = layout.workspaceRoot;
   await initializeWorkspace(layout);
   projectRoot = layout.workspaceRoot;
-  skillsService = new SkillsManagerService(resolveDefaultPaths(projectRoot));
+  skillsService = new CodeDeckSkillsService(resolveDefaultPaths(projectRoot));
   appLogger.info("app", "skills_first_init_ready", "Skills workspace initialized", {
     context: {
       workspaceRoot: projectRoot,
@@ -476,12 +476,12 @@ function ensureSkillsServiceReady(): Promise<void> {
   return skillsInitPromise;
 }
 
-async function getReadySkillsService(): Promise<SkillsManagerService> {
+async function getReadySkillsService(): Promise<CodeDeckSkillsService> {
   await ensureSkillsServiceReady();
   return getSkillsService();
 }
 
-function getSkillsService(): SkillsManagerService {
+function getSkillsService(): CodeDeckSkillsService {
   if (!skillsService) throw new Error("Skills 服务尚未初始化。");
   return skillsService;
 }
@@ -1170,24 +1170,24 @@ async function createTerminalWindow(sessionId: string): Promise<BrowserWindow> {
 
 function registerAllIpcHandlers(): void {
   // ============ Skills IPC（按需初始化） ============
-  handleIpc("skills-manager:scan", async () => {
+  handleIpc(CODEDECK_SKILLS_IPC_CHANNELS.scan, async () => {
     const svc = await getReadySkillsService();
     return svc.scanEnvironment();
   });
-  handleIpc("skills-manager:load-cached-snapshot", async () =>
+  handleIpc(CODEDECK_SKILLS_IPC_CHANNELS.loadCachedSnapshot, async () =>
     (await getReadySkillsService()).loadCachedSnapshot(),
   );
-  handleIpc("skills-manager:refresh-snapshot", async () =>
+  handleIpc(CODEDECK_SKILLS_IPC_CHANNELS.refreshSnapshot, async () =>
     (await getReadySkillsService()).refreshSnapshot(),
   );
   handleIpc(
-    "skills-manager:update-skill-user-tags",
+    CODEDECK_SKILLS_IPC_CHANNELS.updateSkillUserTags,
     async (_event, skillId: string, tags: string[]) => {
       const svc = await getReadySkillsService();
       return svc.updateSkillUserTags(skillId, tags);
     },
   );
-  handleIpc("skills-manager:pick-project-directory", async () => {
+  handleIpc(CODEDECK_SKILLS_IPC_CHANNELS.pickProjectDirectory, async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
     return browserWindow
       ? pickDirectoryPath(
@@ -1199,24 +1199,24 @@ function registerAllIpcHandlers(): void {
           "选择项目文件夹",
         );
   });
-  handleIpc("skills-manager:select-project", async (_event, projectPath: string) =>
+  handleIpc(CODEDECK_SKILLS_IPC_CHANNELS.selectProject, async (_event, projectPath: string) =>
     (await getReadySkillsService()).selectProject(projectPath),
   );
-  handleIpc("skills-manager:clear-current-project-selection", async () =>
+  handleIpc(CODEDECK_SKILLS_IPC_CHANNELS.clearCurrentProjectSelection, async () =>
     (await getReadySkillsService()).clearCurrentProjectSelection(),
   );
   handleIpc(
-    "skills-manager:scan-project",
+    CODEDECK_SKILLS_IPC_CHANNELS.scanProject,
     async (_event, projectPath?: string) =>
       (await getReadySkillsService()).scanProjectSkills(projectPath),
   );
   handleIpc(
-    "skills-manager:preview",
+    CODEDECK_SKILLS_IPC_CHANNELS.preview,
     async (_event, action: PreviewAction, skillIds: string[]) =>
       (await getReadySkillsService()).createPreview(action, skillIds),
   );
   handleIpc(
-    "skills-manager:execute",
+    CODEDECK_SKILLS_IPC_CHANNELS.execute,
     async (_event, action: PreviewAction, skillIds: string[]) => {
       appLogger.info("skills", "batch_execute_start", "Skills batch execution started", {
         context: { action, skillCount: skillIds.length },
@@ -1235,12 +1235,12 @@ function registerAllIpcHandlers(): void {
     },
   );
   handleIpc(
-    "skills-manager:project-preview",
+    CODEDECK_SKILLS_IPC_CHANNELS.projectPreview,
     async (_event, host: SkillHost, skillIds: string[], action: ProjectBatchAction) =>
       (await getReadySkillsService()).createProjectPreview(host, skillIds, action),
   );
   handleIpc(
-    "skills-manager:project-execute",
+    CODEDECK_SKILLS_IPC_CHANNELS.projectExecute,
     async (_event, host: SkillHost, skillIds: string[], action: ProjectBatchAction) => {
       appLogger.info("skills", "project_batch_execute_start", "Project skills batch execution started", {
         context: { host, action, skillCount: skillIds.length },
@@ -1259,7 +1259,7 @@ function registerAllIpcHandlers(): void {
       return result;
     },
   );
-  handleIpc("skills-manager:rollback-last-batch", async () => {
+  handleIpc(CODEDECK_SKILLS_IPC_CHANNELS.rollbackLastBatch, async () => {
     const svc = await getReadySkillsService();
     const result = await svc.rollbackLastSuccessfulBatch();
     appLogger.info("skills", "batch_rollback_finished", "Last successful skills batch rollback finished", {

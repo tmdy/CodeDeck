@@ -1,0 +1,15 @@
+export const CODEDECK_SKILLS_IPC_CHANNELS = {
+  scan: "codedeck:skills:scan",
+  loadCachedSnapshot: "codedeck:skills:load-cached-snapshot",
+  refreshSnapshot: "codedeck:skills:refresh-snapshot",
+  updateSkillUserTags: "codedeck:skills:update-skill-user-tags",
+  pickProjectDirectory: "codedeck:skills:pick-project-directory",
+  selectProject: "codedeck:skills:select-project",
+  clearCurrentProjectSelection: "codedeck:skills:clear-current-project-selection",
+  scanProject: "codedeck:skills:scan-project",
+  preview: "codedeck:skills:preview",
+  execute: "codedeck:skills:execute",
+  projectPreview: "codedeck:skills:project-preview",
+  projectExecute: "codedeck:skills:project-execute",
+  rollbackLastBatch: "codedeck:skills:rollback-last-batch",
+} as const;

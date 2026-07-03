@@ -8,7 +8,7 @@ import { defaultLocalState } from "../../state/local-state.js";
 const tempDirs: string[] = [];
 
 async function makeStore() {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "skills-manager-state-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "codedeck-state-"));
   tempDirs.push(dir);
   return new LocalStateStore(path.join(dir, "local_state.json"));
 }

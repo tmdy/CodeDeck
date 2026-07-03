@@ -90,7 +90,7 @@ export interface ProjectPreviewResult {
   project: ProjectRecord;
 }
 
-interface SkillsManagerServiceOptions {
+interface CodeDeckSkillsServiceOptions {
   moveDirectory?: typeof moveDirectory;
   copyDirectory?: typeof copyDirectory;
 }
@@ -347,7 +347,7 @@ async function buildSkillScanSignature(candidate: SkillScanCandidate): Promise<S
   };
 }
 
-export class SkillsManagerService {
+export class CodeDeckSkillsService {
   private readonly moveDirectoryFn: typeof moveDirectory;
   private readonly copyDirectoryFn: typeof copyDirectory;
   private inFlightEnvironmentScan: Promise<ScanResult> | null = null;
@@ -355,7 +355,7 @@ export class SkillsManagerService {
 
   constructor(
     private readonly paths: AppPaths,
-    options: SkillsManagerServiceOptions = {},
+    options: CodeDeckSkillsServiceOptions = {},
   ) {
     this.moveDirectoryFn = options.moveDirectory ?? moveDirectory;
     this.copyDirectoryFn = options.copyDirectory ?? copyDirectory;

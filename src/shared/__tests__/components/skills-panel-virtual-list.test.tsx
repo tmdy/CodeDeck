@@ -69,7 +69,7 @@ function createSnapshot(count: number): SkillsSnapshotResult {
   };
 }
 
-function createSkillsManager(snapshot: SkillsSnapshotResult): NonNullable<Window["skillsManager"]> {
+function createCodeDeckSkillsApi(snapshot: SkillsSnapshotResult): NonNullable<Window["codeDeckSkills"]> {
   return {
     scan: vi.fn(),
     loadCachedSnapshot: vi.fn().mockResolvedValue(null),
@@ -90,11 +90,11 @@ function createSkillsManager(snapshot: SkillsSnapshotResult): NonNullable<Window
 describe("SkillsPanel virtual list", () => {
   afterEach(() => {
     resetSkillsPanelSnapshotCacheForTests();
-    delete window.skillsManager;
+    delete window.codeDeckSkills;
   });
 
   it("renders only a small window of rows while preserving visible count and bulk selection", async () => {
-    window.skillsManager = createSkillsManager(createSnapshot(120));
+    window.codeDeckSkills = createCodeDeckSkillsApi(createSnapshot(120));
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);

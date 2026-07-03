@@ -154,7 +154,7 @@ npm run dist:win:zip  # Windows zip 包
 4. 对选中的 skill 生成启用或停用预览。
 5. 确认后执行批处理；需要恢复时使用“回滚上一次批次”。
 
-对应服务入口包括 `SkillsManagerService.scanEnvironment()`、`createPreview()`、`executeBatch()` 和 `rollbackLastSuccessfulBatch()`。
+对应服务入口包括 `CodeDeckSkillsService.scanEnvironment()`、`createPreview()`、`executeBatch()` 和 `rollbackLastSuccessfulBatch()`。
 
 ### 启动 Claude Code Profile
 
@@ -193,7 +193,7 @@ flowchart TD
 主要协作关系：
 
 - `src/App.tsx` 负责应用状态、页面切换、Profile 草稿、启动请求和会话列表编排。
-- `electron/preload.ts` 暴露 `skillsManager`、`profileManager`、`terminalManager` 等受控 API。
+- `electron/preload.ts` 暴露 `codeDeckSkills`、`profileManager`、`terminalManager` 等受控 API。
 - `electron/main.ts` 注册 IPC handler，初始化服务，读写文件，执行 CLI 启动和终端通信。
 - `src/shared/skills-service.ts` 管理 skills 扫描、预览、批处理、项目复制和回滚。
 - `src/shared/services/profile-service.ts` 管理 Profile、运行时设置、选择状态、站点余额会话和本地状态。

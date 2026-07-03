@@ -49,7 +49,7 @@ describe("session-service", () => {
   });
 
   it("reads Claude sessions from ~/.claude/projects/<encoded-project>/*.jsonl", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-");
+    const claudeRoot = await createTempDir("codedeck-claude-");
     tempDirs.push(claudeRoot);
     const cwd = "C:/workspace/project-a";
     const encoded = encodeClaudeProjectPath(cwd);
@@ -79,7 +79,7 @@ describe("session-service", () => {
   });
 
   it("keeps Claude project sessions when any historical cwd matches the requested cwd", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-history-cwd-");
+    const claudeRoot = await createTempDir("codedeck-claude-history-cwd-");
     tempDirs.push(claudeRoot);
     const cwd = "C:/workspace/project-a";
     const subdir = "C:/workspace/project-a/subdir";
@@ -113,7 +113,7 @@ describe("session-service", () => {
   });
 
   it("applies Claude project session pagination before returning results", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-page-");
+    const claudeRoot = await createTempDir("codedeck-claude-page-");
     tempDirs.push(claudeRoot);
     const cwd = "C:/workspace/project-a";
     const encoded = encodeClaudeProjectPath(cwd);
@@ -146,7 +146,7 @@ describe("session-service", () => {
   });
 
   it("collects the first four Claude user prompts for session disambiguation", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-prompts-");
+    const claudeRoot = await createTempDir("codedeck-claude-prompts-");
     tempDirs.push(claudeRoot);
     const cwd = "C:/workspace/project-prompts";
     const encoded = encodeClaudeProjectPath(cwd);
@@ -179,7 +179,7 @@ describe("session-service", () => {
   });
 
   it("collects Claude opening conversation excerpts with user and assistant roles", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-excerpts-");
+    const claudeRoot = await createTempDir("codedeck-claude-excerpts-");
     tempDirs.push(claudeRoot);
     const cwd = "C:/workspace/project-excerpts";
     const encoded = encodeClaudeProjectPath(cwd);
@@ -206,7 +206,7 @@ describe("session-service", () => {
   });
 
   it("reads Claude legacy sessions/<id>.jsonl layout", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-legacy-");
+    const claudeRoot = await createTempDir("codedeck-claude-legacy-");
     tempDirs.push(claudeRoot);
     const cwd = "C:/workspace/project-b";
     const encoded = encodeClaudeProjectPath(cwd);
@@ -230,7 +230,7 @@ describe("session-service", () => {
   });
 
   it("returns an empty Claude session list when cwd does not match the encoded project dir", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-mismatch-");
+    const claudeRoot = await createTempDir("codedeck-claude-mismatch-");
     tempDirs.push(claudeRoot);
     const filePath = path.join(
       claudeRoot,
@@ -256,7 +256,7 @@ describe("session-service", () => {
   });
 
   it("returns recent Claude sessions in global_recent scope", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-recent-");
+    const claudeRoot = await createTempDir("codedeck-claude-recent-");
     tempDirs.push(claudeRoot);
     const olderFile = path.join(
       claudeRoot,
@@ -285,7 +285,7 @@ describe("session-service", () => {
   });
 
   it("reads Codex sessions from session_index.jsonl and filters by cwd using session headers when needed", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-");
+    const codexRoot = await createTempDir("codedeck-codex-");
     tempDirs.push(codexRoot);
     const indexPath = path.join(codexRoot, "session_index.jsonl");
     await mkdir(codexRoot, { recursive: true });
@@ -347,7 +347,7 @@ describe("session-service", () => {
   });
 
   it("does not parse Codex project index entries beyond the requested page", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-project-page-");
+    const codexRoot = await createTempDir("codedeck-codex-project-page-");
     tempDirs.push(codexRoot);
     await writeFile(
       path.join(codexRoot, "session_index.jsonl"),
@@ -398,7 +398,7 @@ describe("session-service", () => {
   });
 
   it("returns an empty Codex session list when cwd does not match", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-empty-");
+    const codexRoot = await createTempDir("codedeck-codex-empty-");
     tempDirs.push(codexRoot);
     await writeFile(
       path.join(codexRoot, "session_index.jsonl"),
@@ -432,7 +432,7 @@ describe("session-service", () => {
   });
 
   it("returns recent Codex sessions in global_recent scope", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-recent-");
+    const codexRoot = await createTempDir("codedeck-codex-recent-");
     tempDirs.push(codexRoot);
     await writeFile(
       path.join(codexRoot, "session_index.jsonl"),
@@ -466,7 +466,7 @@ describe("session-service", () => {
   });
 
   it("falls back to scanning Codex session files in global_recent scope when session_index is missing", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-no-index-");
+    const codexRoot = await createTempDir("codedeck-codex-no-index-");
     tempDirs.push(codexRoot);
     const olderFile = path.join(
       codexRoot,
@@ -530,7 +530,7 @@ describe("session-service", () => {
   });
 
   it("merges Codex session files with an existing stale session_index", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-stale-index-");
+    const codexRoot = await createTempDir("codedeck-codex-stale-index-");
     tempDirs.push(codexRoot);
     await writeFile(
       path.join(codexRoot, "session_index.jsonl"),
@@ -573,7 +573,7 @@ describe("session-service", () => {
   });
 
   it("finds Codex project sessions from files when session_index has no matching entry", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-project-file-");
+    const codexRoot = await createTempDir("codedeck-codex-project-file-");
     tempDirs.push(codexRoot);
     await writeFile(
       path.join(codexRoot, "session_index.jsonl"),
@@ -614,7 +614,7 @@ describe("session-service", () => {
   });
 
   it("collects the first four Codex user prompts when reading session files", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-prompts-");
+    const codexRoot = await createTempDir("codedeck-codex-prompts-");
     tempDirs.push(codexRoot);
     const sessionFile = path.join(
       codexRoot,
@@ -689,7 +689,7 @@ describe("session-service", () => {
   });
 
   it("skips Codex environment context scaffolding when collecting user prompts", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-scaffold-");
+    const codexRoot = await createTempDir("codedeck-codex-scaffold-");
     tempDirs.push(codexRoot);
     const sessionFile = path.join(
       codexRoot,
@@ -734,7 +734,7 @@ describe("session-service", () => {
   });
 
   it("uses the first real Codex user prompt as the preview when leading records are scaffold text", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-preview-scaffold-");
+    const codexRoot = await createTempDir("codedeck-codex-preview-scaffold-");
     tempDirs.push(codexRoot);
     const sessionFile = path.join(
       codexRoot,
@@ -780,7 +780,7 @@ describe("session-service", () => {
   });
 
   it("collects Codex opening conversation excerpts while skipping scaffold prompts", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-excerpts-");
+    const codexRoot = await createTempDir("codedeck-codex-excerpts-");
     tempDirs.push(codexRoot);
     const sessionFile = path.join(
       codexRoot,
@@ -836,8 +836,8 @@ describe("session-service", () => {
   });
 
   it("merges app runtime and global Codex sessions with app runtime taking precedence", async () => {
-    const appHome = await createTempDir("skills-manager-codex-app-");
-    const globalHome = await createTempDir("skills-manager-codex-global-");
+    const appHome = await createTempDir("codedeck-codex-app-");
+    const globalHome = await createTempDir("codedeck-codex-global-");
     tempDirs.push(appHome, globalHome);
 
     await writeFile(
@@ -903,7 +903,7 @@ describe("session-service", () => {
   });
 
   it("uses Codex session_index for global recent pagination without reading session files", async () => {
-    const codexRoot = await createTempDir("skills-manager-codex-index-fast-");
+    const codexRoot = await createTempDir("codedeck-codex-index-fast-");
     tempDirs.push(codexRoot);
     await writeFile(
       path.join(codexRoot, "session_index.jsonl"),
@@ -944,8 +944,8 @@ describe("session-service", () => {
   });
 
   it("applies offset after merging Codex app runtime and global homes", async () => {
-    const appHome = await createTempDir("skills-manager-codex-app-page-");
-    const globalHome = await createTempDir("skills-manager-codex-global-page-");
+    const appHome = await createTempDir("codedeck-codex-app-page-");
+    const globalHome = await createTempDir("codedeck-codex-global-page-");
     tempDirs.push(appHome, globalHome);
     await writeFile(
       path.join(appHome, "session_index.jsonl"),
@@ -983,8 +983,8 @@ describe("session-service", () => {
   });
 
   it("filters merged Codex homes by cwd in project scope", async () => {
-    const appHome = await createTempDir("skills-manager-codex-app-project-");
-    const globalHome = await createTempDir("skills-manager-codex-global-project-");
+    const appHome = await createTempDir("codedeck-codex-app-project-");
+    const globalHome = await createTempDir("codedeck-codex-global-project-");
     tempDirs.push(appHome, globalHome);
 
     await writeFile(
@@ -1088,8 +1088,8 @@ describe("session-service", () => {
   });
 
   it("imports a global Codex session into the runtime home before restore", async () => {
-    const runtimeHome = await createTempDir("skills-manager-codex-runtime-import-");
-    const globalHome = await createTempDir("skills-manager-codex-global-import-");
+    const runtimeHome = await createTempDir("codedeck-codex-runtime-import-");
+    const globalHome = await createTempDir("codedeck-codex-global-import-");
     tempDirs.push(runtimeHome, globalHome);
     await writeFile(
       path.join(globalHome, "session_index.jsonl"),
@@ -1132,8 +1132,8 @@ describe("session-service", () => {
   });
 
   it("rejects importing a global Codex session when the source jsonl file is missing", async () => {
-    const runtimeHome = await createTempDir("skills-manager-codex-runtime-missing-");
-    const globalHome = await createTempDir("skills-manager-codex-global-missing-");
+    const runtimeHome = await createTempDir("codedeck-codex-runtime-missing-");
+    const globalHome = await createTempDir("codedeck-codex-global-missing-");
     tempDirs.push(runtimeHome, globalHome);
     await writeFile(
       path.join(globalHome, "session_index.jsonl"),
@@ -1154,8 +1154,8 @@ describe("session-service", () => {
   });
 
   it("writes a minimal runtime index when importing a global Codex session without source index", async () => {
-    const runtimeHome = await createTempDir("skills-manager-codex-runtime-file-import-");
-    const globalHome = await createTempDir("skills-manager-codex-global-file-import-");
+    const runtimeHome = await createTempDir("codedeck-codex-runtime-file-import-");
+    const globalHome = await createTempDir("codedeck-codex-global-file-import-");
     tempDirs.push(runtimeHome, globalHome);
     await writeJsonl(
       path.join(globalHome, "sessions", "2026", "05", "04", "rollout-2026-05-04T10-30-00-global-file-only.jsonl"),
@@ -1190,7 +1190,7 @@ describe("session-service", () => {
   });
 
   it("skips a bad JSONL file without affecting other sessions", async () => {
-    const claudeRoot = await createTempDir("skills-manager-claude-bad-");
+    const claudeRoot = await createTempDir("codedeck-claude-bad-");
     tempDirs.push(claudeRoot);
     const cwd = "C:/workspace/project-a";
     const encoded = encodeClaudeProjectPath(cwd);
