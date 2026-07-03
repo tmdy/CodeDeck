@@ -221,7 +221,7 @@ describe("launch-runtime", () => {
       return;
     }
 
-    const tempDir = process.env.TEMP ? `${process.env.TEMP}\\skills-manager-codex-wrapper-${Date.now()}` : "C:\\Windows\\Temp\\skills-manager-codex-wrapper";
+    const tempDir = process.env.TEMP ? `${process.env.TEMP}\\codedeck-codex-wrapper-${Date.now()}` : "C:\\Windows\\Temp\\codedeck-codex-wrapper";
     try {
       execFileSync("powershell.exe", [
         "-NoProfile",

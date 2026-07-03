@@ -36,7 +36,7 @@ declare global {
 
   interface Window {
     __CODEDECK_STARTUP_THEME__?: CodeDeckStartupTheme | null;
-    skillsManager?: {
+    codeDeckSkills?: {
       scan: () => Promise<ScanResult>;
       loadCachedSnapshot: () => Promise<SkillsSnapshotResult | null>;
       refreshSnapshot: () => Promise<SkillsSnapshotResult>;

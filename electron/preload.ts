@@ -15,71 +15,70 @@ import type {
 } from "../src/shared/types.js";
 import { parseSerializedStartupTheme } from "../src/shared/startup-theme.js";
 import {
-  LEGACY_STARTUP_THEME_ARG_PREFIX,
   STARTUP_THEME_ARG_PREFIX,
   STARTUP_THEME_GLOBAL_NAME,
 } from "../src/shared/branding.js";
+import { CODEDECK_SKILLS_IPC_CHANNELS } from "../src/shared/code-deck-ipc.js";
 
 function getStartupThemeArgumentValue(): string | undefined {
   const currentArg = process.argv.find((arg) => arg.startsWith(STARTUP_THEME_ARG_PREFIX));
   if (currentArg) {
     return currentArg.slice(STARTUP_THEME_ARG_PREFIX.length);
   }
-  const legacyArg = process.argv.find((arg) => arg.startsWith(LEGACY_STARTUP_THEME_ARG_PREFIX));
-  return legacyArg?.slice(LEGACY_STARTUP_THEME_ARG_PREFIX.length);
+  return undefined;
 }
 
 const startupTheme = parseSerializedStartupTheme(
   getStartupThemeArgumentValue(),
 );
 
-// ---- Skills API（保持不变） ----
+// ---- CodeDeck Skills API ----
 
-const skillsApi = {
-  scan: (): Promise<ScanResult> => ipcRenderer.invoke("skills-manager:scan"),
+const codeDeckSkillsApi = {
+  scan: (): Promise<ScanResult> => ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.scan),
   loadCachedSnapshot: (): Promise<SkillsSnapshotResult | null> =>
-    ipcRenderer.invoke("skills-manager:load-cached-snapshot"),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.loadCachedSnapshot),
   refreshSnapshot: (): Promise<SkillsSnapshotResult> =>
-    ipcRenderer.invoke("skills-manager:refresh-snapshot"),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.refreshSnapshot),
   updateSkillUserTags: (skillId: string, tags: string[]): Promise<void> =>
-    ipcRenderer.invoke("skills-manager:update-skill-user-tags", skillId, tags),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.updateSkillUserTags, skillId, tags),
   pickProjectDirectory: (): Promise<string | undefined> =>
-    ipcRenderer.invoke("skills-manager:pick-project-directory"),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.pickProjectDirectory),
   selectProject: (projectPath: string): Promise<ProjectRecord> =>
-    ipcRenderer.invoke("skills-manager:select-project", projectPath),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.selectProject, projectPath),
   clearCurrentProjectSelection: (): Promise<void> =>
-    ipcRenderer.invoke("skills-manager:clear-current-project-selection"),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.clearCurrentProjectSelection),
   scanProject: (projectPath?: string): Promise<ProjectScanResult | null> =>
-    ipcRenderer.invoke("skills-manager:scan-project", projectPath),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.scanProject, projectPath),
   createPreview: (
     action: PreviewAction,
     skillIds: string[],
   ): Promise<PreviewResult> =>
-    ipcRenderer.invoke("skills-manager:preview", action, skillIds),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.preview, action, skillIds),
   executeBatch: (
     action: PreviewAction,
     skillIds: string[],
   ): Promise<BatchExecutionResult> =>
-    ipcRenderer.invoke("skills-manager:execute", action, skillIds),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.execute, action, skillIds),
   createProjectPreview: (
     host: SkillHost,
     skillIds: string[],
     action: ProjectBatchAction,
   ): Promise<ProjectPreviewResult> =>
-    ipcRenderer.invoke("skills-manager:project-preview", host, skillIds, action),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.projectPreview, host, skillIds, action),
   executeProjectBatch: (
     host: SkillHost,
     skillIds: string[],
     action: ProjectBatchAction,
   ): Promise<BatchExecutionResult> =>
     ipcRenderer.invoke(
-      "skills-manager:project-execute",
+      CODEDECK_SKILLS_IPC_CHANNELS.projectExecute,
       host,
       skillIds,
       action,
     ),
   rollbackLastBatch: (): Promise<BatchExecutionResult> =>
-    ipcRenderer.invoke("skills-manager:rollback-last-batch"),
+    ipcRenderer.invoke(CODEDECK_SKILLS_IPC_CHANNELS.rollbackLastBatch),
 };
 
 // ---- Profile Manager API（新增） ----
@@ -240,7 +239,7 @@ const terminalApi = {
   },
 };
 
-contextBridge.exposeInMainWorld("skillsManager", skillsApi);
+contextBridge.exposeInMainWorld("codeDeckSkills", codeDeckSkillsApi);
 contextBridge.exposeInMainWorld("profileManager", profileApi);
 contextBridge.exposeInMainWorld("terminalManager", terminalApi);
 contextBridge.exposeInMainWorld(STARTUP_THEME_GLOBAL_NAME, startupTheme);

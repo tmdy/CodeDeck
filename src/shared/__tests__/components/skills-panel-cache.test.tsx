@@ -69,7 +69,7 @@ function createSnapshot(source: SkillsSnapshotResult["source"], record: SkillRec
   };
 }
 
-function createSkillsManager(overrides: Partial<NonNullable<Window["skillsManager"]>>): NonNullable<Window["skillsManager"]> {
+function createCodeDeckSkillsApi(overrides: Partial<NonNullable<Window["codeDeckSkills"]>>): NonNullable<Window["codeDeckSkills"]> {
   return {
     scan: vi.fn(),
     loadCachedSnapshot: vi.fn(),
@@ -91,7 +91,7 @@ function createSkillsManager(overrides: Partial<NonNullable<Window["skillsManage
 describe("SkillsPanel cached startup", () => {
   afterEach(() => {
     resetSkillsPanelSnapshotCacheForTests();
-    delete window.skillsManager;
+    delete window.codeDeckSkills;
   });
 
   it("renders cached records before replacing them with refreshed records", async () => {
@@ -101,7 +101,7 @@ describe("SkillsPanel cached startup", () => {
     const refreshPromise = new Promise<SkillsSnapshotResult>((resolve) => {
       resolveRefresh = resolve;
     });
-    window.skillsManager = createSkillsManager({
+    window.codeDeckSkills = createCodeDeckSkillsApi({
       loadCachedSnapshot: vi.fn().mockResolvedValue(cachedSnapshot),
       refreshSnapshot: vi.fn().mockReturnValue(refreshPromise),
     });
@@ -130,11 +130,11 @@ describe("SkillsPanel cached startup", () => {
 
   it("reuses the last snapshot when the panel is remounted", async () => {
     const freshSnapshot = createSnapshot("fresh", createRecord("fresh-writer", "Fresh Writer"));
-    const skillsManager = createSkillsManager({
+    const codeDeckSkills = createCodeDeckSkillsApi({
       loadCachedSnapshot: vi.fn().mockResolvedValue(null),
       refreshSnapshot: vi.fn().mockResolvedValue(freshSnapshot),
     });
-    window.skillsManager = skillsManager;
+    window.codeDeckSkills = codeDeckSkills;
     const firstContainer = document.createElement("div");
     const firstRoot = createRoot(firstContainer);
 
@@ -157,8 +157,8 @@ describe("SkillsPanel cached startup", () => {
     });
 
     expect(secondContainer.textContent).toContain("Fresh Writer");
-    expect(skillsManager.loadCachedSnapshot).toHaveBeenCalledTimes(1);
-    expect(skillsManager.refreshSnapshot).toHaveBeenCalledTimes(1);
+    expect(codeDeckSkills.loadCachedSnapshot).toHaveBeenCalledTimes(1);
+    expect(codeDeckSkills.refreshSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it("deduplicates the initial snapshot requests across concurrent mounts", async () => {
@@ -167,11 +167,11 @@ describe("SkillsPanel cached startup", () => {
     const refreshPromise = new Promise<SkillsSnapshotResult>((resolve) => {
       resolveRefresh = resolve;
     });
-    const skillsManager = createSkillsManager({
+    const codeDeckSkills = createCodeDeckSkillsApi({
       loadCachedSnapshot: vi.fn().mockResolvedValue(null),
       refreshSnapshot: vi.fn().mockReturnValue(refreshPromise),
     });
-    window.skillsManager = skillsManager;
+    window.codeDeckSkills = codeDeckSkills;
     const firstContainer = document.createElement("div");
     const secondContainer = document.createElement("div");
     const firstRoot = createRoot(firstContainer);
@@ -185,8 +185,8 @@ describe("SkillsPanel cached startup", () => {
       await Promise.resolve();
     });
 
-    expect(skillsManager.loadCachedSnapshot).toHaveBeenCalledTimes(1);
-    expect(skillsManager.refreshSnapshot).toHaveBeenCalledTimes(1);
+    expect(codeDeckSkills.loadCachedSnapshot).toHaveBeenCalledTimes(1);
+    expect(codeDeckSkills.refreshSnapshot).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       resolveRefresh(freshSnapshot);

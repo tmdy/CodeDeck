@@ -171,10 +171,10 @@ function createExecutionResult(): BatchExecutionResult {
   };
 }
 
-function createSkillsManager(
+function createCodeDeckSkillsApi(
   snapshot: SkillsSnapshotResult,
-  overrides: Partial<NonNullable<Window["skillsManager"]>> = {},
-): NonNullable<Window["skillsManager"]> {
+  overrides: Partial<NonNullable<Window["codeDeckSkills"]>> = {},
+): NonNullable<Window["codeDeckSkills"]> {
   return {
     scan: vi.fn(),
     loadCachedSnapshot: vi.fn().mockResolvedValue(null),
@@ -201,10 +201,10 @@ function findButton(container: HTMLElement, label: string): HTMLButtonElement {
 }
 
 async function renderPanel(
-  manager: NonNullable<Window["skillsManager"]>,
+  manager: NonNullable<Window["codeDeckSkills"]>,
   props: Partial<React.ComponentProps<typeof SkillsPanel>> = {},
 ) {
-  window.skillsManager = manager;
+  window.codeDeckSkills = manager;
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -237,11 +237,11 @@ async function selectFirstSkill(container: HTMLElement) {
 describe("SkillsPanel environment action controls", () => {
   afterEach(() => {
     resetSkillsPanelSnapshotCacheForTests();
-    delete window.skillsManager;
+    delete window.codeDeckSkills;
   });
 
   it("keeps global mode free of project state while preserving the project picker entry", async () => {
-    const manager = createSkillsManager(createSnapshot());
+    const manager = createCodeDeckSkillsApi(createSnapshot());
     const { container, root } = await renderPanel(manager);
 
     expect(container.textContent).not.toContain("项目态");
@@ -252,7 +252,7 @@ describe("SkillsPanel environment action controls", () => {
   });
 
   it("renders operation feedback inside the scan status strip", async () => {
-    const manager = createSkillsManager(createSnapshot());
+    const manager = createCodeDeckSkillsApi(createSnapshot());
     const { container, root } = await renderPanel(manager, {
       statusMessage: {
         variant: "success",
@@ -273,7 +273,7 @@ describe("SkillsPanel environment action controls", () => {
   it("surfaces project refresh errors from the service", async () => {
     const scanProject = vi.fn().mockRejectedValue(new Error("请先刷新全局 Skills 后再刷新项目状态。"));
     const onError = vi.fn();
-    const manager = createSkillsManager(createSnapshotWithProject(), { scanProject });
+    const manager = createCodeDeckSkillsApi(createSnapshotWithProject(), { scanProject });
     const { container, root } = await renderPanel(manager, { onError });
 
     await act(async () => {
@@ -287,7 +287,7 @@ describe("SkillsPanel environment action controls", () => {
   });
 
   it("disables environment action buttons until at least one skill is selected", async () => {
-    const manager = createSkillsManager(createSnapshot());
+    const manager = createCodeDeckSkillsApi(createSnapshot());
     const { container, root } = await renderPanel(manager);
 
     expect(findButton(container, "启用选中").disabled).toBe(true);
@@ -299,7 +299,7 @@ describe("SkillsPanel environment action controls", () => {
 
   it("creates an enable preview for selected skills", async () => {
     const createPreview = vi.fn().mockResolvedValue(createEnvironmentPreview("enable"));
-    const manager = createSkillsManager(createSnapshot(), { createPreview });
+    const manager = createCodeDeckSkillsApi(createSnapshot(), { createPreview });
     const { container, root } = await renderPanel(manager);
 
     await selectFirstSkill(container);
@@ -322,7 +322,7 @@ describe("SkillsPanel environment action controls", () => {
     });
     const snapshot = createSnapshotWithRecords([createRecord(), readonlyRecord]);
     const createPreview = vi.fn().mockResolvedValue(createEnvironmentPreview("enable"));
-    const manager = createSkillsManager(snapshot, { createPreview });
+    const manager = createCodeDeckSkillsApi(snapshot, { createPreview });
     const { container, root } = await renderPanel(manager);
 
     await act(async () => {
@@ -346,7 +346,7 @@ describe("SkillsPanel environment action controls", () => {
       location: "readonly",
       isSpecialDir: true,
     });
-    const manager = createSkillsManager(createSnapshotWithRecords([readonlyRecord]));
+    const manager = createCodeDeckSkillsApi(createSnapshotWithRecords([readonlyRecord]));
     const { container, root } = await renderPanel(manager);
     const readonlyToggle = Array.from(container.querySelectorAll("input[type='checkbox']"))
       .find((input) => input.parentElement?.textContent?.includes("仅看系统/只读项")) as HTMLInputElement | undefined;
@@ -374,7 +374,7 @@ describe("SkillsPanel environment action controls", () => {
 
   it("creates a disable preview for selected skills", async () => {
     const createPreview = vi.fn().mockResolvedValue(createEnvironmentPreview("disable"));
-    const manager = createSkillsManager(createSnapshot(), { createPreview });
+    const manager = createCodeDeckSkillsApi(createSnapshot(), { createPreview });
     const { container, root } = await renderPanel(manager);
 
     await selectFirstSkill(container);
@@ -392,7 +392,7 @@ describe("SkillsPanel environment action controls", () => {
     const refreshSnapshot = vi.fn().mockResolvedValue(snapshot);
     const updateSkillUserTags = vi.fn().mockResolvedValue(undefined);
     const onSuccess = vi.fn();
-    const manager = createSkillsManager(snapshot, {
+    const manager = createCodeDeckSkillsApi(snapshot, {
       refreshSnapshot,
       updateSkillUserTags,
     });
@@ -424,7 +424,7 @@ describe("SkillsPanel environment action controls", () => {
     const createPreview = vi.fn().mockResolvedValue(createEnvironmentPreview("enable"));
     const executeBatch = vi.fn().mockResolvedValue(createExecutionResult());
     const refreshSnapshot = vi.fn().mockResolvedValue(snapshot);
-    const manager = createSkillsManager(snapshot, {
+    const manager = createCodeDeckSkillsApi(snapshot, {
       createPreview,
       executeBatch,
       refreshSnapshot,

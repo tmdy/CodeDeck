@@ -88,11 +88,11 @@ function getInitialSnapshotPromises(): {
   cached: Promise<SkillsSnapshotResult | null>;
   fresh: Promise<SkillsSnapshotResult>;
 } {
-  if (!window.skillsManager) {
+  if (!window.codeDeckSkills) {
     throw new Error("当前环境未注入 Skills API，请通过 Electron 运行。");
   }
   if (!initialFreshSnapshotPromise || !initialCachedSnapshotPromise) {
-    initialCachedSnapshotPromise = window.skillsManager.loadCachedSnapshot()
+    initialCachedSnapshotPromise = window.codeDeckSkills.loadCachedSnapshot()
       .then((cached) => {
         if (cached) {
           lastSkillsSnapshot = cached;
@@ -100,7 +100,7 @@ function getInitialSnapshotPromises(): {
         return cached;
       });
     initialFreshSnapshotPromise = initialCachedSnapshotPromise
-      .then(() => window.skillsManager!.refreshSnapshot())
+      .then(() => window.codeDeckSkills!.refreshSnapshot())
       .then((fresh) => {
         lastSkillsSnapshot = fresh;
         return fresh;
@@ -351,7 +351,7 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function loadInitialSnapshot() {
-    if (!window.skillsManager) {
+    if (!window.codeDeckSkills) {
       onError("当前环境未注入 Skills API，请通过 Electron 运行。");
       return;
     }
@@ -373,14 +373,14 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function reloadAll(options: { preserveExecution?: boolean } = {}) {
-    if (!window.skillsManager) {
+    if (!window.codeDeckSkills) {
       onError("当前环境未注入 Skills API，请通过 Electron 运行。");
       return;
     }
 
     setRefreshing(true);
     try {
-      const fresh = await window.skillsManager.refreshSnapshot();
+      const fresh = await window.codeDeckSkills.refreshSnapshot();
       applySnapshot(fresh, options);
     } catch (error) {
       onError(error instanceof Error ? error.message : "扫描 Skills 失败。");
@@ -419,7 +419,7 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }, []);
 
   async function handleSaveTags() {
-    if (!window.skillsManager || !detailRow) {
+    if (!window.codeDeckSkills || !detailRow) {
       return;
     }
 
@@ -429,7 +429,7 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
         .split(",")
         .map((item) => item.trim());
       const normalizedTags = normalizeUserTags(nextTags);
-      await window.skillsManager.updateSkillUserTags(detailRow.skillId, normalizedTags);
+      await window.codeDeckSkills.updateSkillUserTags(detailRow.skillId, normalizedTags);
       const nextScan = scan ? applyUserTagsToScan(scan, detailRow.skillId, normalizedTags) : scan;
       const nextProjectScan = applyUserTagsToProjectScan(projectScan, detailRow.skillId, normalizedTags);
       setScan(nextScan);
@@ -452,18 +452,18 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function handlePickProject() {
-    if (!window.skillsManager) {
+    if (!window.codeDeckSkills) {
       return;
     }
 
     setBusy(true);
     try {
-      const picked = await window.skillsManager.pickProjectDirectory();
+      const picked = await window.codeDeckSkills.pickProjectDirectory();
       if (!picked) {
         return;
       }
-      await window.skillsManager.selectProject(picked);
-      const nextProjectScan = await window.skillsManager.scanProject();
+      await window.codeDeckSkills.selectProject(picked);
+      const nextProjectScan = await window.codeDeckSkills.scanProject();
       setProjectScan(nextProjectScan);
       setPreviewState(null);
       onSuccess(`已切换到项目：${nextProjectScan?.currentProject.projectName ?? picked}`);
@@ -475,7 +475,7 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function handleClearProject() {
-    if (!window.skillsManager) {
+    if (!window.codeDeckSkills) {
       return;
     }
 
@@ -490,7 +490,7 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
       setLastExecution(null);
 
       // 再清空后端持久化状态
-      await window.skillsManager.clearCurrentProjectSelection();
+      await window.codeDeckSkills.clearCurrentProjectSelection();
 
       onSuccess("已返回全局 Skills 管理。");
     } catch (error) {
@@ -501,13 +501,13 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function handleScanProject() {
-    if (!window.skillsManager) {
+    if (!window.codeDeckSkills) {
       return;
     }
 
     setBusy(true);
     try {
-      const nextProjectScan = await window.skillsManager.scanProject();
+      const nextProjectScan = await window.codeDeckSkills.scanProject();
       setProjectScan(nextProjectScan);
       setPreviewState(null);
       if (nextProjectScan) {
@@ -523,13 +523,13 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function handleEnvironmentPreview(action: "enable" | "disable") {
-    if (!window.skillsManager) {
+    if (!window.codeDeckSkills) {
       return;
     }
 
     setBusy(true);
     try {
-      const preview = await window.skillsManager.createPreview(action, selectedSkillIds);
+      const preview = await window.codeDeckSkills.createPreview(action, selectedSkillIds);
       setPreviewState({
         kind: "environment",
         action,
@@ -545,13 +545,13 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function handleProjectPreview(action: ProjectBatchAction) {
-    if (!window.skillsManager || !selectedProjectHost) {
+    if (!window.codeDeckSkills || !selectedProjectHost) {
       return;
     }
 
     setBusy(true);
     try {
-      const preview = await window.skillsManager.createProjectPreview(
+      const preview = await window.codeDeckSkills.createProjectPreview(
         selectedProjectHost,
         selectedSkillIds,
         action,
@@ -572,15 +572,15 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function handleExecutePreview() {
-    if (!window.skillsManager || !previewState) {
+    if (!window.codeDeckSkills || !previewState) {
       return;
     }
 
     setBusy(true);
     try {
       const result = previewState.kind === "environment"
-        ? await window.skillsManager.executeBatch(previewState.action, previewState.data.items.map((item) => item.skillId))
-        : await window.skillsManager.executeProjectBatch(
+        ? await window.codeDeckSkills.executeBatch(previewState.action, previewState.data.items.map((item) => item.skillId))
+        : await window.codeDeckSkills.executeProjectBatch(
           previewState.host,
           previewState.data.items.map((item) => item.skillId),
           previewState.action,
@@ -601,13 +601,13 @@ export function SkillsPanel({ onError, onSuccess, statusMessage = null }: Skills
   }
 
   async function handleRollback() {
-    if (!window.skillsManager) {
+    if (!window.codeDeckSkills) {
       return;
     }
 
     setBusy(true);
     try {
-      const result = await window.skillsManager.rollbackLastBatch();
+      const result = await window.codeDeckSkills.rollbackLastBatch();
       setLastExecution(result);
       await reloadAll({ preserveExecution: true });
       if (result.success) {

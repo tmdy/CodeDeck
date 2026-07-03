@@ -175,4 +175,36 @@ describe("App startup route", () => {
     expect(preloadSource).toContain('ipcRenderer.invoke("profile:bootstrap")');
     expect(mainSource).toContain('handleIpc("profile:bootstrap"');
   });
+
+  it("should use CodeDeck-branded Skills internals instead of the previous product names", async () => {
+    const mainSource = normalizeNewlines(await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8"));
+    const preloadSource = normalizeNewlines(await readFile(path.join(process.cwd(), "electron", "preload.ts"), "utf8"));
+    const serviceSource = normalizeNewlines(await readFile(path.join(process.cwd(), "src", "shared", "skills-service.ts"), "utf8"));
+    const envSource = normalizeNewlines(await readFile(path.join(process.cwd(), "src", "env.d.ts"), "utf8"));
+    const panelSource = normalizeNewlines(
+      await readFile(path.join(process.cwd(), "src", "components", "skills", "SkillsPanel.tsx"), "utf8"),
+    );
+    const legacyServiceName = ["Skills", "Manager", "Service"].join("");
+    const legacyIpcPrefix = `${["skills", "manager"].join("-")}:`;
+    const legacyWindowApiName = ["skills", "Manager"].join("");
+
+    expect(mainSource).toContain("CodeDeckSkillsService");
+    expect(mainSource).toContain("CODEDECK_SKILLS_IPC_CHANNELS.scan");
+    expect(mainSource).not.toContain(legacyServiceName);
+    expect(mainSource).not.toContain(legacyIpcPrefix);
+
+    expect(preloadSource).toContain('contextBridge.exposeInMainWorld("codeDeckSkills"');
+    expect(preloadSource).toContain("CODEDECK_SKILLS_IPC_CHANNELS.scan");
+    expect(preloadSource).not.toContain(`contextBridge.exposeInMainWorld("${legacyWindowApiName}"`);
+    expect(preloadSource).not.toContain(legacyIpcPrefix);
+
+    expect(serviceSource).toContain("export class CodeDeckSkillsService");
+    expect(serviceSource).not.toContain(legacyServiceName);
+
+    expect(envSource).toContain("codeDeckSkills?:");
+    expect(envSource).not.toContain(`${legacyWindowApiName}?:`);
+
+    expect(panelSource).toContain("window.codeDeckSkills");
+    expect(panelSource).not.toContain(`window.${legacyWindowApiName}`);
+  });
 });

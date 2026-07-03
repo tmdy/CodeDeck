@@ -3,7 +3,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { readJson } from "./filesystem.js";
-import { SkillsManagerService, removePath } from "./skills-service.js";
+import { CodeDeckSkillsService, removePath } from "./skills-service.js";
 import type { AppPaths, ScanManifest, SkillUserTagsFile } from "./types.js";
 
 async function createSkill(dirPath: string, skillMd: string, extraFiles: Array<[string, string]> = []): Promise<void> {
@@ -44,7 +44,7 @@ function buildTestPaths(root: string): AppPaths {
   };
 }
 
-describe("SkillsManagerService user tags", () => {
+describe("CodeDeckSkillsService user tags", () => {
   const tempRoots: string[] = [];
 
   afterEach(async () => {
@@ -52,7 +52,7 @@ describe("SkillsManagerService user tags", () => {
   });
 
   it("merges stored user tags into scan results", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-tags-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-tags-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -66,7 +66,7 @@ tags:
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.updateSkillUserTags("codex:writer", ["科研写作", "音视频"]);
 
     const scan = await service.scanEnvironment();
@@ -78,15 +78,15 @@ body`,
   });
 
   it("returns null for cached snapshot when manifest is missing", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-cache-missing-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-cache-missing-"));
     tempRoots.push(root);
-    const service = new SkillsManagerService(buildTestPaths(root));
+    const service = new CodeDeckSkillsService(buildTestPaths(root));
 
     await expect(service.loadCachedSnapshot()).resolves.toBeNull();
   });
 
   it("loads cached snapshot without touching skill directories", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-cache-stale-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-cache-stale-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -98,7 +98,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     const fresh = await service.scanEnvironment();
 
     await removePath(path.join(paths.hosts.codex.activeRoot, "writer"));
@@ -110,7 +110,7 @@ body`,
   });
 
   it("merges current user tags into cached snapshot records", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-cache-tags-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-cache-tags-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -122,7 +122,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.scanEnvironment();
     await service.updateSkillUserTags("codex:writer", ["缓存标签"]);
 
@@ -134,7 +134,7 @@ body`,
   });
 
   it("applies current translations when loading a cached snapshot", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-cache-translations-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-cache-translations-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -146,7 +146,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.scanEnvironment();
     await fs.mkdir(path.dirname(paths.translationsPath), { recursive: true });
     await fs.writeFile(
@@ -173,7 +173,7 @@ body`,
   });
 
   it("reuses unchanged skill metadata from the scan cache while applying current overlays", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-incremental-cache-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -185,7 +185,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     await service.scanEnvironment();
     const manifest = await readJson<ScanManifest>(paths.manifestPath);
@@ -240,7 +240,7 @@ body`,
   });
 
   it("marks size stats as truncated when a skill directory exceeds the scan budget", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-size-budget-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-size-budget-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const skillPath = path.join(paths.hosts.codex.activeRoot, "large-skill");
@@ -258,7 +258,7 @@ body`,
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, "payload.txt"), "payload", "utf8");
     }));
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     const scan = await service.scanEnvironment();
     const record = scan.records.find((item) => item.skillId === "codex:large-skill");
@@ -271,7 +271,7 @@ body`,
   });
 
   it("reuses scan cache when an unchanged signature was persisted with a different field order", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-order-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-incremental-cache-order-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -283,7 +283,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     await service.scanEnvironment();
     const manifest = await readJson<ScanManifest>(paths.manifestPath);
@@ -346,7 +346,7 @@ body`,
   });
 
   it("rebuilds cached skill metadata when SKILL.md changes", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-change-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-incremental-cache-change-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const skillPath = path.join(paths.hosts.codex.activeRoot, "writer");
@@ -359,7 +359,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     await service.scanEnvironment();
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -379,7 +379,7 @@ new body`, "utf8");
   });
 
   it("rebuilds cached skill metadata when README.md changes", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-readme-change-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-incremental-cache-readme-change-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const skillPath = path.join(paths.hosts.codex.activeRoot, "writer");
@@ -393,7 +393,7 @@ description: For writing.
 body`,
       [["README.md", "Original README"]],
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     await service.scanEnvironment();
     const manifest = await readJson<ScanManifest>(paths.manifestPath);
@@ -419,7 +419,7 @@ body`,
   });
 
   it("rebuilds cached skill metadata when top-level directory entries change", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-incremental-cache-entry-change-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-incremental-cache-entry-change-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const skillPath = path.join(paths.hosts.codex.activeRoot, "writer");
@@ -432,7 +432,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     await service.scanEnvironment();
     const manifest = await readJson<ScanManifest>(paths.manifestPath);
@@ -457,7 +457,7 @@ body`,
   });
 
   it("ignores translated tags and keeps original parsed tags", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-ignore-translated-tags-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-ignore-translated-tags-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -489,7 +489,7 @@ body`,
       "utf8",
     );
 
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     const scan = await service.scanEnvironment();
     const record = scan.records.find((item) => item.skillId === "codex:writer");
 
@@ -501,10 +501,10 @@ body`,
   });
 
   it("creates, overwrites and clears tags with trimming and deduplication", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-update-tags-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-update-tags-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     await service.updateSkillUserTags("codex:writer", [" 科研写作 ", "", "科研写作", "音视频", "音视频 "]);
 
@@ -521,7 +521,7 @@ body`,
   });
 
   it("preserves unrelated project and translation files when writing user tags", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-tags-isolation-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-tags-isolation-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await fs.mkdir(path.dirname(paths.projectsPath), { recursive: true });
@@ -536,7 +536,7 @@ body`,
       "utf8",
     );
 
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.updateSkillUserTags("codex:writer", ["科研写作"]);
 
     const projectsRaw = await fs.readFile(paths.projectsPath, "utf8");
@@ -546,10 +546,10 @@ body`,
   });
 
   it("can clear current project selection without deleting stored project records", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-clear-project-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-clear-project-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     const selected = await service.selectProject(path.join(root, "demo-project"));
     let storedProjects = await readJson<{
@@ -571,7 +571,7 @@ body`,
   });
 
   it("marks skills in library/codex as inactive with library-root location and library source path", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-library-codex-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-library-codex-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -584,7 +584,7 @@ description: For writing.
 body`,
     );
 
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     const scan = await service.scanEnvironment();
     const record = scan.records.find((item) => item.skillId === "codex:writer");
 
@@ -598,7 +598,7 @@ body`,
   });
 
   it("marks skills in library/claude as inactive with library-root location and enables them from library to active root", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-library-claude-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-library-claude-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -611,7 +611,7 @@ description: For review.
 body`,
     );
 
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     const scan = await service.scanEnvironment();
     const record = scan.records.find((item) => item.skillId === "claude:reviewer");
     const preview = await service.createPreview("enable", ["claude:reviewer"]);
@@ -633,7 +633,7 @@ body`,
   });
 
   it("disables active skills from host root back into library root", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-disable-active-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-disable-active-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -646,7 +646,7 @@ description: For writing.
 body`,
     );
 
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     const preview = await service.createPreview("disable", ["codex:writer"]);
 
     expect(preview.items).toEqual([
@@ -661,7 +661,7 @@ body`,
   });
 
   it("copies inactive project skills from library rather than the host root", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-project-copy-inactive-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-project-copy-inactive-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const projectPath = path.join(root, "demo-project");
@@ -675,7 +675,7 @@ description: For writing.
 body`,
     );
 
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.selectProject(projectPath);
     await service.scanEnvironment();
     const preview = await service.createProjectPreview("codex", ["codex:writer"], "copy-to-project");
@@ -690,7 +690,7 @@ body`,
   });
 
   it("refreshes snapshot with project state using one environment scan", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-refresh-snapshot-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-refresh-snapshot-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const projectPath = path.join(root, "demo-project");
@@ -712,7 +712,7 @@ description: Project copy.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.selectProject(projectPath);
 
     const snapshot = await service.refreshSnapshot();
@@ -725,7 +725,7 @@ body`,
   });
 
   it("does not allow conflict or readonly items to become environment or project preview items", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-preview-blocked-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-preview-blocked-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const projectPath = path.join(root, "demo-project");
@@ -752,7 +752,7 @@ body`,
       `# readonly`,
     );
 
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.selectProject(projectPath);
     const envPreview = await service.createPreview("enable", ["codex:shared", "codex:_readonly"]);
     const projectPreview = await service.createProjectPreview("codex", ["codex:shared", "codex:_readonly"], "copy-to-project");
@@ -764,7 +764,7 @@ body`,
   });
 
   it("reuses one in-flight environment scan for concurrent scan requests", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-singleflight-scan-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-singleflight-scan-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -776,7 +776,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     const [first, second] = await Promise.all([
       service.scanEnvironment(),
@@ -787,7 +787,7 @@ body`,
   });
 
   it("reuses one in-flight environment scan for concurrent fresh snapshot requests", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-singleflight-snapshot-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-singleflight-snapshot-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -799,7 +799,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     const [first, second] = await Promise.all([
       service.refreshSnapshot(),
@@ -812,7 +812,7 @@ body`,
   });
 
   it("uses a recent environment snapshot for project scans while refreshing project directory state", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-project-snapshot-cache-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-project-snapshot-cache-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const projectPath = path.join(root, "demo-project");
@@ -825,7 +825,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.selectProject(projectPath);
     await service.scanEnvironment();
     const manifestBefore = await readJson<ScanManifest>(paths.manifestPath);
@@ -849,7 +849,7 @@ body`,
   });
 
   it("does not fall back to a global environment scan when project scans have no snapshot", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-project-no-snapshot-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-project-no-snapshot-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const projectPath = path.join(root, "demo-project");
@@ -862,7 +862,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.selectProject(projectPath);
 
     await expect(service.scanProjectSkills()).rejects.toThrow("请先刷新全局 Skills 后再刷新项目状态。");
@@ -870,7 +870,7 @@ body`,
   });
 
   it("uses a recent environment snapshot for previews without writing a new manifest", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-preview-snapshot-cache-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-preview-snapshot-cache-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -882,7 +882,7 @@ description: For review.
 # Reviewer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.scanEnvironment();
     const manifestBefore = await readJson<ScanManifest>(paths.manifestPath);
 
@@ -901,7 +901,7 @@ body`,
   });
 
   it("uses a recent environment snapshot for project previews while refreshing project directory state", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-project-preview-snapshot-cache-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-project-preview-snapshot-cache-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     const projectPath = path.join(root, "demo-project");
@@ -914,7 +914,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.selectProject(projectPath);
     await service.scanEnvironment();
     const manifestBefore = await readJson<ScanManifest>(paths.manifestPath);
@@ -942,7 +942,7 @@ body`,
   });
 
   it("falls back to an environment scan for previews when no snapshot exists", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-preview-fallback-scan-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-preview-fallback-scan-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -954,7 +954,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
 
     const preview = await service.createPreview("disable", ["codex:writer"]);
     const manifest = await readJson<ScanManifest>(paths.manifestPath);
@@ -970,7 +970,7 @@ body`,
   });
 
   it("refreshes the environment snapshot after executing environment batches", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-execute-refreshes-snapshot-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-execute-refreshes-snapshot-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -982,7 +982,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     await service.scanEnvironment();
     const manifestBefore = await readJson<ScanManifest>(paths.manifestPath);
 
@@ -996,7 +996,7 @@ body`,
   });
 
   it("serves cached snapshots from memory after tags change even when the manifest is missing", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "skills-manager-memory-cache-tags-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "codedeck-memory-cache-tags-"));
     tempRoots.push(root);
     const paths = buildTestPaths(root);
     await createSkill(
@@ -1008,7 +1008,7 @@ description: For writing.
 # Writer
 body`,
     );
-    const service = new SkillsManagerService(paths);
+    const service = new CodeDeckSkillsService(paths);
     const fresh = await service.scanEnvironment();
 
     await removePath(paths.manifestPath);

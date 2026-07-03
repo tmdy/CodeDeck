@@ -9,7 +9,7 @@ import { buildCodexProfileDirectoryName } from "../../services/model-mapping-con
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "skills-manager-capabilities-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "codedeck-capabilities-"));
   tempDirs.push(dir);
   return dir;
 }
