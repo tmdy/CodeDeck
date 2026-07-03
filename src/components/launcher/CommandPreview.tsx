@@ -44,7 +44,11 @@ export function CmdPreview({ preview }: CommandPreviewProps) {
       </div>
       <div className="command-preview-section">
         <p className="session-picker-heading">全局能力</p>
-        <p className="session-meta">{preview.capabilitySummary || "继承全局 MCP/Skills：启动时启用"}</p>
+        <p className="session-meta">{preview.capabilitySummary || "(未设置)"}</p>
+      </div>
+      <div className="command-preview-section">
+        <p className="session-picker-heading">终端</p>
+        <p className="session-meta">{preview.terminalSummary || "系统直连"}</p>
       </div>
       <div className="command-preview-section">
         <p className="session-picker-heading">注入环境变量</p>

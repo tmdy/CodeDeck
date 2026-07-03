@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { APP_NAME } from "./shared/branding.js";
 
 function preloadMainApp(): () => void {
   let cancelled = false;
@@ -92,7 +93,7 @@ export default function UnlockApp() {
   return (
     <div className="unlock-screen">
       <div className="unlock-card">
-        <h1>Skills Manager</h1>
+        <h1>{APP_NAME}</h1>
         <input
           type="password"
           value={passphrase}

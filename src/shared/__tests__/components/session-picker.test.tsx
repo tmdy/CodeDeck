@@ -187,7 +187,7 @@ describe("SessionPicker", () => {
             {
               provider: "codex",
               session_id: "session-image-prompt",
-              cwd: "C:/Users/99395/Sync/软件开发项目/skills管理/一个很长的目录/继续嵌套/直到足够长",
+              cwd: "C:/Users/99395/Sync/软件开发项目/CodeDeck/一个很长的目录/继续嵌套/直到足够长",
               updated_at: "2026-06-09T10:00:00.000Z",
               preview: longImagePrompt,
               conversation_excerpts: [

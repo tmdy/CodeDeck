@@ -1,6 +1,8 @@
 // 启动服务 — 统一生成命令预览与实际启动计划
 
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { APP_NAME } from "../branding.js";
 import type { CommandPreview, LaunchRequest, PreviewEnvVar } from "../launcher/types.js";
 import {
   DEFAULT_CLAUDE_COMMAND,
@@ -32,11 +34,13 @@ import {
   buildCodexSiteProfileName,
   buildCodexSiteProviderId,
 } from "./model-mapping-config-service.js";
+import type { CodexTerminalMode } from "../parameter/types.js";
 
 export interface CodexConfigWritePlan {
   profilePath: string;
   profileName: string;
   content: string;
+  rulesContent: string;
   baseUrl: string;
   providerId: string;
   providerName: string;
@@ -44,10 +48,16 @@ export interface CodexConfigWritePlan {
   targetModel: string;
 }
 
+export interface ClaudeSettingsWritePlan {
+  settingsPath: string;
+  content: string;
+}
+
 export interface LaunchExecutionPlan {
   valid: boolean;
   provider: string;
   launchMode: LaunchMode;
+  terminalMode: CodexTerminalMode;
   cwd: string;
   commandBase: string;
   commandExecutable: string;
@@ -59,9 +69,19 @@ export interface LaunchExecutionPlan {
   requiredEnvKeys: string[];
   sessionId?: string;
   error?: string;
+  claudeSettings?: ClaudeSettingsWritePlan;
   codexConfig?: CodexConfigWritePlan;
+  codexAutoContinue?: CodexAutoContinuePlan;
   permissionSummary?: string;
   capabilitySummary?: string;
+  terminalSummary?: string;
+}
+
+export interface CodexAutoContinuePlan {
+  enabled: boolean;
+  limit: number;
+  prompt: string;
+  keywords: string[];
 }
 
 export interface LaunchServiceOptions {
@@ -77,6 +97,7 @@ interface ProviderLaunchArtifacts {
   env: Record<string, string>;
   requiredEnvKeys: string[];
   codexConfig?: CodexConfigWritePlan;
+  claudeSettings?: ClaudeSettingsWritePlan;
   permissionSummary: string;
 }
 
@@ -137,6 +158,7 @@ export class LaunchService {
       request.session_id,
       request.permission_override,
       request.capability_overlay,
+      request.terminal_mode,
     );
   }
 
@@ -147,6 +169,7 @@ export class LaunchService {
     sessionId?: string,
     permissionOverride?: LaunchRequest["permission_override"],
     capabilityOverlay?: LaunchCapabilityOverlay,
+    terminalModeOverride?: LaunchRequest["terminal_mode"],
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
     const normalizedSessionId = (sessionId ?? "").trim();
@@ -200,11 +223,15 @@ export class LaunchService {
       ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.claude)
       : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.codex);
     const env = this.mergeInjectedEnv(artifacts.env, normalizedRuntime.extra_env);
+    const terminalMode = profile.provider === PROVIDER_CLAUDE
+      ? "direct"
+      : this.buildCodexTerminalMode(terminalModeOverride);
 
     return {
       valid: true,
       provider: profile.provider,
       launchMode: normalizedRuntime.launch_mode,
+      terminalMode,
       cwd: normalizedRuntime.cwd,
       commandBase: normalizedRuntime.command_base,
       commandExecutable: artifacts.commandExecutable,
@@ -215,9 +242,12 @@ export class LaunchService {
       previewEnv: this.toPreviewEnvList(env),
       requiredEnvKeys: artifacts.requiredEnvKeys,
       sessionId: normalizedSessionId || undefined,
+      claudeSettings: artifacts.claudeSettings,
       codexConfig: artifacts.codexConfig,
+      codexAutoContinue: profile.provider === PROVIDER_CLAUDE ? undefined : this.buildCodexAutoContinuePlan(),
       permissionSummary: artifacts.permissionSummary,
       capabilitySummary: this.buildCapabilitySummary(capabilityOverlay),
+      terminalSummary: this.buildTerminalSummary(profile.provider, terminalMode),
     };
   }
 
@@ -233,6 +263,11 @@ export class LaunchService {
       ? "resume_picker"
       : runtime.launch_mode;
     const commandBase = normalizeCommandExecutable(runtime.command_base, DEFAULT_CLAUDE_COMMAND);
+    const managedSettings = this.buildClaudeSettingsWritePlan(itemKey(profile), permissions);
+    const settingsFiles = [
+      ...(overlay?.settingsFile ? [overlay.settingsFile] : []),
+      ...(managedSettings ? [managedSettings.settingsPath] : []),
+    ];
     const args = buildClaudeArgs({
       commandBase: runtime.command_base,
       launchMode,
@@ -240,7 +275,7 @@ export class LaunchService {
       sessionId,
       excludeUserSettings: runtime.exclude_user_settings,
       settingsFile: runtime.settings_file,
-      settingsFiles: overlay?.settingsFile ? [overlay.settingsFile] : [],
+      settingsFiles,
       settingSources: this.getParameterSettings().cli_settings.claude.setting_sources,
       model: selectedModelId || undefined,
       permissionMode: toClaudePermissionMode(permissions.preset),
@@ -255,7 +290,7 @@ export class LaunchService {
       sessionId,
       excludeUserSettings: runtime.exclude_user_settings,
       settingsFile: runtime.settings_file,
-      settingsFiles: overlay?.settingsFile ? [overlay.settingsFile] : [],
+      settingsFiles,
       settingSources: this.getParameterSettings().cli_settings.claude.setting_sources,
       model: selectedModelId || undefined,
       permissionMode: toClaudePermissionMode(permissions.preset),
@@ -295,6 +330,7 @@ export class LaunchService {
       command,
       env,
       requiredEnvKeys: ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"],
+      claudeSettings: managedSettings,
       permissionSummary: summarizePermissions(profile.provider, permissions),
     };
   }
@@ -323,6 +359,8 @@ export class LaunchService {
       advancedOverride ? `--model ${JSON.stringify(advancedOverride)}` : "",
     ].filter(Boolean).join(" ").trim();
     const commandBase = normalizeCommandExecutable(runtime.command_base, DEFAULT_CODEX_COMMAND);
+    const codexSettings = this.getParameterSettings().cli_settings.codex;
+    const wireApi = codexSettings.wire_api.trim() || "responses";
     const commandArgs = buildCodexArgs({
       commandBase: runtime.command_base,
       launchMode: runtime.launch_mode,
@@ -330,7 +368,7 @@ export class LaunchService {
       sessionId,
       baseUrl: profile.url,
       model: advancedOverride,
-      wireApi: "responses",
+      wireApi,
     });
     const command = buildCodexCommand({
       commandBase,
@@ -339,7 +377,7 @@ export class LaunchService {
       sessionId,
       baseUrl: profile.url,
       model: advancedOverride,
-      wireApi: "responses",
+      wireApi,
     });
 
     return {
@@ -361,9 +399,12 @@ export class LaunchService {
           baseUrl: profile.url,
           apiKeyEnv,
           targetModel: selectedModelId,
+          wireApi,
+          skipGitRepoCheck: codexSettings.skip_git_repo_check,
           permissions,
           globalMcpToml: overlay?.globalMcpToml ?? "",
         }),
+        rulesContent: this.buildCodexRulesContent(permissions),
         baseUrl: profile.url,
         providerId,
         providerName,
@@ -385,6 +426,26 @@ export class LaunchService {
     ];
   }
 
+  private buildClaudeSettingsWritePlan(profileKey: string, permissions: ProfilePermissions): ClaudeSettingsWritePlan | undefined {
+    const settings = buildClaudeManagedSettings(
+      permissions,
+      this.profileService.getState().global_settings.include_co_authored_by,
+    );
+    if (!settings) {
+      return undefined;
+    }
+    const settingsPath = path.join(
+      path.dirname(this.options.codexProfilesRoot),
+      "claude-runtime",
+      "permissions",
+      `claude-permissions-${hashProfileKey(profileKey)}.json`,
+    );
+    return {
+      settingsPath: this.toDisplayPath(settingsPath),
+      content: `${JSON.stringify(settings, null, 2)}\n`,
+    };
+  }
+
   private validateProviderConfiguration(profile: Profile): string[] {
     const errors: string[] = [];
     if (!profile.name.trim()) {
@@ -403,6 +464,7 @@ export class LaunchService {
     providerEnv: Record<string, string>,
     runtimeEnv: Record<string, string>,
   ): Record<string, string> {
+    const globalEnv = this.buildGlobalInjectedEnv();
     const extraEnv = this.getParameterSettings().extra_env ?? {};
     const normalizedExtraEnv = Object.fromEntries(
       Object.entries(extraEnv)
@@ -415,10 +477,32 @@ export class LaunchService {
         .filter(([key]) => key.length > 0),
     );
     return {
+      ...globalEnv,
       ...normalizedExtraEnv,
       ...normalizedRuntimeEnv,
       ...providerEnv,
     };
+  }
+
+  private buildGlobalInjectedEnv(): Record<string, string> {
+    const settings = this.profileService.getState().global_settings;
+    const env: Record<string, string> = {};
+    const proxy = settings.proxy?.trim();
+    if (proxy) {
+      env.HTTP_PROXY = proxy;
+      env.HTTPS_PROXY = proxy;
+      env.ALL_PROXY = proxy;
+    }
+    if (settings.disable_telemetry) {
+      env.DISABLE_TELEMETRY = "1";
+    }
+    if (settings.disable_error_reporting) {
+      env.DISABLE_ERROR_REPORTING = "1";
+    }
+    if (settings.disable_nonessential_traffic) {
+      env.DISABLE_NON_ESSENTIAL_MODEL_CALLS = "1";
+    }
+    return env;
   }
 
   private toPreview(plan: LaunchExecutionPlan): CommandPreview {
@@ -430,12 +514,19 @@ export class LaunchService {
       error: plan.error,
       permissionSummary: plan.permissionSummary,
       capabilitySummary: plan.capabilitySummary,
+      terminalSummary: plan.terminalSummary,
     };
   }
 
   private buildCapabilitySummary(overlay?: LaunchCapabilityOverlay): string {
+    return this.buildCapabilityOverlaySummary(overlay);
+  }
+
+  private buildCapabilityOverlaySummary(overlay?: LaunchCapabilityOverlay): string {
     if (!overlay) {
-      return "继承全局 MCP/Skills：启动时启用";
+      return this.getParameterSettings().inherit_global_capabilities
+        ? "继承全局 MCP/Skills：启动时启用"
+        : "继承全局 MCP/Skills：已关闭";
     }
     if (overlay.claude) {
       const parts = [
@@ -456,7 +547,45 @@ export class LaunchService {
         ? `继承全局能力：${parts.join(" / ")}`
         : "继承全局能力：无可用项";
     }
-    return "继承全局 MCP/Skills：启动时启用";
+    return "继承全局能力：无可用项";
+  }
+
+  private buildCodexAutoContinuePlan(): CodexAutoContinuePlan {
+    const codexSettings = this.getParameterSettings().cli_settings.codex;
+    return {
+      enabled: codexSettings.auto_continue_on_failure,
+      limit: codexSettings.auto_continue_limit,
+      prompt: codexSettings.auto_continue_prompt,
+      keywords: codexSettings.auto_continue_keywords,
+    };
+  }
+
+  private buildCodexTerminalMode(override?: LaunchRequest["terminal_mode"]): CodexTerminalMode {
+    if (override === "direct" || override === "monitored") {
+      return override;
+    }
+    return this.getParameterSettings().cli_settings.codex.terminal_mode;
+  }
+
+  private buildTerminalSummary(provider: string, terminalMode: CodexTerminalMode): string {
+    if (provider === PROVIDER_CLAUDE) {
+      return "Claude 终端：系统直连";
+    }
+    if (terminalMode === "direct") {
+      return "Codex 终端：系统直连（不接管交互）";
+    }
+    return this.buildCodexMonitoredTerminalSummary();
+  }
+
+  private buildCodexMonitoredTerminalSummary(): string {
+    const codexSettings = this.getParameterSettings().cli_settings.codex;
+    if (!codexSettings.auto_continue_on_failure) {
+      return "Codex 终端：受监控独立窗口（自动继续关闭）";
+    }
+    if (codexSettings.auto_continue_limit === -1) {
+      return "Codex 终端：受监控独立窗口（自动继续已启用，不限次数）";
+    }
+    return `Codex 终端：受监控独立窗口（自动继续已启用，最多 ${codexSettings.auto_continue_limit} 次）`;
   }
 
   private toPreviewEnvList(env: Record<string, string>): PreviewEnvVar[] {
@@ -487,6 +616,7 @@ export class LaunchService {
       valid: false,
       provider: options.provider,
       launchMode: options.launchMode,
+      terminalMode: "direct",
       cwd: options.cwd.trim(),
       commandBase: options.commandBase.trim(),
       commandExecutable: normalizeCommandExecutable(
@@ -523,12 +653,18 @@ export class LaunchService {
     baseUrl: string;
     apiKeyEnv: string;
     targetModel: string;
+    wireApi: string;
+    skipGitRepoCheck: boolean;
     permissions: ProfilePermissions;
     globalMcpToml?: string;
   }): string {
     const targetModel = options.targetModel.trim();
     const codexPermissions = toCodexPermissionConfig(options.permissions.preset);
     const webSearchMode = options.permissions.common.allowNetwork ? "live" : "disabled";
+    const wireApi = options.wireApi.trim() || "responses";
+    const skipGitRepoCheckLines = options.skipGitRepoCheck
+      ? ["skip_git_repo_check = true"]
+      : [];
     const workspaceLines = codexPermissions.sandboxMode === "workspace-write"
       ? [
           "[sandbox_workspace_write]",
@@ -537,16 +673,25 @@ export class LaunchService {
           "",
         ]
       : [];
+    const shellEnvironmentLines = options.permissions.common.denyEnvFiles
+      ? [
+          "[shell_environment_policy]",
+          'exclude = ["*KEY*", "*TOKEN*", "*SECRET*", "*PASSWORD*", "CODEX_SITE_API_KEY_*"]',
+          "",
+        ]
+      : [];
     const topLevelLines = targetModel
       ? [
           `model = ${JSON.stringify(targetModel)}`,
           `model_provider = ${JSON.stringify(options.providerId)}`,
+          ...skipGitRepoCheckLines,
           `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
           `approval_policy = ${JSON.stringify(codexPermissions.approvalPolicy)}`,
           `web_search = ${JSON.stringify(webSearchMode)}`,
           "",
         ]
       : [
+          ...skipGitRepoCheckLines,
           `sandbox_mode = ${JSON.stringify(codexPermissions.sandboxMode)}`,
           `approval_policy = ${JSON.stringify(codexPermissions.approvalPolicy)}`,
           `web_search = ${JSON.stringify(webSearchMode)}`,
@@ -556,17 +701,42 @@ export class LaunchService {
     return [
       ...topLevelLines,
       ...workspaceLines,
+      ...shellEnvironmentLines,
       `[model_providers.${options.providerId}]`,
       `name = ${JSON.stringify(options.providerName)}`,
       `base_url = ${JSON.stringify(options.baseUrl)}`,
       `env_key = ${JSON.stringify(options.apiKeyEnv)}`,
-      'wire_api = "responses"',
+      `wire_api = ${JSON.stringify(wireApi)}`,
       "",
       "[windows]",
       'sandbox = "elevated"',
       "",
       globalMcpToml,
     ].join("\n");
+  }
+
+  private buildCodexRulesContent(permissions: ProfilePermissions): string {
+    const rules: string[] = [];
+    if (permissions.common.denyGitPush) {
+      rules.push(renderCodexPrefixRule(
+        ["git", "push"],
+        "git push is disabled by profile permissions.",
+      ));
+    }
+    if (permissions.common.denyDangerousDelete) {
+      for (const pattern of CODEX_DANGEROUS_DELETE_PATTERNS) {
+        rules.push(renderCodexPrefixRule(
+          pattern,
+          "Dangerous deletion is disabled by profile permissions.",
+        ));
+      }
+    }
+    return [
+      `# Managed by ${APP_NAME}. Do not edit by hand.`,
+      "# This file is regenerated from the selected profile's permission switches.",
+      "",
+      ...rules,
+    ].join("\n").trimEnd() + "\n";
   }
 }
 
@@ -583,4 +753,149 @@ function normalizeCommandExecutable(commandBase: string, fallback: string): stri
     return trimmed.slice(1, -1).trim() || fallback;
   }
   return trimmed;
+}
+
+interface ClaudeManagedSettings {
+  $schema: string;
+  includeCoAuthoredBy: boolean;
+  permissions?: {
+    deny?: string[];
+    additionalDirectories?: string[];
+  };
+  sandbox?: {
+    enabled: boolean;
+    filesystem?: {
+      allowWrite?: string[];
+      denyRead?: string[];
+    };
+    network?: {
+      deniedDomains?: string[];
+    };
+  };
+}
+
+const CLAUDE_SENSITIVE_READ_RULES = [
+  "Read(./.env)",
+  "Read(./.env.*)",
+  "Read(./**/.env)",
+  "Read(./**/.env.*)",
+  "Read(./secrets/**)",
+  "Read(./config/credentials.json)",
+  "Read(./**/*.key)",
+  "Read(./**/*.pem)",
+  "Read(./**/id_rsa)",
+  "Read(./**/id_ed25519)",
+];
+
+const CLAUDE_SENSITIVE_SANDBOX_DENY_READ = [
+  "./.env",
+  "./.env.*",
+  "./secrets",
+  "./config/credentials.json",
+  "~/.ssh",
+  "~/.aws/credentials",
+];
+
+const CLAUDE_GIT_PUSH_DENY_RULES = [
+  "Bash(git push)",
+  "Bash(git push *)",
+];
+
+const CLAUDE_DANGEROUS_DELETE_DENY_RULES = [
+  "Bash(rm -rf *)",
+  "Bash(rm -fr *)",
+  "Bash(rm -r *)",
+  "Bash(rm --recursive *)",
+  "Bash(del /s *)",
+  "Bash(erase /s *)",
+  "Bash(rmdir /s *)",
+  "Bash(rd /s *)",
+  "Bash(Remove-Item -Recurse *)",
+  "Bash(Remove-Item -r *)",
+  "Bash(remove-item -Recurse *)",
+  "Bash(remove-item -r *)",
+];
+
+const CLAUDE_NETWORK_DENY_RULES = [
+  "WebFetch",
+  "Bash(curl *)",
+  "Bash(wget *)",
+  "Bash(Invoke-WebRequest *)",
+  "Bash(iwr *)",
+];
+
+const CODEX_DANGEROUS_DELETE_PATTERNS = [
+  ["rm", "-rf"],
+  ["rm", "-fr"],
+  ["rm", "-r"],
+  ["rm", "--recursive"],
+  ["del", "/s"],
+  ["erase", "/s"],
+  ["rmdir", "/s"],
+  ["rd", "/s"],
+  ["Remove-Item", "-Recurse"],
+  ["Remove-Item", "-r"],
+  ["remove-item", "-Recurse"],
+  ["remove-item", "-r"],
+];
+
+function buildClaudeManagedSettings(
+  permissions: ProfilePermissions,
+  includeCoAuthoredBy: boolean,
+): ClaudeManagedSettings | undefined {
+  const denyRules = uniqueStrings([
+    ...(permissions.common.denyEnvFiles ? CLAUDE_SENSITIVE_READ_RULES : []),
+    ...(permissions.common.denyGitPush ? CLAUDE_GIT_PUSH_DENY_RULES : []),
+    ...(permissions.common.denyDangerousDelete ? CLAUDE_DANGEROUS_DELETE_DENY_RULES : []),
+    ...(!permissions.common.allowNetwork ? CLAUDE_NETWORK_DENY_RULES : []),
+  ]);
+  const additionalDirectories = uniqueStrings(permissions.common.additionalWritableRoots);
+  const sandboxFilesystem: NonNullable<NonNullable<ClaudeManagedSettings["sandbox"]>["filesystem"]> = {};
+  if (additionalDirectories.length > 0) {
+    sandboxFilesystem.allowWrite = additionalDirectories;
+  }
+  if (permissions.common.denyEnvFiles) {
+    sandboxFilesystem.denyRead = CLAUDE_SENSITIVE_SANDBOX_DENY_READ;
+  }
+  const sandboxNetwork = !permissions.common.allowNetwork ? { deniedDomains: ["*"] } : undefined;
+  const hasPermissions = denyRules.length > 0 || additionalDirectories.length > 0;
+  const hasSandbox = Object.keys(sandboxFilesystem).length > 0 || Boolean(sandboxNetwork);
+  const settings: ClaudeManagedSettings = {
+    $schema: "https://json.schemastore.org/claude-code-settings.json",
+    includeCoAuthoredBy,
+  };
+  if (hasPermissions) {
+    settings.permissions = {
+      ...(denyRules.length > 0 ? { deny: denyRules } : {}),
+      ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
+    };
+  }
+  if (hasSandbox) {
+    settings.sandbox = {
+      enabled: true,
+      ...(Object.keys(sandboxFilesystem).length > 0 ? { filesystem: sandboxFilesystem } : {}),
+      ...(sandboxNetwork ? { network: sandboxNetwork } : {}),
+    };
+  }
+  return settings;
+}
+
+function renderCodexPrefixRule(pattern: string[], justification: string): string {
+  return [
+    "prefix_rule(",
+    `    pattern = [${pattern.map((item) => JSON.stringify(item)).join(", ")}],`,
+    '    decision = "forbidden",',
+    `    justification = ${JSON.stringify(justification)},`,
+    ")",
+  ].join("\n");
+}
+
+function hashProfileKey(profileKey: string): string {
+  return createHash("sha256").update(profileKey.trim(), "utf8").digest("hex").slice(0, 16);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return values
+    .map((value) => value.trim())
+    .filter((value, index, all) => value.length > 0 && all.indexOf(value) === index);
 }

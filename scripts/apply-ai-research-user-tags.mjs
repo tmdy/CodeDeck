@@ -7,7 +7,8 @@ import { buildAiResearchTagPlan } from "../dist-electron/src/shared/user-tag-bul
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
-const sourceListPath = process.env.SKILLS_MANAGER_AI_RESEARCH_LIST
+const sourceListPath = process.env.CODEDECK_AI_RESEARCH_LIST
+  ?? process.env.SKILLS_MANAGER_AI_RESEARCH_LIST
   ?? path.join(os.homedir(), "Downloads", "ai-research-skills.txt");
 
 async function readSkillList(filePath) {

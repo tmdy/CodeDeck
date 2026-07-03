@@ -13,6 +13,7 @@ export interface CapabilityOverlayServiceOptions {
   claudeGlobalStatePath?: string;
   codexHome?: string;
   agentsHome?: string;
+  onDirectoryLinkFallback?: (event: DirectoryLinkFallbackEvent) => void;
 }
 
 export interface ClaudeCapabilityOverlay {
@@ -26,19 +27,44 @@ export interface CodexSkillLinkPlan {
   skillName: string;
   sourcePath: string;
   targetPath: string;
+  mode: DirectoryLinkMode;
+  fallbackReason?: string;
+}
+
+export interface CodexPluginLinkPlan {
+  pluginId: string;
+  sourcePath: string;
+  targetPath: string;
+  mode: DirectoryLinkMode;
+  fallbackReason?: string;
 }
 
 export interface CodexCapabilityOverlay {
   globalMcpToml: string;
   skillLinks: CodexSkillLinkPlan[];
+  pluginLinks: CodexPluginLinkPlan[];
 }
 
 interface JsonObject {
   [key: string]: unknown;
 }
 
-const MCP_SERVERS_HEADER_PATTERN = /^\s*\[mcp_servers(?:\.[^\]]+)?\]\s*$/;
+type DirectoryLinkMode = "junction" | "copy";
+
+interface DirectoryLinkResult {
+  mode: DirectoryLinkMode;
+  fallbackReason?: string;
+}
+
+export interface DirectoryLinkFallbackEvent {
+  sourcePath: string;
+  targetPath: string;
+  reason: string;
+}
+
 const TABLE_HEADER_PATTERN = /^\s*\[[^\]]+\]\s*$/;
+const CODEX_INHERITED_HEADER_PATTERN = /^\s*\[(?:mcp_servers(?:\.[^\]]+)?|marketplaces(?:\.[^\]]+)?|plugins(?:\.[^\]]+)?)\]\s*$/;
+const CODEX_PLUGIN_HEADER_PATTERN = /^\s*\[plugins\.(?:"((?:\\.|[^"\\])*)"|([^\]]+))\]\s*$/;
 
 export class CapabilityOverlayService {
   private readonly overlayRoot: string;
@@ -46,6 +72,7 @@ export class CapabilityOverlayService {
   private readonly claudeGlobalStatePath: string;
   private readonly codexHome: string;
   private readonly agentsHome: string;
+  private readonly onDirectoryLinkFallback?: (event: DirectoryLinkFallbackEvent) => void;
 
   constructor(options: CapabilityOverlayServiceOptions) {
     const home = os.homedir();
@@ -54,6 +81,7 @@ export class CapabilityOverlayService {
     this.claudeGlobalStatePath = path.resolve(options.claudeGlobalStatePath ?? path.join(home, ".claude.json"));
     this.codexHome = path.resolve(options.codexHome ?? path.join(home, ".codex"));
     this.agentsHome = path.resolve(options.agentsHome ?? path.join(home, ".agents"));
+    this.onDirectoryLinkFallback = options.onDirectoryLinkFallback;
   }
 
   async prepareClaudeOverlay(options: { profileId: string }): Promise<ClaudeCapabilityOverlay> {
@@ -74,7 +102,7 @@ export class CapabilityOverlayService {
 
     await writeJson(mcpConfigPath, { mcpServers });
     await writeJson(settingsFile, settingsOverlay);
-    await copySkillsToClaudeAddDir(standaloneSkillSources, addDir);
+    await copySkillsToClaudeAddDir(standaloneSkillSources, addDir, this.onDirectoryLinkFallback);
 
     return {
       settingsFile,
@@ -89,16 +117,29 @@ export class CapabilityOverlayService {
     await this.clearManagedOverlay(profileOverlayRoot);
     await ensureDirectory(profileOverlayRoot);
 
-    const globalMcpToml = await extractCodexMcpToml(path.join(this.codexHome, "config.toml"));
+    const globalCodexConfig = await readTextIfExists(path.join(this.codexHome, "config.toml"));
+    const globalMcpToml = extractCodexInheritedToml(globalCodexConfig);
     const skillSources = await this.resolveCodexSkillSources();
-    const skillLinks = await copySkillsToCodexAgentsDir(skillSources, path.join(options.profileHome, ".agents", "skills"));
+    const pluginRefs = extractEnabledCodexPluginRefs(globalCodexConfig);
+    const skillLinks = await copySkillsToCodexAgentsDir(
+      skillSources,
+      path.join(options.profileHome, ".agents", "skills"),
+      this.onDirectoryLinkFallback,
+    );
+    const pluginLinks = await copyCodexPluginCache(
+      pluginRefs,
+      path.join(this.codexHome, "plugins", "cache"),
+      path.join(options.profileHome, "plugins", "cache"),
+      this.onDirectoryLinkFallback,
+    );
     await writeJson(path.join(profileOverlayRoot, "manifest.json"), {
       profileId: options.profileId,
       globalMcpToml,
       skillLinks,
+      pluginLinks,
     });
 
-    return { globalMcpToml, skillLinks };
+    return { globalMcpToml, skillLinks, pluginLinks };
   }
 
   async clearManagedOverlay(targetPath: string): Promise<void> {
@@ -173,6 +214,13 @@ async function readJsonObjectIfExists(targetPath: string): Promise<JsonObject | 
   return asJsonObject(JSON.parse(content));
 }
 
+async function readTextIfExists(targetPath: string): Promise<string> {
+  if (!(await pathExists(targetPath))) {
+    return "";
+  }
+  return fs.readFile(targetPath, "utf8");
+}
+
 function asJsonObject(value: unknown): JsonObject {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as JsonObject;
@@ -220,14 +268,22 @@ async function listSkillDirectories(root: string): Promise<Array<{ name: string;
   return result.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-async function copySkillsToClaudeAddDir(sources: Array<{ name: string; path: string }>, addDir: string): Promise<void> {
+async function copySkillsToClaudeAddDir(
+  sources: Array<{ name: string; path: string }>,
+  addDir: string,
+  onFallback?: (event: DirectoryLinkFallbackEvent) => void,
+): Promise<void> {
   const targetRoot = path.join(addDir, ".claude", "skills");
   for (const source of sources) {
-    await linkOrCopyDirectory(source.path, path.join(targetRoot, source.name));
+    await linkOrCopyDirectory(source.path, path.join(targetRoot, source.name), onFallback);
   }
 }
 
-async function copySkillsToCodexAgentsDir(sources: Map<string, string>, targetRoot: string): Promise<CodexSkillLinkPlan[]> {
+async function copySkillsToCodexAgentsDir(
+  sources: Map<string, string>,
+  targetRoot: string,
+  onFallback?: (event: DirectoryLinkFallbackEvent) => void,
+): Promise<CodexSkillLinkPlan[]> {
   const result: CodexSkillLinkPlan[] = [];
   for (const [skillName, sourcePath] of Array.from(sources.entries()).sort(([left], [right]) => left.localeCompare(right))) {
     const targetPath = path.join(targetRoot, skillName);
@@ -235,37 +291,154 @@ async function copySkillsToCodexAgentsDir(sources: Map<string, string>, targetRo
       continue;
     }
     const resolvedSourcePath = await fs.realpath(sourcePath);
-    await linkOrCopyDirectory(resolvedSourcePath, targetPath);
-    result.push({ skillName, sourcePath, targetPath });
+    const linkResult = await linkOrCopyDirectory(resolvedSourcePath, targetPath, onFallback);
+    result.push({ skillName, sourcePath, targetPath, ...linkResult });
   }
   return result;
 }
 
-async function linkOrCopyDirectory(sourcePath: string, targetPath: string): Promise<void> {
+interface CodexPluginRef {
+  pluginId: string;
+  marketplace: string;
+  name: string;
+}
+
+async function copyCodexPluginCache(
+  pluginRefs: CodexPluginRef[],
+  sourceCacheRoot: string,
+  targetCacheRoot: string,
+  onFallback?: (event: DirectoryLinkFallbackEvent) => void,
+): Promise<CodexPluginLinkPlan[]> {
+  const result: CodexPluginLinkPlan[] = [];
+  const seen = new Set<string>();
+  for (const pluginRef of pluginRefs) {
+    if (seen.has(pluginRef.pluginId)) {
+      continue;
+    }
+    seen.add(pluginRef.pluginId);
+    const sourcePath = path.join(sourceCacheRoot, pluginRef.marketplace, pluginRef.name);
+    if (!(await pathExists(sourcePath))) {
+      continue;
+    }
+    const resolvedSourcePath = await fs.realpath(sourcePath);
+    const targetPath = path.join(targetCacheRoot, pluginRef.marketplace, pluginRef.name);
+    let linkResult: DirectoryLinkResult;
+    if (!(await pathExists(targetPath))) {
+      linkResult = await linkOrCopyDirectory(resolvedSourcePath, targetPath, onFallback);
+    } else {
+      linkResult = await detectExistingDirectoryLinkMode(targetPath);
+    }
+    result.push({ pluginId: pluginRef.pluginId, sourcePath: resolvedSourcePath, targetPath, ...linkResult });
+  }
+  return result;
+}
+
+async function linkOrCopyDirectory(
+  sourcePath: string,
+  targetPath: string,
+  onFallback?: (event: DirectoryLinkFallbackEvent) => void,
+): Promise<DirectoryLinkResult> {
   await ensureDirectory(path.dirname(targetPath));
   try {
     await fs.symlink(sourcePath, targetPath, "junction");
-  } catch {
+    return { mode: "junction" };
+  } catch (error) {
+    const reason = formatErrorForManifest(error);
+    onFallback?.({ sourcePath, targetPath, reason });
     await copyDirectory(sourcePath, targetPath);
+    return { mode: "copy", fallbackReason: reason };
   }
 }
 
-async function extractCodexMcpToml(configPath: string): Promise<string> {
-  if (!(await pathExists(configPath))) {
+async function detectExistingDirectoryLinkMode(targetPath: string): Promise<DirectoryLinkResult> {
+  const stats = await fs.lstat(targetPath);
+  return { mode: stats.isSymbolicLink() ? "junction" : "copy" };
+}
+
+function formatErrorForManifest(error: unknown): string {
+  if (error instanceof Error) {
+    const code = typeof (error as NodeJS.ErrnoException).code === "string"
+      ? `${(error as NodeJS.ErrnoException).code}: `
+      : "";
+    return `${code}${error.message}`;
+  }
+  return String(error);
+}
+
+function extractCodexInheritedToml(content: string): string {
+  const selected = splitTomlBlocks(content).filter((block) => {
+    if (!block.headerLine || !CODEX_INHERITED_HEADER_PATTERN.test(block.headerLine)) {
+      return false;
+    }
+    return true;
+  });
+  return trimTomlBlock(selected.map((block) => block.lines.join("\n").trimEnd()).filter(Boolean).join("\n\n"));
+}
+
+interface TomlBlock {
+  headerLine?: string;
+  lines: string[];
+}
+
+function splitTomlBlocks(content: string): TomlBlock[] {
+  const blocks: TomlBlock[] = [];
+  let current: TomlBlock = { lines: [] };
+  for (const line of content.replace(/\r\n/g, "\n").split("\n")) {
+    if (TABLE_HEADER_PATTERN.test(line)) {
+      if (current.headerLine || current.lines.some((item) => item.trim())) {
+        blocks.push(current);
+      }
+      current = { headerLine: line, lines: [line] };
+      continue;
+    }
+    current.lines.push(line);
+  }
+  if (current.headerLine || current.lines.some((item) => item.trim())) {
+    blocks.push(current);
+  }
+  return blocks;
+}
+
+function isTomlEnabled(lines: string[]): boolean {
+  return lines.some((line) => /^\s*enabled\s*=\s*true\s*(?:#.*)?$/.test(line));
+}
+
+function extractEnabledCodexPluginRefs(content: string): CodexPluginRef[] {
+  const result: CodexPluginRef[] = [];
+  for (const block of splitTomlBlocks(content)) {
+    if (!block.headerLine || !isTomlEnabled(block.lines)) {
+      continue;
+    }
+    const pluginId = extractCodexPluginId(block.headerLine);
+    if (!pluginId) {
+      continue;
+    }
+    const separatorIndex = pluginId.lastIndexOf("@");
+    if (separatorIndex <= 0 || separatorIndex === pluginId.length - 1) {
+      continue;
+    }
+    result.push({
+      pluginId,
+      name: pluginId.slice(0, separatorIndex),
+      marketplace: pluginId.slice(separatorIndex + 1),
+    });
+  }
+  return result;
+}
+
+function extractCodexPluginId(headerLine: string): string {
+  const match = headerLine.match(CODEX_PLUGIN_HEADER_PATTERN);
+  if (!match) {
     return "";
   }
-  const lines = (await fs.readFile(configPath, "utf8")).split(/\r?\n/);
-  const selected: string[] = [];
-  let inMcpTable = false;
-  for (const line of lines) {
-    if (TABLE_HEADER_PATTERN.test(line)) {
-      inMcpTable = MCP_SERVERS_HEADER_PATTERN.test(line);
-    }
-    if (inMcpTable) {
-      selected.push(line);
+  if (match[1] !== undefined) {
+    try {
+      return JSON.parse(`"${match[1]}"`) as string;
+    } catch {
+      return match[1].replace(/\\"/g, "\"").replace(/\\\\/g, "\\");
     }
   }
-  return trimTomlBlock(selected.join("\n"));
+  return (match[2] ?? "").trim();
 }
 
 function trimTomlBlock(value: string): string {

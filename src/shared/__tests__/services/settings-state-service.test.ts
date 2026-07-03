@@ -33,12 +33,12 @@ describe("SettingsStateService", () => {
     const saved = vi.spyOn(accessor, "save");
 
     await service.updateParameterSettings({
-      launch_timeout_ms: 45000,
+      connectivity_test_timeout_ms: 45000,
     });
 
     const state = accessor.get();
     expect(saved).toHaveBeenCalledTimes(1);
-    expect(state.parameter_settings.launch_timeout_ms).toBe(45000);
+    expect(state.parameter_settings.connectivity_test_timeout_ms).toBe(45000);
     expect(state.selected_profile_key).toBe("");
     expect(state.runtime_by_profile).toEqual({});
   });

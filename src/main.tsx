@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
+import { APP_NAME } from "./shared/branding.js";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -21,7 +22,7 @@ function createStartupShell(message: string, options: { progress?: boolean } = {
   return `
   <div class="startup-screen">
     <div class="unlock-card">
-      <h1>Skills Manager</h1>
+      <h1>${APP_NAME}</h1>
       <p>${escapeHtml(message)}</p>
       ${showProgress ? `
       <div class="startup-progress" role="progressbar" aria-label="${escapeHtml(message)}">
@@ -31,14 +32,18 @@ function createStartupShell(message: string, options: { progress?: boolean } = {
   </div>`;
 }
 
+function isTerminalView(): boolean {
+  return new URLSearchParams(window.location.search).get("view") === "terminal";
+}
+
 // index.html 已经内联首屏；这里保持同结构，覆盖 dev/hmr 场景下的空 root。
 rootElement.innerHTML = createStartupShell("正在准备解锁界面...");
 
-void import("./App")
-  .then(({ default: App }) => {
+void (isTerminalView() ? import("./TerminalApp") : import("./App"))
+  .then(({ default: AppComponent }) => {
     ReactDOM.createRoot(rootElement).render(
       <React.StrictMode>
-        <App />
+        <AppComponent />
       </React.StrictMode>,
     );
   })

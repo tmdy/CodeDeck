@@ -64,7 +64,8 @@ describe("LaunchService", () => {
 
     expect(preview.valid).toBe(true);
     expect(preview.cwd).toBe("C:/workspace/current-project");
-    expect(preview.command).toBe('claude --setting-sources "project,local" --model deepseek-v4-pro --permission-mode default');
+    expect(preview.command).toContain('claude --setting-sources "project,local" --settings "C:/tmp/claude-runtime/permissions/claude-permissions-');
+    expect(preview.command).toContain("--model deepseek-v4-pro --permission-mode default");
     expect(preview.env).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "ANTHROPIC_BASE_URL", displayValue: "https://api.anthropic.com" }),
@@ -123,6 +124,80 @@ describe("LaunchService", () => {
     expect(plan.env.SHARED_ENV).toBe("profile-value");
     expect(plan.env.ANTHROPIC_MODEL).toBe("claude-sonnet-4-5");
     expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBe("sk-ant");
+  });
+
+  it("should inject global proxy and traffic controls while allowing runtime env to override proxy", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Official",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      global_settings: {
+        ...defaultLocalState().global_settings,
+        proxy: "http://127.0.0.1:7890",
+        disable_telemetry: true,
+        disable_error_reporting: true,
+        disable_nonessential_traffic: true,
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime({
+        extra_env: {
+          HTTPS_PROXY: "http://profile-proxy:9000",
+        },
+      }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.env.HTTP_PROXY).toBe("http://127.0.0.1:7890");
+    expect(plan.env.HTTPS_PROXY).toBe("http://profile-proxy:9000");
+    expect(plan.env.ALL_PROXY).toBe("http://127.0.0.1:7890");
+    expect(plan.env.DISABLE_TELEMETRY).toBe("1");
+    expect(plan.env.DISABLE_ERROR_REPORTING).toBe("1");
+    expect(plan.env.DISABLE_NON_ESSENTIAL_MODEL_CALLS).toBe("1");
+    expect(plan.previewEnv).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "HTTP_PROXY", displayValue: "http://127.0.0.1:7890" }),
+        expect.objectContaining({ name: "HTTPS_PROXY", displayValue: "http://profile-proxy:9000" }),
+      ]),
+    );
+  });
+
+  it("should include the global Claude co-authored-by setting in managed settings", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Official",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      global_settings: {
+        ...defaultLocalState().global_settings,
+        include_co_authored_by: true,
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime(),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.claudeSettings?.content).toContain('"includeCoAuthoredBy": true');
   });
 
   it("should allow Claude effort level through profile runtime env", () => {
@@ -236,9 +311,9 @@ describe("LaunchService", () => {
     const plan = launchService.buildExecutionPlan(request);
 
     expect(preview.valid).toBe(true);
-    expect(preview.command).toBe(
-      'claude-dev --setting-sources "project,local" --settings "C:/Users/test/My Claude/settings.json" --resume "session-123" --model kimi-k2 --permission-mode default',
-    );
+    expect(preview.command).toContain('claude-dev --setting-sources "project,local" --settings "C:/Users/test/My Claude/settings.json"');
+    expect(preview.command).toContain(' --settings "C:/tmp/claude-runtime/permissions/claude-permissions-');
+    expect(preview.command).toContain('--resume "session-123" --model kimi-k2 --permission-mode default');
     expect(preview.command).toBe(plan.command);
     expect(plan.valid).toBe(true);
     expect(plan.env.ANTHROPIC_BASE_URL).toBe("https://api.moonshot.cn/anthropic");
@@ -279,10 +354,13 @@ describe("LaunchService", () => {
     });
 
     expect(plan.valid).toBe(true);
-    expect(plan.command).toBe('claude --setting-sources "project,local" --model glm-5.1 --permission-mode default');
+    expect(plan.command).toContain('claude --setting-sources "project,local" --settings "C:/tmp/claude-runtime/permissions/claude-permissions-');
+    expect(plan.command).toContain("--model glm-5.1 --permission-mode default");
     expect(plan.commandArgs).toEqual([
       "--setting-sources",
       "project,local",
+      "--settings",
+      plan.claudeSettings?.settingsPath,
       "--model",
       "glm-5.1",
       "--permission-mode",
@@ -338,6 +416,84 @@ describe("LaunchService", () => {
     expect(plan.commandArgs).toEqual(expect.arrayContaining(["--plugin-dir", "C:/Users/test/.claude/plugins/cache/document-skills"]));
     expect(plan.commandArgs.slice(-2)).toEqual(["--mcp-config", "C:/overlay/mcp-config.json"]);
     expect(plan.capabilitySummary).toBe("继承全局能力：MCP / Skills / Plugins");
+  });
+
+  it("should describe disabled global capability inheritance when no overlay is prepared", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "No Overlay",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      parameter_settings: {
+        ...defaultLocalState().parameter_settings,
+        inherit_global_capabilities: false,
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const request = {
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime(),
+    };
+    const plan = launchService.buildExecutionPlan(request);
+    const preview = launchService.previewForRequest(request);
+
+    expect(plan.valid).toBe(true);
+    expect(plan.capabilitySummary).toBe("继承全局 MCP/Skills：已关闭");
+    expect(preview.capabilitySummary).toBe("继承全局 MCP/Skills：已关闭");
+  });
+
+  it("should describe enabled global capability inheritance when no overlay is prepared", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "No Overlay",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime(),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.capabilitySummary).toBe("继承全局 MCP/Skills：启动时启用");
+  });
+
+  it("should describe an empty capability overlay as having no available global capabilities", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Empty Overlay",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime(),
+      capability_overlay: {},
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.capabilitySummary).toBe("继承全局能力：无可用项");
   });
 
   it("should not inject Claude family aliases when alias mode is none", () => {
@@ -458,6 +614,43 @@ describe("LaunchService", () => {
     expect(plan.codexConfig?.profileName).toBe("site-a632b8ac583c81de");
     expect(plan.env.CODEX_HOME).toBe("C:/workspace/app-data/codex-runtime/home");
     expect(plan.env.CODEX_SITE_API_KEY_A632B8AC583C81DE).toBe("sk-glm");
+  });
+
+  it("should write configured Codex wire API and skip git repo check into the profile config", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "GLM",
+      url: "https://open.bigmodel.cn/api/paas/v4",
+      key: "sk-glm",
+      selectedModelId: "glm-4.6",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      parameter_settings: {
+        ...defaultLocalState().parameter_settings,
+        cli_settings: {
+          ...defaultLocalState().parameter_settings.cli_settings,
+          codex: {
+            ...defaultLocalState().parameter_settings.cli_settings.codex,
+            wire_api: "chat",
+            skip_git_repo_check: true,
+          },
+        },
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex" }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.codexConfig?.content).toContain('wire_api = "chat"');
+    expect(plan.codexConfig?.content).toContain("skip_git_repo_check = true");
   });
 
   it("should pass explicit Codex CLI permission flags for full access profiles", () => {
@@ -601,6 +794,143 @@ describe("LaunchService", () => {
     expect(selectedPlan.command).toBe('codex resume "019df0ff-0001" --profile site-a632b8ac583c81de');
   });
 
+  it("should enable Codex auto-continue once by default", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "GLM",
+      url: "https://open.bigmodel.cn/api/paas/v4",
+      key: "sk-glm",
+      selectedModelId: "glm-4.6",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+    });
+
+    const preview = launchService.buildPreview(profile, makeRuntime({ command_base: "codex" }));
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex" }),
+    });
+
+    expect(plan.codexAutoContinue).toEqual({
+      enabled: true,
+      limit: 1,
+      prompt: "继续",
+      keywords: [
+        "high demand",
+        "temporary errors",
+        "temporarily unavailable",
+        "rate limit",
+        "overloaded",
+      ],
+    });
+    expect(plan.terminalMode).toBe("monitored");
+    expect(preview.terminalSummary).toBe("Codex 终端：受监控独立窗口（自动继续已启用，最多 1 次）");
+  });
+
+  it("should pass custom Codex auto-continue keywords and unlimited limit from global settings", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "GLM",
+      url: "https://open.bigmodel.cn/api/paas/v4",
+      key: "sk-glm",
+      selectedModelId: "glm-4.6",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      parameter_settings: {
+        ...defaultLocalState().parameter_settings,
+        cli_settings: {
+          ...defaultLocalState().parameter_settings.cli_settings,
+          codex: {
+            ...defaultLocalState().parameter_settings.cli_settings.codex,
+            auto_continue_limit: -1,
+            auto_continue_keywords: ["high demand", "排队中", "服务繁忙"],
+          },
+        },
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+    });
+
+    const preview = launchService.buildPreview(profile, makeRuntime({ command_base: "codex" }));
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex" }),
+    });
+
+    expect(plan.codexAutoContinue).toEqual({
+      enabled: true,
+      limit: -1,
+      prompt: "继续",
+      keywords: ["high demand", "排队中", "服务繁忙"],
+    });
+    expect(preview.terminalSummary).toBe("Codex 终端：受监控独立窗口（自动继续已启用，不限次数）");
+  });
+
+  it("should describe direct Codex mode when monitoring is disabled", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "GLM",
+      url: "https://open.bigmodel.cn/api/paas/v4",
+      key: "sk-glm",
+      selectedModelId: "glm-4.6",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor({
+      parameter_settings: {
+        ...defaultLocalState().parameter_settings,
+        cli_settings: {
+          ...defaultLocalState().parameter_settings.cli_settings,
+          codex: {
+            ...defaultLocalState().parameter_settings.cli_settings.codex,
+            terminal_mode: "direct",
+          },
+        },
+      },
+    }));
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+    });
+
+    const preview = launchService.buildPreview(profile, makeRuntime({ command_base: "codex" }));
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex" }),
+    });
+
+    expect(plan.terminalMode).toBe("direct");
+    expect(preview.terminalSummary).toBe("Codex 终端：系统直连（不接管交互）");
+  });
+
+  it("should not attach Codex auto-continue to Claude plans", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Official",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime({ command_base: "claude" }),
+    });
+
+    expect(plan.codexAutoContinue).toBeUndefined();
+  });
+
   it("should mark preview invalid when cwd is missing", () => {
     const profile: Profile = {
       provider: "claude",
@@ -666,7 +996,8 @@ describe("LaunchService", () => {
     });
 
     expect(plan.valid).toBe(true);
-    expect(plan.command).toBe('claude --setting-sources "project,local" --permission-mode default');
+    expect(plan.command).toContain('claude --setting-sources "project,local" --settings "C:/tmp/claude-runtime/permissions/claude-permissions-');
+    expect(plan.command).toContain("--permission-mode default");
     expect(plan.commandArgs).not.toContain("--model");
     expect(plan.env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
     expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBe("sk-ant");

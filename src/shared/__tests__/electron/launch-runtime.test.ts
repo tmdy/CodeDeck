@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildWindowsExternalTerminalLaunchSpec,
@@ -19,6 +20,7 @@ function createPlan(overrides: Partial<LaunchExecutionPlan> = {}): LaunchExecuti
     valid: true,
     provider: "claude",
     launchMode: "continue_last",
+    terminalMode: "direct",
     cwd: "C:/workspace/current-project",
     commandBase: "claude",
     commandExecutable: "claude",
@@ -145,5 +147,171 @@ describe("launch-runtime", () => {
     expect(innerScript).toContain("$env:CLAUDE_CODE_SUBAGENT_MODEL = 'glm-5.1'");
     expect(innerScript.indexOf("$env:ANTHROPIC_DEFAULT_HAIKU_MODEL")).toBeLessThan(innerScript.indexOf("& 'claude' @commandArgs"));
     expect(innerScript).not.toContain("Invoke-Expression");
+  });
+
+  it("keeps Codex attached to the terminal even when auto-continue is enabled", () => {
+    const spec = buildWindowsExternalTerminalLaunchSpec(createPlan({
+      provider: "codex",
+      commandBase: "codex",
+      commandExecutable: "codex",
+      command: "codex --profile site-test",
+      commandArgs: ["--profile", "site-test"],
+      env: {
+        CODEX_HOME: "C:/codex-home",
+        CODEX_SITE_API_KEY_TEST: "sk-test",
+      },
+      requiredEnvKeys: ["CODEX_HOME", "CODEX_SITE_API_KEY_TEST"],
+      codexAutoContinue: {
+        enabled: true,
+        limit: 1,
+        prompt: "继续",
+        keywords: ["high demand", "temporary errors"],
+      },
+    }));
+    const innerScript = decodeInnerScript(spec);
+
+    expect(innerScript).toContain("$autoContinueLimit = 1");
+    expect(innerScript).toContain("$autoContinuePrompt = '继续'");
+    expect(innerScript).toContain("high demand");
+    expect(innerScript).toContain("temporary errors");
+    expect(innerScript).toContain("& 'codex' @commandArgs");
+    expect(innerScript).not.toContain("[System.Diagnostics.ProcessStartInfo]::new()");
+    expect(innerScript).not.toContain("$process.StandardInput.WriteLine($autoContinuePrompt)");
+  });
+
+  it("executes the Codex direct launch path in Windows PowerShell without redirected-stdin failures", () => {
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const spec = buildWindowsExternalTerminalLaunchSpec(createPlan({
+      provider: "codex",
+      commandBase: "cmd.exe",
+      commandExecutable: "cmd.exe",
+      command: "cmd.exe /c exit 0",
+      commandArgs: ["/c", "exit", "0"],
+      cwd: process.cwd().replace(/\\/g, "/"),
+      env: {
+        CODEX_HOME: "C:/codex-home",
+        CODEX_SITE_API_KEY_TEST: "sk-test",
+      },
+      requiredEnvKeys: ["CODEX_HOME", "CODEX_SITE_API_KEY_TEST"],
+      codexAutoContinue: {
+        enabled: true,
+        limit: 1,
+        prompt: "继续",
+        keywords: ["high demand"],
+      },
+    }));
+    const innerScript = decodeInnerScript(spec);
+    const encodedInnerScript = Buffer.from(innerScript, "utf16le").toString("base64");
+
+    expect(() => execFileSync("powershell.exe", [
+      "-NoProfile",
+      "-EncodedCommand",
+      encodedInnerScript,
+    ], {
+      encoding: "utf8",
+      stdio: "pipe",
+    })).not.toThrow();
+  });
+
+  it("resolves a PATH-only .cmd wrapper through the interactive PowerShell invocation path", () => {
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const tempDir = process.env.TEMP ? `${process.env.TEMP}\\skills-manager-codex-wrapper-${Date.now()}` : "C:\\Windows\\Temp\\skills-manager-codex-wrapper";
+    try {
+      execFileSync("powershell.exe", [
+        "-NoProfile",
+        "-Command",
+        `New-Item -ItemType Directory -Force -Path '${tempDir.replace(/'/g, "''")}' | Out-Null; Set-Content -LiteralPath '${`${tempDir}\\codex-wrapper.cmd`.replace(/'/g, "''")}' -Value \"@echo off\r\necho wrapper-ok\r\nexit /b 0\r\n\" -Encoding UTF8`,
+      ], { stdio: "pipe" });
+
+      const spec = buildWindowsExternalTerminalLaunchSpec(createPlan({
+        provider: "codex",
+        commandBase: "codex-wrapper",
+        commandExecutable: "codex-wrapper",
+        command: "codex-wrapper --profile site-test",
+        commandArgs: ["--profile", "site-test"],
+        cwd: "C:/Windows",
+        env: {
+          CODEX_HOME: "C:/codex-home",
+          CODEX_SITE_API_KEY_TEST: "sk-test",
+          PATH: `${tempDir};${process.env.PATH ?? ""}`,
+        },
+        requiredEnvKeys: ["CODEX_HOME", "CODEX_SITE_API_KEY_TEST"],
+        codexAutoContinue: {
+          enabled: true,
+          limit: 1,
+          prompt: "继续",
+          keywords: ["wrapper-ok"],
+        },
+      }));
+      const innerScript = decodeInnerScript(spec);
+      const encodedInnerScript = Buffer.from(innerScript, "utf16le").toString("base64");
+
+      const output = execFileSync("powershell.exe", [
+        "-NoProfile",
+        "-EncodedCommand",
+        encodedInnerScript,
+      ], {
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+
+      expect(output).toContain("wrapper-ok");
+    } finally {
+      execFileSync("powershell.exe", [
+        "-NoProfile",
+        "-Command",
+        `Remove-Item -LiteralPath '${tempDir.replace(/'/g, "''")}' -Recurse -Force -ErrorAction SilentlyContinue`,
+      ], { stdio: "pipe" });
+    }
+  });
+
+  it("serializes custom Codex auto-continue keywords and unlimited limit", () => {
+    const spec = buildWindowsExternalTerminalLaunchSpec(createPlan({
+      provider: "codex",
+      commandBase: "codex",
+      commandExecutable: "codex",
+      command: "codex --profile site-test",
+      commandArgs: ["--profile", "site-test"],
+      env: {
+        CODEX_HOME: "C:/codex-home",
+        CODEX_SITE_API_KEY_TEST: "sk-test",
+      },
+      requiredEnvKeys: ["CODEX_HOME", "CODEX_SITE_API_KEY_TEST"],
+      codexAutoContinue: {
+        enabled: true,
+        limit: -1,
+        prompt: "继续",
+        keywords: ["排队中", "high demand", "服务繁忙"],
+      },
+    }));
+    const innerScript = decodeInnerScript(spec);
+
+    expect(innerScript).toContain("$autoContinueLimit = -1");
+    expect(innerScript).toContain("'排队中'");
+    expect(innerScript).toContain("'服务繁忙'");
+    expect(innerScript).toContain("& 'codex' @commandArgs");
+  });
+
+  it("does not wrap non-Codex launches with auto-continue detection", () => {
+    const spec = buildWindowsExternalTerminalLaunchSpec(createPlan({
+      provider: "claude",
+      codexAutoContinue: {
+        enabled: true,
+        limit: 1,
+        prompt: "继续",
+        keywords: ["high demand"],
+      },
+    }));
+    const innerScript = decodeInnerScript(spec);
+
+    expect(innerScript).toContain("& 'claude' @commandArgs");
+    expect(innerScript).not.toContain("$autoContinueLimit");
+    expect(innerScript).not.toContain("StandardInput.WriteLine($autoContinuePrompt)");
   });
 });

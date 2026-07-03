@@ -1,8 +1,10 @@
+import { promises as fs } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CapabilityOverlayService } from "../../services/capability-overlay-service.js";
+import { buildCodexProfileDirectoryName } from "../../services/model-mapping-config-service.js";
 
 const tempDirs: string[] = [];
 
@@ -94,12 +96,33 @@ describe("CapabilityOverlayService", () => {
     const agentsHome = path.join(root, ".agents");
     const overlayRoot = path.join(root, "app-data", "runtime-overlays");
     const sharedHome = path.join(root, "app-data", "codex-runtime", "home");
+    const pluginSource = path.join(codexHome, "plugins", "cache", "openai-bundled", "computer-use");
     await mkdir(codexHome, { recursive: true });
+    await mkdir(path.join(pluginSource, "1.0.0", ".codex-plugin"), { recursive: true });
     await createSkill(path.join(agentsHome, "skills"), "codex-review");
     await createSkill(path.join(codexHome, "superpowers", "skills"), "using-superpowers");
+    await writeFile(path.join(pluginSource, "1.0.0", ".codex-plugin", "plugin.json"), '{"name":"computer-use"}', "utf8");
     await writeFile(
       path.join(codexHome, "config.toml"),
-      '[mcp_servers]\n\n[mcp_servers.playwright]\ncommand = "cmd"\nargs = ["/c", "npx", "@playwright/mcp@latest"]\nenv = { SYSTEMROOT = "C:/WINDOWS" }\n',
+      [
+        "[mcp_servers]",
+        "",
+        "[mcp_servers.playwright]",
+        'command = "cmd"',
+        'args = ["/c", "npx", "@playwright/mcp@latest"]',
+        'env = { SYSTEMROOT = "C:/WINDOWS" }',
+        "",
+        "[marketplaces.openai-bundled]",
+        'source_type = "local"',
+        `source = ${JSON.stringify(path.join(codexHome, ".tmp", "bundled-marketplaces", "openai-bundled"))}`,
+        "",
+        '[plugins."computer-use@openai-bundled"]',
+        "enabled = true",
+        "",
+        '[plugins."browser@openai-bundled"]',
+        "enabled = false",
+        "",
+      ].join("\n"),
       "utf8",
     );
 
@@ -113,15 +136,27 @@ describe("CapabilityOverlayService", () => {
 
     expect(overlay.globalMcpToml).toContain("[mcp_servers.playwright]");
     expect(overlay.globalMcpToml).toContain('command = "cmd"');
+    expect(overlay.globalMcpToml).toContain("[marketplaces.openai-bundled]");
+    expect(overlay.globalMcpToml).toContain('[plugins."computer-use@openai-bundled"]');
+    expect(overlay.globalMcpToml).toContain('[plugins."browser@openai-bundled"]');
+    expect(overlay.globalMcpToml).toContain("enabled = false");
     expect(await readFile(path.join(overlayRoot, "codex", "codex-profile-fa5cae70e79192f1", "manifest.json"), "utf8"))
       .toContain("codex::demo");
     expect(overlay.skillLinks.map((item) => path.basename(item.targetPath)).sort()).toEqual([
       "codex-review",
       "using-superpowers",
     ]);
+    expect(overlay.pluginLinks.map((item) => item.pluginId)).toEqual([
+      "computer-use@openai-bundled",
+    ]);
     expect(await readFile(path.join(sharedHome, ".agents", "skills", "codex-review", "SKILL.md"), "utf8"))
       .toContain("codex-review");
+    expect(await readFile(
+      path.join(sharedHome, "plugins", "cache", "openai-bundled", "computer-use", "1.0.0", ".codex-plugin", "plugin.json"),
+      "utf8",
+    )).toContain("computer-use");
     expect(overlay.skillLinks.every((item) => item.targetPath.includes("codex-runtime"))).toBe(true);
+    expect(overlay.pluginLinks.every((item) => item.targetPath.includes("codex-runtime"))).toBe(true);
   });
 
   it("should refuse to clear an overlay outside the configured overlay root", async () => {
@@ -153,5 +188,49 @@ describe("CapabilityOverlayService", () => {
     ]);
     expect(await readFile(path.join(profileHome, ".agents", "skills", "linked-skill", "SKILL.md"), "utf8"))
       .toContain("linked-skill");
+  });
+
+  it("should record copy fallback metadata when Codex skill junction creation fails", async () => {
+    const root = await makeTempDir();
+    const agentsHome = path.join(root, ".agents");
+    const profileHome = path.join(root, "app-data", "codex-runtime", "home");
+    const overlayRoot = path.join(root, "overlays");
+    const onDirectoryLinkFallback = vi.fn();
+    await createSkill(path.join(agentsHome, "skills"), "copy-fallback");
+    const symlinkSpy = vi.spyOn(fs, "symlink").mockRejectedValueOnce(Object.assign(
+      new Error("A required privilege is not held by the client"),
+      { code: "EPERM" },
+    ));
+
+    const service = new CapabilityOverlayService({
+      overlayRoot,
+      agentsHome,
+      codexHome: path.join(root, ".codex-empty"),
+      onDirectoryLinkFallback,
+    });
+
+    const overlay = await service.prepareCodexOverlay({ profileId: "codex::fallback", profileHome });
+    const manifest = JSON.parse(
+      await readFile(path.join(overlayRoot, "codex", buildCodexProfileDirectoryName("codex::fallback"), "manifest.json"), "utf8"),
+    ) as { skillLinks: Array<{ mode: string; fallbackReason?: string }> };
+
+    symlinkSpy.mockRestore();
+    expect(overlay.skillLinks).toEqual([
+      expect.objectContaining({
+        skillName: "copy-fallback",
+        mode: "copy",
+        fallbackReason: expect.stringContaining("EPERM"),
+      }),
+    ]);
+    expect(manifest.skillLinks[0]).toEqual(expect.objectContaining({
+      mode: "copy",
+      fallbackReason: expect.stringContaining("EPERM"),
+    }));
+    expect(onDirectoryLinkFallback).toHaveBeenCalledWith(expect.objectContaining({
+      reason: expect.stringContaining("EPERM"),
+      targetPath: expect.stringContaining("copy-fallback"),
+    }));
+    expect(await readFile(path.join(profileHome, ".agents", "skills", "copy-fallback", "SKILL.md"), "utf8"))
+      .toContain("copy-fallback");
   });
 });

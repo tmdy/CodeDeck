@@ -21,16 +21,17 @@ describe("LocalStateStore", () => {
   it("should persist parameter settings independently", async () => {
     const store = await makeStore();
     const state = defaultLocalState();
-    state.parameter_settings.launch_timeout_ms = 12345;
     state.parameter_settings.inherit_global_capabilities = false;
+    state.parameter_settings.connectivity_test_timeout_ms = 12345;
 
     await store.save(state);
     const loaded = await store.load();
     const rawPath = (store as unknown as { filePath: string }).filePath;
     const persisted = JSON.parse(await readFile(rawPath, "utf-8"));
 
-    expect(loaded.parameter_settings.launch_timeout_ms).toBe(12345);
     expect(loaded.parameter_settings.inherit_global_capabilities).toBe(false);
+    expect(loaded.parameter_settings.connectivity_test_timeout_ms).toBe(12345);
+    expect("launch_timeout_ms" in loaded.parameter_settings).toBe(false);
     expect(loaded.selected_profile_key).toBe("");
     expect("connectivity_tests_by_profile" in persisted).toBe(false);
   });
@@ -68,6 +69,7 @@ describe("LocalStateStore", () => {
     const loaded = await store.load();
 
     expect(loaded.parameter_settings.inherit_global_capabilities).toBe(true);
+    expect("launch_timeout_ms" in loaded.parameter_settings).toBe(false);
   });
 
   it("should normalize global working directory favorites", async () => {
@@ -347,7 +349,7 @@ describe("LocalStateStore", () => {
     const loaded = await store.load();
 
     expect(loaded.parameter_settings.cli_settings.claude.setting_sources).toBe("project,local");
-    expect(loaded.parameter_settings.cli_settings.claude.permission_mode).toBe("acceptEdits");
+    expect("permission_mode" in loaded.parameter_settings.cli_settings.claude).toBe(false);
     expect(loaded.parameter_settings.cli_settings.codex.wire_api).toBe("responses");
   });
 

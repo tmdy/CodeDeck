@@ -1,10 +1,10 @@
 {
-  "name": "skills-manager",
+  "name": "codedeck",
   "private": true,
   "version": "0.2.0",
-  "productName": "Skills Manager",
+  "productName": "CodeDeck",
   "author": "99395",
-  "description": "AI CLI 工具统一管理 — Skills 管理 + Profile 配置启动器 + 模型映射 + 参数设置",
+  "description": "CodeDeck：AI CLI 工具统一管理，覆盖 Skills 管理、Profile 配置启动器、模型映射与参数设置",
   "type": "module",
   "main": "dist-electron/electron/main.js",
   "scripts": {
@@ -13,6 +13,7 @@
     "dev:electron": "wait-on tcp:5173 dist-electron/electron/main.js http-get://localhost:5173/src/main.tsx http-get://localhost:5173/src/App.tsx && set VITE_DEV_SERVER_URL=http://localhost:5173&& electron ./dist-electron/electron/main.js",
     "build:electron": "tsc -p tsconfig.node.json",
     "build:electron:watch": "tsc -p tsconfig.node.json --watch",
+    "rebuild:native": "electron-rebuild -f -w node-pty",
     "merge:translations": "node ./scripts/merge-generated-translations.mjs",
     "tag:ai-research": "npm run build:electron && node ./scripts/apply-ai-research-user-tags.mjs",
     "prepare:package": "node ./scripts/prepare-package.mjs",
@@ -27,11 +28,15 @@
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "gray-matter": "^4.0.3",
+    "node-pty": "^1.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.1.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@types/node": "^24.9.1",
     "@types/react": "^19.2.2",
@@ -49,11 +54,14 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "com.local.skillsmanager",
-    "productName": "Skills Manager",
+    "appId": "com.local.codedeck",
+    "productName": "CodeDeck",
     "copyright": "Copyright © 2026 99395",
     "artifactName": "${productName}-Setup-${version}.${ext}",
     "compression": "maximum",
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -107,7 +115,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Skills Manager",
+      "shortcutName": "CodeDeck",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",

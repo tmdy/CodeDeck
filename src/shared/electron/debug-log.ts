@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { APP_LOG_FILE_NAME } from "../branding.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -58,7 +59,7 @@ export interface IpcHandlerLoggerOptions {
   nowMs?: () => number;
 }
 
-const DEFAULT_LOG_FILE = "skills-manager.log";
+const DEFAULT_LOG_FILE = APP_LOG_FILE_NAME;
 const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 5;
 const REDACTED = "[REDACTED]";

@@ -3,19 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Skills Manager</title>
+    <title>CodeDeck</title>
     <script>
       (() => {
         const isTheme = (value) => value === "light" || value === "dark";
         const isThemeMode = (value) => isTheme(value) || value === "system";
         const systemPrefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
         const fallbackTheme = systemPrefersDark ? "dark" : "light";
-        const rawTheme = window.__SKILLS_MANAGER_STARTUP_THEME__;
+        const rawTheme = window.__CODEDECK_STARTUP_THEME__;
         const startupTheme = {
           themeMode: isThemeMode(rawTheme?.themeMode) ? rawTheme.themeMode : "system",
           effectiveTheme: isTheme(rawTheme?.effectiveTheme) ? rawTheme.effectiveTheme : fallbackTheme,
         };
-        window.__SKILLS_MANAGER_STARTUP_THEME__ = startupTheme;
+        window.__CODEDECK_STARTUP_THEME__ = startupTheme;
         document.documentElement.dataset.theme = startupTheme.effectiveTheme;
         document.documentElement.dataset.themeMode = startupTheme.themeMode;
       })();
@@ -165,7 +165,7 @@
     <div id="root">
       <div class="startup-screen">
         <div class="unlock-card">
-          <h1>Skills Manager</h1>
+          <h1>CodeDeck</h1>
           <p>正在准备解锁界面...</p>
           <div class="startup-progress" role="progressbar" aria-label="正在准备解锁界面">
             <span class="startup-progress-bar"></span>

@@ -17,17 +17,6 @@ export function ParameterSettingsPanel({
   return (
     <div className="parameter-settings">
       <GlassCard title="超时设置">
-        <label>
-          启动超时 (毫秒)
-          <input
-            type="number"
-            value={settings.launch_timeout_ms ?? 30000}
-            onChange={(e) =>
-              onChange({ launch_timeout_ms: parseInt(e.target.value, 10) || 30000 })
-            }
-            disabled={disabled}
-          />
-        </label>
         <label className="checkbox-label">
           <input
             type="checkbox"
@@ -122,24 +111,6 @@ export function ParameterSettingsPanel({
             disabled={disabled}
           />
         </label>
-        <label>
-          权限模式
-          <input
-            value={settings.cli_settings?.claude?.permission_mode ?? "acceptEdits"}
-            onChange={(e) =>
-              onChange({
-                cli_settings: {
-                  ...settings.cli_settings,
-                  claude: {
-                    ...settings.cli_settings?.claude,
-                    permission_mode: e.target.value,
-                  },
-                },
-              })
-            }
-            disabled={disabled}
-          />
-        </label>
       </GlassCard>
 
       <GlassCard title="Codex CLI 特定设置">
@@ -161,6 +132,27 @@ export function ParameterSettingsPanel({
             disabled={disabled}
           />
         </label>
+        <label>
+          终端模式
+          <select
+            value={settings.cli_settings?.codex?.terminal_mode ?? "monitored"}
+            onChange={(e) =>
+              onChange({
+                cli_settings: {
+                  ...settings.cli_settings,
+                  codex: {
+                    ...settings.cli_settings?.codex,
+                    terminal_mode: e.target.value === "direct" ? "direct" : "monitored",
+                  },
+                },
+              })
+            }
+            disabled={disabled}
+          >
+            <option value="monitored">受监控独立窗口</option>
+            <option value="direct">系统直连</option>
+          </select>
+        </label>
         <label className="checkbox-label">
           <input
             type="checkbox"
@@ -179,6 +171,84 @@ export function ParameterSettingsPanel({
             disabled={disabled}
           />
           跳过 Git 仓库检查
+        </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={settings.cli_settings?.codex?.auto_continue_on_failure ?? true}
+            onChange={(e) =>
+              onChange({
+                cli_settings: {
+                  ...settings.cli_settings,
+                  codex: {
+                    ...settings.cli_settings?.codex,
+                    auto_continue_on_failure: e.target.checked,
+                  },
+                },
+              })
+            }
+            disabled={disabled}
+          />
+          高峰失败时自动输入继续
+        </label>
+        <label>
+          自动继续次数
+          <input
+            type="number"
+            min={-1}
+            value={settings.cli_settings?.codex?.auto_continue_limit ?? 1}
+            onChange={(e) =>
+              onChange({
+                cli_settings: {
+                  ...settings.cli_settings,
+                  codex: {
+                    ...settings.cli_settings?.codex,
+                    auto_continue_limit: parseInt(e.target.value, 10) || 1,
+                  },
+                },
+              })
+            }
+            disabled={disabled}
+          />
+        </label>
+        <label>
+          自动继续关键词
+          <textarea
+            value={(settings.cli_settings?.codex?.auto_continue_keywords ?? []).join("\n")}
+            onChange={(e) =>
+              onChange({
+                cli_settings: {
+                  ...settings.cli_settings,
+                  codex: {
+                    ...settings.cli_settings?.codex,
+                    auto_continue_keywords: e.target.value
+                      .split(/\r?\n/)
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  },
+                },
+              })
+            }
+            disabled={disabled}
+          />
+        </label>
+        <label>
+          自动继续输入文本
+          <input
+            value={settings.cli_settings?.codex?.auto_continue_prompt ?? "继续"}
+            onChange={(e) =>
+              onChange({
+                cli_settings: {
+                  ...settings.cli_settings,
+                  codex: {
+                    ...settings.cli_settings?.codex,
+                    auto_continue_prompt: e.target.value,
+                  },
+                },
+              })
+            }
+            disabled={disabled}
+          />
         </label>
       </GlassCard>
 

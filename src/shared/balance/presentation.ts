@@ -90,7 +90,7 @@ export function buildBalanceListEntry(state: BalanceCheckState | null | undefine
     return { label: "N/A", status: "unsupported" };
   }
   if (state.message || state.finished_at_display) {
-    return { label: "失败", status: "fail" };
+    return { label: "", status: "" };
   }
   return { label: "", status: "" };
 }

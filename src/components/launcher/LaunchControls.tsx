@@ -3,6 +3,9 @@
 import { memo } from "react";
 
 interface LaunchControlsProps {
+  provider: "claude" | "codex";
+  monitorModeEnabled?: boolean;
+  onMonitorModeChange?: (enabled: boolean) => void;
   onDirectLaunch: () => void;
   onContinueLaunch: () => void;
   onResumeLaunch: () => void;
@@ -14,6 +17,9 @@ interface LaunchControlsProps {
 }
 
 export const LaunchControls = memo(function LaunchControls({
+  provider,
+  monitorModeEnabled,
+  onMonitorModeChange,
   onDirectLaunch,
   onContinueLaunch,
   onResumeLaunch,
@@ -26,6 +32,17 @@ export const LaunchControls = memo(function LaunchControls({
   return (
     <div className="launch-controls">
       {permissionSummary && <p className="session-meta">将以以下权限启动：{permissionSummary}</p>}
+      {provider === "codex" && onMonitorModeChange && (
+        <label className="launch-monitor-toggle">
+          <input
+            type="checkbox"
+            checked={Boolean(monitorModeEnabled)}
+            onChange={(event) => onMonitorModeChange(event.target.checked)}
+            disabled={disabled}
+          />
+          <span>开启监控模式</span>
+        </label>
+      )}
       <button type="button" className="launch-btn primary" onClick={onDirectLaunch} disabled={disabled}>
         直接启动
       </button>

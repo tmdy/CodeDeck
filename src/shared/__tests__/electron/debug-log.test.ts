@@ -13,7 +13,7 @@ import {
 const tempDirs: string[] = [];
 
 async function createTempDir(): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "skills-manager-app-log-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "codedeck-app-log-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -42,7 +42,7 @@ describe("createAppLogger", () => {
     });
     await logger.flush();
 
-    const records = await readJsonLines(path.join(dir, "skills-manager.log"));
+    const records = await readJsonLines(path.join(dir, "codedeck.log"));
 
     expect(records).toEqual([
       {
@@ -88,8 +88,8 @@ describe("createAppLogger", () => {
 
   it("rotates log files when the active log exceeds the size limit", async () => {
     const dir = await createTempDir();
-    await writeFile(path.join(dir, "skills-manager.log"), "active-old-content", "utf-8");
-    await writeFile(path.join(dir, "skills-manager.log.1"), "rotated-one", "utf-8");
+    await writeFile(path.join(dir, "codedeck.log"), "active-old-content", "utf-8");
+    await writeFile(path.join(dir, "codedeck.log.1"), "rotated-one", "utf-8");
     const logger = createAppLogger({
       getDirectory: () => dir,
       maxFileBytes: 8,
@@ -100,9 +100,9 @@ describe("createAppLogger", () => {
     logger.info("app", "after_rotation", "new active");
     await logger.flush();
 
-    await expect(readFile(path.join(dir, "skills-manager.log.2"), "utf-8")).resolves.toBe("rotated-one");
-    await expect(readFile(path.join(dir, "skills-manager.log.1"), "utf-8")).resolves.toBe("active-old-content");
-    const activeRecords = await readJsonLines(path.join(dir, "skills-manager.log"));
+    await expect(readFile(path.join(dir, "codedeck.log.2"), "utf-8")).resolves.toBe("rotated-one");
+    await expect(readFile(path.join(dir, "codedeck.log.1"), "utf-8")).resolves.toBe("active-old-content");
+    const activeRecords = await readJsonLines(path.join(dir, "codedeck.log"));
     expect(activeRecords[0]).toMatchObject({
       level: "info",
       scope: "app",
@@ -131,7 +131,7 @@ describe("createAppLogger", () => {
 
     expect(appendFile).toHaveBeenCalledTimes(2);
     expect(appendFile.mock.calls[1]).toEqual([
-      path.join(dir, "skills-manager.log"),
+      path.join(dir, "codedeck.log"),
       expect.stringContaining("\"event\":\"recovered\""),
       "utf-8",
     ]);

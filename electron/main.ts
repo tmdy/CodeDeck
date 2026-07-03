@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from "electron";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import * as nodePty from "node-pty";
 import { initializeWorkspace, resolveWorkspaceLayout, type WorkspaceLayout } from "../src/shared/app-workspace.js";
 import { resolveElectronRuntimePaths } from "../src/shared/electron-runtime-paths.js";
 import {
@@ -33,8 +34,18 @@ import {
 import { pickDirectoryPath } from "../src/shared/electron/dialog-helpers.js";
 import { createAppLogger, createIpcHandlerLogger } from "../src/shared/electron/debug-log.js";
 import { createSessionListCache } from "../src/shared/electron/session-list-cache.js";
-import { executeLaunchPlan, type ExternalTerminalLaunchSpec } from "../src/shared/electron/launch-runtime.js";
+import {
+  buildWindowsPtyLaunchSpec,
+  executeLaunchPlan,
+  type ExternalTerminalLaunchSpec,
+} from "../src/shared/electron/launch-runtime.js";
 import { resolveBaseUrlExternalTarget } from "../src/shared/electron/open-url.js";
+import {
+  TerminalSessionManager,
+  type CreatePtyProcessOptions,
+  type TerminalSessionAutoContinueEvent,
+  type TerminalSessionSnapshot,
+} from "../src/shared/electron/terminal-session-manager.js";
 import {
   importCodexSessionToRuntimeHome,
   invalidateCodexSessionCache,
@@ -57,7 +68,7 @@ import {
   type GlobalSettings,
 } from "../src/shared/profile/types.js";
 import { itemKey } from "../src/shared/profile/keys-internal.js";
-import type { LaunchRequest, CommandPreview } from "../src/shared/launcher/types.js";
+import type { LaunchRequest, LaunchResult, CommandPreview } from "../src/shared/launcher/types.js";
 import {
   defaultBalanceCheckState,
   type BalanceCheckState,
@@ -66,6 +77,14 @@ import type { ParameterSettings } from "../src/shared/parameter/types.js";
 import type { ModelMappingsState } from "../src/shared/model-mapping/config-types.js";
 import { normalizeThemeMode } from "../src/shared/theme.js";
 import { createStartupTheme, serializeStartupTheme } from "../src/shared/startup-theme.js";
+import {
+  APP_DEV_USER_DATA_DIR,
+  APP_ID,
+  APP_NAME,
+  CODEDECK_PROJECT_ROOT_ENV,
+  LEGACY_PROJECT_ROOT_ENV,
+  STARTUP_THEME_ARG_PREFIX,
+} from "../src/shared/branding.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -97,12 +116,53 @@ let mainWindow: BrowserWindow | null = null;
 let skillsInitPromise: Promise<void> | null = null;
 let profileStoresInitPromise: Promise<void> | null = null;
 const sessionListCache = createSessionListCache({ ttlMs: 5_000 });
+const terminalSessionManager = new TerminalSessionManager({
+  createPtyProcess: createNodePtyProcess,
+  onAutoContinueEvent: logTerminalAutoContinueEvent,
+});
+const terminalAttachmentDisposers = new Map<string, () => void>();
+const terminalWindows = new Map<string, BrowserWindow>();
 const appLogger = createAppLogger({
   getDirectory: () => path.join(projectRoot || process.cwd(), "app-data", "logs"),
 });
 const handleIpc = createIpcHandlerLogger(appLogger, (channel, handler) => {
   ipcMain.handle(channel, (event, ...args) => handler(event, ...args));
 });
+
+function logTerminalAutoContinueEvent(event: TerminalSessionAutoContinueEvent): void {
+  const context = {
+    sessionId: event.sessionId,
+    phase: event.phase,
+    reason: event.reason,
+    keyword: event.keyword,
+    matchCount: event.matchCount,
+    remaining: event.remaining,
+    prompt: event.prompt,
+    subscriberCount: event.subscriberCount,
+    visibleExcerpt: event.visibleExcerpt,
+  };
+  if (event.phase === "matched") {
+    appLogger.info("terminal_auto_continue", "auto_continue_matched", "收到终端输出并命中自动继续关键词", {
+      context,
+    });
+    return;
+  }
+  if (event.phase === "queued") {
+    appLogger.info("terminal_auto_continue", "auto_continue_queued", "自动继续输入已排队", {
+      context,
+    });
+    return;
+  }
+  if (event.phase === "flushed") {
+    appLogger.info("terminal_auto_continue", "auto_continue_flushed", "自动继续输入已写入 PTY", {
+      context,
+    });
+    return;
+  }
+  appLogger.debug("terminal_auto_continue", "auto_continue_skipped", "自动继续输入已跳过", {
+    context,
+  });
+}
 
 function getDefaultWorkingDirectory(): string {
   return app.getPath("downloads").replace(/\\/g, "/");
@@ -161,6 +221,11 @@ async function fileExists(targetPath: string): Promise<boolean> {
   }
 }
 
+async function writeManagedLaunchTextFile(targetPath: string, content: string): Promise<void> {
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, content, "utf8");
+}
+
 async function hasEncryptedConfigFile(): Promise<boolean> {
   if (encryptedStore) {
     return encryptedStore.exists();
@@ -179,7 +244,7 @@ async function syncNativeThemeFromLocalState(): Promise<void> {
 }
 
 function getStartupThemeArgument(): string {
-  return `--skills-manager-startup-theme=${serializeStartupTheme(
+  return `${STARTUP_THEME_ARG_PREFIX}${serializeStartupTheme(
     createStartupTheme(nativeTheme.themeSource, nativeTheme.shouldUseDarkColors),
   )}`;
 }
@@ -214,7 +279,7 @@ function createStartupShellHtml(
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Skills Manager</title>
+    <title>${APP_NAME}</title>
     <style>
       :root {
         font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -303,7 +368,7 @@ function createStartupShellHtml(
     <div id="root">
       <div class="startup-screen">
         <div class="unlock-card">
-          <h1>Skills Manager</h1>
+          <h1>${APP_NAME}</h1>
           <p>${safeMessage}</p>
           ${showProgress ? `
           <div class="startup-progress" role="progressbar" aria-label="${safeMessage}">
@@ -355,13 +420,18 @@ if (!gotSingleInstanceLock) {
 
 // ---- Skills 服务 ----
 
+function getConfiguredProjectRootEnv(): string | undefined {
+  return process.env[CODEDECK_PROJECT_ROOT_ENV] || process.env[LEGACY_PROJECT_ROOT_ENV];
+}
+
 function resolveCurrentWorkspaceLayout(): WorkspaceLayout {
+  const envProjectRoot = getConfiguredProjectRootEnv();
   return resolveWorkspaceLayout({
     cwd: process.cwd(),
-    envProjectRoot: process.env.SKILLS_MANAGER_PROJECT_ROOT,
+    envProjectRoot,
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
-    userDataPath: app.isPackaged ? app.getPath("userData") : path.join(os.homedir(), ".skills-manager"),
+    userDataPath: app.isPackaged ? app.getPath("userData") : path.join(os.homedir(), APP_DEV_USER_DATA_DIR),
   });
 }
 
@@ -378,7 +448,7 @@ async function initSkillsService(layout = resolveProjectRoot()): Promise<void> {
   appLogger.info("app", "skills_first_init_start", "Initializing skills workspace", {
     context: {
       isPackaged: app.isPackaged,
-      hasEnvProjectRoot: !!process.env.SKILLS_MANAGER_PROJECT_ROOT?.trim(),
+      hasEnvProjectRoot: Boolean(getConfiguredProjectRootEnv()?.trim()),
     },
   });
   projectRoot = layout.workspaceRoot;
@@ -586,6 +656,62 @@ async function spawnExternalTerminal(spec: ExternalTerminalLaunchSpec): Promise<
   });
 }
 
+async function validateLaunchPlan(plan: Parameters<typeof executeLaunchPlan>[0]): Promise<void> {
+  if (!plan.valid) {
+    throw new Error(plan.error || "无法生成启动命令。");
+  }
+  if (!plan.cwd.trim() || !(await directoryExists(plan.cwd))) {
+    throw new Error("工作目录不存在，请先设置有效的工作目录。");
+  }
+  if (plan.launchMode === "resume_selected" && !(plan.sessionId ?? "").trim()) {
+    throw new Error("恢复指定会话时必须提供 sessionId。");
+  }
+  for (const envKey of plan.requiredEnvKeys) {
+    if (!(plan.env[envKey] ?? "").trim()) {
+      throw new Error(`Provider 配置缺少必需环境变量：${envKey}`);
+    }
+  }
+  if (!plan.commandExecutable.trim() || !(await commandExists(plan.commandExecutable))) {
+    throw new Error(`命令不可执行或不在 PATH 中：${plan.commandExecutable}`);
+  }
+}
+
+async function launchMonitoredTerminalSession(plan: Parameters<typeof executeLaunchPlan>[0]): Promise<TerminalSessionSnapshot> {
+  await validateLaunchPlan(plan);
+  const spec = buildWindowsPtyLaunchSpec(plan);
+  const mergedEnv = Object.fromEntries(
+    Object.entries({
+      ...process.env,
+      ...plan.env,
+    }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  if (mergedEnv.PATH && !mergedEnv.Path) {
+    mergedEnv.Path = mergedEnv.PATH;
+  }
+  const snapshot = await terminalSessionManager.createSession({
+    provider: plan.provider,
+    cwd: plan.cwd,
+    commandExecutable: plan.commandExecutable,
+    commandArgs: plan.commandArgs,
+    spawnFilePath: spec.filePath,
+    spawnArgs: spec.args,
+    env: mergedEnv,
+    autoContinue: plan.codexAutoContinue ?? {
+      enabled: false,
+      limit: 1,
+      prompt: "继续",
+      keywords: [],
+    },
+  });
+  try {
+    await createTerminalWindow(snapshot.sessionId);
+  } catch (windowError) {
+    await terminalSessionManager.closeSession(snapshot.sessionId, "window_create_failed");
+    throw windowError;
+  }
+  return snapshot;
+}
+
 async function prepareCapabilityOverlay(request: LaunchRequest): Promise<LaunchRequest["capability_overlay"]> {
   if (!getSettingsStateService().getParameterSettings().inherit_global_capabilities) {
     return undefined;
@@ -632,6 +758,11 @@ async function initProfileServices(): Promise<void> {
   modelMappingConfigService = new ModelMappingConfigService({ appDataRoot: appDataDir });
   capabilityOverlayService = new CapabilityOverlayService({
     overlayRoot: path.join(appDataDir, "runtime-overlays"),
+    onDirectoryLinkFallback: ({ sourcePath, targetPath, reason }) => {
+      appLogger.warn("capabilities", "directory_link_fallback", "Directory junction creation failed; copied directory instead", {
+        context: { sourcePath, targetPath, reason },
+      });
+    },
   });
   modelCatalogService = new ModelCatalogService();
   balanceService = new BalanceService();
@@ -891,10 +1022,73 @@ function getPreloadPath(): string {
   }).preloadPath;
 }
 
+function buildRendererUrl(searchParams?: Record<string, string>): string {
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    const url = new URL(devServerUrl);
+    for (const [key, value] of Object.entries(searchParams ?? {})) {
+      url.searchParams.set(key, value);
+    }
+    return url.toString();
+  }
+  const url = pathToFileURL(resolveDistIndexPath());
+  for (const [key, value] of Object.entries(searchParams ?? {})) {
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
+function createNodePtyProcess(options: CreatePtyProcessOptions) {
+  const ptyProcess = nodePty.spawn(options.filePath, options.args, {
+    name: "xterm-color",
+    cols: options.cols,
+    rows: options.rows,
+    cwd: options.cwd,
+    env: options.env,
+  });
+  return {
+    pid: ptyProcess.pid,
+    write: (data: string) => ptyProcess.write(data),
+    resize: (cols: number, rows: number) => ptyProcess.resize(cols, rows),
+    kill: () => ptyProcess.kill(),
+    onData: (listener: (data: string) => void) => {
+      const disposable = ptyProcess.onData(listener);
+      return () => disposable.dispose();
+    },
+    onExit: (listener: (event: { exitCode: number; signal?: number }) => void) => {
+      const disposable = ptyProcess.onExit(listener);
+      return () => disposable.dispose();
+    },
+  };
+}
+
+function getTerminalAttachmentKey(webContentsId: number, sessionId: string): string {
+  return `${webContentsId}:${sessionId}`;
+}
+
+function clearTerminalAttachment(webContentsId: number, sessionId: string): void {
+  const attachmentKey = getTerminalAttachmentKey(webContentsId, sessionId);
+  const dispose = terminalAttachmentDisposers.get(attachmentKey);
+  if (!dispose) {
+    return;
+  }
+  dispose();
+  terminalAttachmentDisposers.delete(attachmentKey);
+}
+
+function describeLaunchResult(planTerminalMode: "direct" | "monitored", snapshot?: TerminalSessionSnapshot): LaunchResult {
+  return {
+    launched: true,
+    terminalMode: planTerminalMode,
+    monitoringActive: planTerminalMode === "monitored",
+    terminalSessionId: snapshot?.sessionId,
+  };
+}
+
 async function createMainWindow(): Promise<void> {
   appLogger.info("window", "main_window_start", "Opening main window");
   const browserWindow = new BrowserWindow({
-    title: "Skills Manager",
+    title: APP_NAME,
     width: 1520,
     height: 920,
     minWidth: 1200,
@@ -943,10 +1137,39 @@ async function createMainWindow(): Promise<void> {
   }
 }
 
+async function createTerminalWindow(sessionId: string): Promise<BrowserWindow> {
+  const browserWindow = new BrowserWindow({
+    title: "Codex Terminal",
+    width: 1180,
+    height: 760,
+    minWidth: 900,
+    minHeight: 560,
+    show: true,
+    backgroundColor: "#10161f",
+    icon: resolveWindowIconPath(),
+    webPreferences: {
+      preload: getPreloadPath(),
+      additionalArguments: [getStartupThemeArgument()],
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  terminalWindows.set(sessionId, browserWindow);
+  browserWindow.on("closed", () => {
+    terminalWindows.delete(sessionId);
+    void terminalSessionManager.closeSession(sessionId, "window_closed").catch(() => {
+      // Ignore close races when the PTY already exited.
+    });
+  });
+  await browserWindow.loadURL(buildRendererUrl({ view: "terminal", sessionId }));
+  return browserWindow;
+}
+
 // ---- 注册所有 IPC 处理器 ----
 
 function registerAllIpcHandlers(): void {
-  // ============ Skills Manager IPC（按需初始化） ============
+  // ============ Skills IPC（按需初始化） ============
   handleIpc("skills-manager:scan", async () => {
     const svc = await getReadySkillsService();
     return svc.scanEnvironment();
@@ -1060,6 +1283,49 @@ function registerAllIpcHandlers(): void {
       context: record.context,
     });
   });
+
+  handleIpc("terminal:attach", (event, sessionId: string) => {
+    const sender = event.sender;
+    clearTerminalAttachment(sender.id, sessionId);
+    const dispose = terminalSessionManager.attachSession(sessionId, {
+      onOutput: (chunk) => {
+        if (!sender.isDestroyed()) {
+          sender.send("terminal:output", sessionId, chunk);
+        }
+      },
+      onStatus: (snapshot) => {
+        if (!sender.isDestroyed()) {
+          sender.send("terminal:status", snapshot);
+        }
+      },
+    });
+    terminalAttachmentDisposers.set(getTerminalAttachmentKey(sender.id, sessionId), dispose);
+    sender.once("destroyed", () => {
+      clearTerminalAttachment(sender.id, sessionId);
+    });
+    const snapshot = terminalSessionManager.getSnapshot(sessionId);
+    if (!snapshot) {
+      throw new Error(`终端会话不存在：${sessionId}`);
+    }
+    return snapshot;
+  }, { level: "debug" });
+  handleIpc("terminal:send-input", async (_event, sessionId: string, data: string) => {
+    terminalSessionManager.sendInput(sessionId, data);
+  }, { level: "debug" });
+  handleIpc("terminal:resize", async (_event, sessionId: string, cols: number, rows: number) => {
+    terminalSessionManager.resizeSession(sessionId, cols, rows);
+  }, { level: "debug" });
+  handleIpc("terminal:close", async (_event, sessionId: string) => {
+    await terminalSessionManager.closeSession(sessionId, "renderer_requested");
+    const browserWindow = terminalWindows.get(sessionId);
+    if (browserWindow && !browserWindow.isDestroyed()) {
+      browserWindow.close();
+    }
+  }, { level: "debug" });
+  handleIpc("terminal:read-clipboard-text", async () => clipboard.readText(), { level: "debug" });
+  handleIpc("terminal:write-clipboard-text", async (_event, text: string) => {
+    clipboard.writeText(text);
+  }, { level: "debug" });
 
   // ============ Profile IPC ============
 
@@ -1294,15 +1560,17 @@ function registerAllIpcHandlers(): void {
   handleIpc("launcher:launch", async (_event, request: LaunchRequest) => {
     const startedAt = Date.now();
     const capability_overlay = await prepareCapabilityOverlay(request);
-    const plan = getLaunchService().buildExecutionPlan({
+    const planRequest = {
       ...request,
       capability_overlay,
-    });
+    };
+    const plan = getLaunchService().buildExecutionPlan(planRequest);
     appLogger.info("launcher", "launch_plan_created", "Launch plan created", {
       context: {
         provider: request.provider,
         profileKey: request.profile_key,
         launchMode: plan.launchMode,
+        terminalMode: plan.terminalMode,
         cwd: plan.cwd,
         valid: plan.valid,
         commandExecutable: plan.commandExecutable,
@@ -1313,6 +1581,16 @@ function registerAllIpcHandlers(): void {
       throw new Error(plan.error || "无法生成启动命令");
     }
     await importExternalCodexSessionIfNeeded(request);
+    if (plan.claudeSettings) {
+      await writeManagedLaunchTextFile(plan.claudeSettings.settingsPath, plan.claudeSettings.content);
+      appLogger.info("launcher", "claude_permissions_written", "Claude managed permission settings written", {
+        context: {
+          provider: request.provider,
+          profileKey: request.profile_key,
+          settingsPath: plan.claudeSettings.settingsPath,
+        },
+      });
+    }
     if (plan.codexConfig) {
       await getModelMappingConfigService().writeCodexProfile({
         profileId: request.profile_key,
@@ -1323,6 +1601,7 @@ function registerAllIpcHandlers(): void {
         apiKeyEnv: plan.codexConfig.apiKeyEnv,
         targetModel: plan.codexConfig.targetModel,
         content: plan.codexConfig.content,
+        rulesContent: plan.codexConfig.rulesContent,
       });
       appLogger.info("launcher", "codex_config_written", "Codex profile config written", {
         context: {
@@ -1333,24 +1612,84 @@ function registerAllIpcHandlers(): void {
         },
       });
     }
+    try {
+      if (plan.provider === "codex" && plan.terminalMode === "monitored") {
+        const snapshot = await launchMonitoredTerminalSession(plan);
+        sessionListCache.invalidate(request.provider);
+        appLogger.info("launcher", "launch_success", "Monitored terminal session started", {
+          durationMs: Date.now() - startedAt,
+          context: {
+            provider: request.provider,
+            profileKey: request.profile_key,
+            launchMode: plan.launchMode,
+            terminalMode: plan.terminalMode,
+            cwd: plan.cwd,
+            commandExecutable: plan.commandExecutable,
+            terminalSessionId: snapshot.sessionId,
+            hasCodexConfig: !!plan.codexConfig,
+          },
+        });
+        return describeLaunchResult(plan.terminalMode, snapshot);
+      }
 
-    await executeLaunchPlan(plan, {
-      directoryExists,
-      commandExists,
-      spawnExternalTerminal,
-    });
-    sessionListCache.invalidate(request.provider);
-    appLogger.info("launcher", "launch_success", "Launch command executed", {
-      durationMs: Date.now() - startedAt,
-      context: {
-        provider: request.provider,
-        profileKey: request.profile_key,
-        launchMode: plan.launchMode,
-        cwd: plan.cwd,
-        commandExecutable: plan.commandExecutable,
-        hasCodexConfig: !!plan.codexConfig,
-      },
-    });
+      await executeLaunchPlan(plan, {
+        directoryExists,
+        commandExists,
+        spawnExternalTerminal,
+      });
+      sessionListCache.invalidate(request.provider);
+      appLogger.info("launcher", "launch_success", "Launch command executed", {
+        durationMs: Date.now() - startedAt,
+        context: {
+          provider: request.provider,
+          profileKey: request.profile_key,
+          launchMode: plan.launchMode,
+          terminalMode: plan.terminalMode,
+          cwd: plan.cwd,
+          commandExecutable: plan.commandExecutable,
+          hasCodexConfig: !!plan.codexConfig,
+        },
+      });
+      return describeLaunchResult(plan.terminalMode);
+    } catch (error) {
+      if (plan.provider === "codex" && plan.terminalMode === "monitored") {
+        appLogger.error("launcher", "launch_monitored_fallback", "Monitored launch failed, falling back to direct launch", {
+          durationMs: Date.now() - startedAt,
+          context: {
+            provider: request.provider,
+            profileKey: request.profile_key,
+            launchMode: plan.launchMode,
+            cwd: plan.cwd,
+            commandExecutable: plan.commandExecutable,
+          },
+          error,
+        });
+        const fallbackPlan = getLaunchService().buildExecutionPlan({
+          ...planRequest,
+          terminal_mode: "direct",
+        });
+        await executeLaunchPlan(fallbackPlan, {
+          directoryExists,
+          commandExists,
+          spawnExternalTerminal,
+        });
+        sessionListCache.invalidate(request.provider);
+        appLogger.info("launcher", "launch_success", "Fallback direct launch executed", {
+          durationMs: Date.now() - startedAt,
+          context: {
+            provider: request.provider,
+            profileKey: request.profile_key,
+            launchMode: fallbackPlan.launchMode,
+            terminalMode: fallbackPlan.terminalMode,
+            cwd: fallbackPlan.cwd,
+            commandExecutable: fallbackPlan.commandExecutable,
+            hasCodexConfig: !!fallbackPlan.codexConfig,
+          },
+        });
+        return describeLaunchResult("direct");
+      }
+      throw error;
+    }
   });
 
   // Sessions
@@ -1413,6 +1752,16 @@ function registerAllIpcHandlers(): void {
     },
     { level: "debug" },
   );
+  handleIpc("balance:clear-state", async (_event, profileKey: ProfileKey) => {
+    const state = getProfileService().getState();
+    if (state.balance_checks_by_profile[profileKey] === undefined) {
+      emitBalanceProgress(profileKey, defaultBalanceCheckState());
+      return;
+    }
+    delete state.balance_checks_by_profile[profileKey];
+    await getProfileStateAccessor().save(state);
+    emitBalanceProgress(profileKey, defaultBalanceCheckState());
+  });
 
   handleIpc("model-mapping-config:get", async () => currentModelMappingsState(), { level: "debug" });
   handleIpc("model-mapping-config:save", async (_event, state: ModelMappingsState) => {
@@ -1532,7 +1881,7 @@ function registerAllIpcHandlers(): void {
 
 // ---- 应用生命周期 ----
 
-app.setAppUserModelId("com.local.skillsmanager");
+app.setAppUserModelId(APP_ID);
 
 if (gotSingleInstanceLock) {
   app.on("second-instance", () => {

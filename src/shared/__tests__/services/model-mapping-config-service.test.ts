@@ -14,7 +14,7 @@ import {
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "skills-manager-model-mapping-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "codedeck-model-mapping-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -256,6 +256,44 @@ describe("ModelMappingConfigService", () => {
     expect(content).not.toContain("[profiles.");
   });
 
+  it("should use the configured Codex wire API and skip git repo check", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+
+    const configPath = await service.writeCodexProfile({
+      profileId: "codex::demo",
+      providerId: buildCodexSiteProviderId("codex::demo"),
+      providerName: "Current Site",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      targetModel: "gpt-5.4",
+      wireApi: "chat",
+      skipGitRepoCheck: true,
+    });
+
+    const content = await readFile(configPath, "utf8");
+    expect(content).toContain('wire_api = "chat"');
+    expect(content).toContain("skip_git_repo_check = true");
+  });
+
+  it("should default Codex profile config to responses wire API without skip git repo check", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+
+    const configPath = await service.writeCodexProfile({
+      profileId: "codex::demo",
+      providerId: buildCodexSiteProviderId("codex::demo"),
+      providerName: "Current Site",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      targetModel: "gpt-5.4",
+    });
+
+    const content = await readFile(configPath, "utf8");
+    expect(content).toContain('wire_api = "responses"');
+    expect(content).not.toContain("skip_git_repo_check");
+  });
+
   it("should migrate provided legacy Codex profile content into standalone profile config", async () => {
     const root = await makeTempDir();
     const service = createService(root);
@@ -368,6 +406,77 @@ describe("ModelMappingConfigService", () => {
     expect(baseContent).toContain("[windows]\nsandbox = \"unelevated\"");
     expect(baseContent).toContain('[projects."C:/repo"]');
     expect(profileContent).toContain("[windows]\nsandbox = \"elevated\"");
+  });
+
+  it("should write inherited Codex plugin config into the shared runtime config", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+    const profileName = buildCodexSiteProfileName("codex::demo");
+
+    const configPath = await service.writeCodexProfile({
+      profileId: "codex::demo",
+      profileName,
+      providerId: buildCodexSiteProviderId("codex::demo"),
+      providerName: "Current Site",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      targetModel: "gpt-5.4",
+      content: [
+        'model = "gpt-5.4"',
+        `model_provider = ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}`,
+        "",
+        `[model_providers.${buildCodexSiteProviderId("codex::demo")}]`,
+        'name = "Current Site"',
+        'base_url = "https://api.openai.com/v1"',
+        `env_key = ${JSON.stringify(buildCodexSiteApiKeyEnv("codex::demo"))}`,
+        'wire_api = "responses"',
+        "",
+        "[marketplaces.openai-bundled]",
+        'source_type = "local"',
+        'source = "C:/Users/me/.codex/.tmp/bundled-marketplaces/openai-bundled"',
+        "",
+        '[plugins."computer-use@openai-bundled"]',
+        "enabled = true",
+        "",
+      ].join("\n"),
+    });
+
+    const baseContent = await readFile(path.join(service.getCodexRuntimeHome(), "config.toml"), "utf8");
+    const profileContent = await readFile(configPath, "utf8");
+
+    expect(baseContent).toContain("[marketplaces.openai-bundled]");
+    expect(baseContent).toContain('[plugins."computer-use@openai-bundled"]');
+    expect(profileContent).not.toContain("[marketplaces.openai-bundled]");
+    expect(profileContent).not.toContain('[plugins."computer-use@openai-bundled"]');
+  });
+
+  it("should write managed Codex permission rules into the runtime rules directory", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+
+    await service.writeCodexProfile({
+      profileId: "codex::demo",
+      providerId: buildCodexSiteProviderId("codex::demo"),
+      providerName: "Current Site",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      targetModel: "gpt-5.4",
+      rulesContent: [
+        "# Managed by CodeDeck.",
+        "prefix_rule(",
+        '    pattern = ["git", "push"],',
+        '    decision = "forbidden",',
+        '    justification = "git push is disabled by profile permissions.",',
+        ")",
+        "",
+      ].join("\n"),
+    });
+
+    const rulesPath = path.join(service.getCodexRuntimeHome(), "rules", "managed-permissions.rules");
+    const rulesContent = await readFile(rulesPath, "utf8").catch(() => "");
+
+    expect(rulesContent).toContain('pattern = ["git", "push"]');
+    expect(rulesContent).toContain('decision = "forbidden"');
   });
 
   it("should avoid backup churn when Codex config content is unchanged", async () => {

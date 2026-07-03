@@ -26,12 +26,11 @@ function Stop-WorkspaceProcesses {
   $escapedProjectRoot = $projectRoot.Replace("\", "\\")
   $targets = Get-CimInstance Win32_Process | Where-Object {
     $_.ProcessId -ne $PID -and
-    $_.Name -in @("node.exe", "electron.exe", "cmd.exe", "Skills Manager.exe") -and
+    $_.Name -in @("node.exe", "electron.exe", "cmd.exe", "CodeDeck.exe") -and
     $_.CommandLine -and
     (
       $_.CommandLine -like "*$projectRoot*" -or
       $_.CommandLine -like "*$escapedProjectRoot*" -or
-      $_.CommandLine -like "*skills管理*" -or
       $_.CommandLine -like "*vite.js --port $port*" -or
       $_.CommandLine -like "*concurrently*"
     )
@@ -56,7 +55,7 @@ function Test-WorkspaceElectronRunning {
     (
       $_.CommandLine -like "*$projectRoot*" -or
       $_.CommandLine -like "*$escapedProjectRoot*" -or
-      $_.CommandLine -like "*skills管理*"
+      $_.CommandLine -like "*CodeDeck*"
     )
   } | Select-Object -First 1)
 }
