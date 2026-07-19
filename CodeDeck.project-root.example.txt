@@ -1,0 +1,3 @@
+# Copy this file to CodeDeck.project-root.txt next to CodeDeck.exe.
+# Put the workspace root on the first non-comment line.
+C:\path\to\CodeDeck

@@ -1,0 +1,106 @@
+tmp/
+node_modules/
+
+# Local skill library populated at runtime
+library/
+
+# Local application runtime data
+app-data/**
+!app-data/
+!app-data/generated-translations/
+!app-data/generated-translations/*.json
+!app-data/tags.json
+!app-data/translations.json
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Chat/session history, logs, caches, and local databases
+*.log
+*.out.log
+*.err.log
+*.jsonl
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+logs/
+cache/
+.cache/
+
+# Frontend/Electron build outputs and package artifacts
+dist/
+dist-electron/
+release/
+release-*/
+*.blockmap
+
+# Local browser/test artifacts
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+search_result.txt
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+plan.md
+
+# Temp files
+*.tmp
+*.temp
+title.txt
+content.txt
+
+# Config with sensitive data
+config/accounts.json
+
+# Images
+images/publish_temp/*
+!images/publish_temp/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+.ace-tool/

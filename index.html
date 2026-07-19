@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CodeDeck</title>
+    <script>
+      (() => {
+        const isTheme = (value) => value === "light" || value === "dark";
+        const isThemeMode = (value) => isTheme(value) || value === "system";
+        const systemPrefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+        const fallbackTheme = systemPrefersDark ? "dark" : "light";
+        const rawTheme = window.__CODEDECK_STARTUP_THEME__;
+        const startupTheme = {
+          themeMode: isThemeMode(rawTheme?.themeMode) ? rawTheme.themeMode : "system",
+          effectiveTheme: isTheme(rawTheme?.effectiveTheme) ? rawTheme.effectiveTheme : fallbackTheme,
+        };
+        window.__CODEDECK_STARTUP_THEME__ = startupTheme;
+        document.documentElement.dataset.theme = startupTheme.effectiveTheme;
+        document.documentElement.dataset.themeMode = startupTheme.themeMode;
+      })();
+    </script>
+    <style>
+      :root {
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: #1d2733;
+        background: #f2efe7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body,
+      #root {
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body.unlock-route {
+        overflow: hidden;
+      }
+
+      .startup-screen {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        width: 100vw;
+        overflow: hidden;
+        padding: 16px;
+        background: #f2efe7;
+      }
+
+      .unlock-card {
+        border: 1px solid rgba(29, 39, 51, 0.08);
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: 0 24px 80px rgba(50, 68, 92, 0.1);
+        border-radius: 22px;
+        padding: 24px;
+        width: min(420px, calc(100vw - 48px));
+        max-width: 100%;
+        display: grid;
+        gap: 12px;
+        text-align: center;
+      }
+
+      .unlock-card h1 {
+        margin: 0;
+        font-size: 1.42rem;
+      }
+
+      .unlock-card p {
+        margin: 0;
+        color: #607084;
+      }
+
+      .startup-progress {
+        height: 4px;
+        width: 100%;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(23, 64, 109, 0.12);
+      }
+
+      .startup-progress-bar {
+        display: block;
+        width: 44%;
+        height: 100%;
+        border-radius: inherit;
+        background: #17406d;
+        animation: startup-progress-slide 1.1s ease-in-out infinite;
+      }
+
+      @keyframes startup-progress-slide {
+        0% {
+          transform: translateX(-120%);
+        }
+
+        100% {
+          transform: translateX(260%);
+        }
+      }
+
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        color: #e5edf7;
+        background: #111827;
+      }
+
+      :root[data-theme="dark"] .startup-screen {
+        background: #111827;
+      }
+
+      :root[data-theme="dark"] .unlock-card {
+        border-color: rgba(190, 205, 225, 0.12);
+        background: rgba(23, 31, 43, 0.9);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+      }
+
+      :root[data-theme="dark"] .unlock-card p {
+        color: #9aa8ba;
+      }
+
+      :root[data-theme="dark"] .startup-progress {
+        background: rgba(74, 144, 226, 0.18);
+      }
+
+      :root[data-theme="dark"] .startup-progress-bar {
+        background: #3b82c4;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+          color: #e5edf7;
+          background: #111827;
+        }
+
+        :root:not([data-theme]) .startup-screen {
+          background: #111827;
+        }
+
+        :root:not([data-theme]) .unlock-card {
+          border-color: rgba(190, 205, 225, 0.12);
+          background: rgba(23, 31, 43, 0.9);
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+        }
+
+        :root:not([data-theme]) .unlock-card p {
+          color: #9aa8ba;
+        }
+
+        :root:not([data-theme]) .startup-progress {
+          background: rgba(74, 144, 226, 0.18);
+        }
+
+        :root:not([data-theme]) .startup-progress-bar {
+          background: #3b82c4;
+        }
+      }
+    </style>
+  </head>
+  <body class="unlock-route">
+    <div id="root">
+      <div class="startup-screen">
+        <div class="unlock-card">
+          <h1>CodeDeck</h1>
+          <p>正在准备解锁界面...</p>
+          <div class="startup-progress" role="progressbar" aria-label="正在准备解锁界面">
+            <span class="startup-progress-bar"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

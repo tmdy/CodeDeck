@@ -1,0 +1,1257 @@
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import App, { resetAppStartupStateForTests } from "../../../App.jsx";
+import type { CommandPreview } from "../../launcher/types.js";
+import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
+import { itemKey } from "../../profile/keys-internal.js";
+import type { Profile, RuntimeSettings } from "../../profile/types.js";
+import type { SessionSummary } from "../../services/session-service.js";
+import {
+  defaultLocalState,
+  type BootstrapLocalState,
+  type LocalState,
+} from "../../state/local-state.js";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+type MockProfileManager = NonNullable<Window["profileManager"]>;
+
+const profile: Profile = {
+  provider: "claude",
+  name: "Relay",
+  url: "https://new-api.example.com/v1",
+  key: "sk-relay",
+};
+const DEFAULT_DOWNLOADS_CWD = "C:/Users/99395/Downloads";
+
+function createState(runtime: RuntimeSettings, sourceProfile: Profile = profile): LocalState {
+  const key = itemKey(sourceProfile);
+  return {
+    ...defaultLocalState(),
+    selected_provider: sourceProfile.provider,
+    selected_profile_key: key,
+    selected_profile_key_by_provider: {
+      [sourceProfile.provider]: key,
+    },
+    profile_order_by_provider: {
+      [sourceProfile.provider]: [key],
+    },
+    runtime_by_profile: {
+      [key]: runtime,
+    },
+  };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+function createBootstrapState(state: LocalState): BootstrapLocalState {
+  return {
+    selected_provider: state.selected_provider,
+    selected_profile_key: state.selected_profile_key,
+    selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+    profile_order_by_provider: { ...state.profile_order_by_provider },
+    runtime_by_profile: { ...state.runtime_by_profile },
+    balance_checks_by_profile: { ...state.balance_checks_by_profile },
+    global_settings: { ...state.global_settings },
+  };
+}
+
+function createProfileManagerFixture(options: { initialCwd?: string; profile?: Profile } = {}) {
+  const fixtureProfile = options.profile ?? profile;
+  const runtime: RuntimeSettings = {
+    cwd: options.initialCwd ?? "C:/workspace/initial",
+    command_base: "claude",
+    model: "",
+    settings_file: "",
+    launch_mode: "new",
+    extra_args: "",
+    extra_env: {},
+    exclude_user_settings: true,
+  };
+  let state = createState(runtime, fixtureProfile);
+  let currentProfile = { ...fixtureProfile };
+  const firstPreview = createDeferred<CommandPreview>();
+  const secondPreview = createDeferred<CommandPreview>();
+
+  const manager: MockProfileManager = {
+    checkEncryptedConfig: vi.fn(async () => false),
+    unlock: vi.fn(async () => ({ success: true })),
+    initializeEncryption: vi.fn(async () => ({ success: true })),
+    changePassphrase: vi.fn(async () => ({ success: true })),
+    bootstrap: vi.fn(async () => ({
+      profiles: [{ ...currentProfile }],
+      state: createBootstrapState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
+    })),
+    listProfiles: vi.fn(async () => ({
+      profiles: [{ ...currentProfile }],
+      state: {
+        ...state,
+        selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+        profile_order_by_provider: { ...state.profile_order_by_provider },
+        runtime_by_profile: { ...state.runtime_by_profile },
+        balance_checks_by_profile: { ...state.balance_checks_by_profile },
+        sessions_tab_scope_by_provider: { ...state.sessions_tab_scope_by_provider },
+        sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
+      },
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
+    })),
+    saveProfile: vi.fn(async (_targetKey, draft, runtimeDraft) => {
+      currentProfile = { ...draft };
+      state = createState(runtimeDraft, currentProfile);
+      return currentProfile;
+    }),
+    deleteProfile: vi.fn(async () => undefined),
+    cloneProfile: vi.fn(async () => ({ ...profile, provider: "codex" as const })),
+    selectProfile: vi.fn(async () => undefined),
+    reorderProfiles: vi.fn(async () => undefined),
+    activateProvider: vi.fn(async () => undefined),
+    saveSiteBalanceSession: vi.fn(async (_baseUrl, draft) => ({
+      id: draft.id ?? "session-1",
+      label: draft.label,
+      base_url: "https://new-api.example.com",
+      access_token: draft.access_token,
+      user_id: draft.user_id,
+      updated_at: "2026-05-05T10:00:00.000Z",
+    })),
+    deleteSiteBalanceSession: vi.fn(async () => undefined),
+    pickWorkingDirectory: vi.fn(async () => "C:/workspace/picked"),
+    openBaseUrl: vi.fn(async () => undefined),
+    previewForDraft: vi.fn()
+      .mockImplementationOnce(async () => firstPreview.promise)
+      .mockImplementationOnce(async () => secondPreview.promise)
+      .mockResolvedValue({ command: "extra-preview", cwd: "", env: [], valid: false }),
+    previewForProfile: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
+    launch: vi.fn(async () => undefined),
+    listSessions: vi.fn(async () => []),
+    getSessionDetail: vi.fn(async () => null),
+    refreshSessions: vi.fn(async () => undefined),
+    updateSessionsTabState: vi.fn(async () => undefined),
+    testBalance: vi.fn(async () => undefined),
+    getBalanceState: vi.fn(async () => ({
+      provider: "claude",
+      profile_name: "Relay",
+      base_url: "https://new-api.example.com",
+      running: false,
+      supported: true,
+      success: false,
+      message: "",
+      items: [],
+      endpoint: "",
+      finished_at_display: "",
+    })),
+    getModelMappings: vi.fn(async () => createDefaultModelMappingsState()),
+    saveModelMappings: vi.fn(async (value) => value),
+    fetchSiteModels: vi.fn(async () => ({ models: [] })),
+    getGlobalSettings: vi.fn(async () => state.global_settings),
+    updateGlobalSettings: vi.fn(async (patch) => ({ ...state.global_settings, ...patch })),
+    getParameterSettings: vi.fn(async () => state.parameter_settings),
+    updateParameterSettings: vi.fn(async (patch) => ({ ...state.parameter_settings, ...patch })),
+    promptUnsavedProfileAction: vi.fn(async () => "save" as const),
+    promptLaunchWithUnsavedChanges: vi.fn(async () => "save_and_launch" as const),
+    onStateChanged: vi.fn(() => () => undefined),
+    onBalanceProgress: vi.fn(() => () => undefined),
+    onUnlockError: vi.fn(() => () => undefined),
+  };
+
+  return { manager, firstPreview, secondPreview };
+}
+
+function cloneLocalStateForTest(state: LocalState): LocalState {
+  return {
+    ...state,
+    selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
+    profile_order_by_provider: { ...state.profile_order_by_provider },
+    runtime_by_profile: { ...state.runtime_by_profile },
+    balance_checks_by_profile: { ...state.balance_checks_by_profile },
+    sessions_tab_scope_by_provider: { ...state.sessions_tab_scope_by_provider },
+    sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
+  };
+}
+
+function createSession(profileKey: string, cwd: string, preview: string): SessionSummary {
+  return {
+    provider: "claude",
+    session_id: `${profileKey}-session`,
+    cwd,
+    updated_at: "2026-05-07T10:00:00.000Z",
+    preview,
+  };
+}
+
+function createProfileSessionSwitchFixture(options: {
+  delayAlpha?: boolean;
+  delayAlphaAfterFirst?: boolean;
+  delayBeta?: boolean;
+  sameCwd?: boolean;
+} = {}) {
+  let alphaProfile: Profile = {
+    provider: "claude",
+    name: "Alpha",
+    url: "https://alpha.example.com/v1",
+    key: "sk-alpha",
+  };
+  let betaProfile: Profile = {
+    provider: "claude",
+    name: "Beta",
+    url: "https://beta.example.com/v1",
+    key: "sk-beta",
+  };
+  const alphaKey = itemKey(alphaProfile);
+  const betaKey = itemKey(betaProfile);
+  const alphaRuntime = {
+    cwd: "C:/workspace/alpha",
+    command_base: "claude",
+    model: "",
+    settings_file: "",
+    launch_mode: "new" as const,
+    extra_args: "",
+    extra_env: {},
+    exclude_user_settings: true,
+  };
+  const betaRuntime = {
+    ...alphaRuntime,
+    cwd: options.sameCwd ? alphaRuntime.cwd : "C:/workspace/beta",
+  };
+  const alphaSession = createSession(alphaKey, alphaRuntime.cwd, "Alpha project session");
+  const betaSession = createSession(betaKey, betaRuntime.cwd, "Beta project session");
+  const alphaSessions = createDeferred<SessionSummary[]>();
+  const betaSessions = createDeferred<SessionSummary[]>();
+  let state: LocalState = {
+    ...defaultLocalState(),
+    selected_provider: "claude",
+    selected_profile_key: alphaKey,
+    selected_profile_key_by_provider: {
+      claude: alphaKey,
+    },
+    profile_order_by_provider: {
+      claude: [alphaKey, betaKey],
+    },
+    runtime_by_profile: {
+      [alphaKey]: alphaRuntime,
+      [betaKey]: betaRuntime,
+    },
+  };
+
+  let alphaRequestCount = 0;
+  const listSessions = vi.fn((request) => {
+    if (request.profile_key === alphaKey) {
+      alphaRequestCount += 1;
+    }
+    if (
+      request.profile_key === alphaKey
+      && (options.delayAlpha || (options.delayAlphaAfterFirst && alphaRequestCount > 1))
+    ) {
+      return alphaSessions.promise;
+    }
+    if (request.profile_key === betaKey && options.delayBeta) {
+      return betaSessions.promise;
+    }
+    return Promise.resolve(request.profile_key === betaKey ? [betaSession] : [alphaSession]);
+  });
+
+  const manager: MockProfileManager = {
+    checkEncryptedConfig: vi.fn(async () => false),
+    unlock: vi.fn(async () => ({ success: true })),
+    initializeEncryption: vi.fn(async () => ({ success: true })),
+    changePassphrase: vi.fn(async () => ({ success: true })),
+    bootstrap: vi.fn(async () => ({
+      profiles: [alphaProfile, betaProfile].map((profile) => ({ ...profile })),
+      state: createBootstrapState(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
+    })),
+    listProfiles: vi.fn(async () => ({
+      profiles: [alphaProfile, betaProfile].map((profile) => ({ ...profile })),
+      state: cloneLocalStateForTest(state),
+      siteBalanceSessionsByBaseUrl: {},
+      defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
+    })),
+    saveProfile: vi.fn(async (targetKey, draft, runtimeDraft) => {
+      if (targetKey === alphaKey) {
+        alphaProfile = { ...draft };
+      } else if (targetKey === betaKey) {
+        betaProfile = { ...draft };
+      }
+      const savedKey = itemKey(draft);
+      state = {
+        ...state,
+        selected_profile_key: savedKey,
+        selected_profile_key_by_provider: {
+          ...state.selected_profile_key_by_provider,
+          claude: savedKey,
+        },
+        runtime_by_profile: {
+          ...state.runtime_by_profile,
+          [savedKey]: runtimeDraft,
+        },
+      };
+      return draft;
+    }),
+    deleteProfile: vi.fn(async () => undefined),
+    cloneProfile: vi.fn(async () => ({ ...alphaProfile })),
+    selectProfile: vi.fn(async (_provider, key) => {
+      state = {
+        ...state,
+        selected_profile_key: key,
+        selected_profile_key_by_provider: {
+          ...state.selected_profile_key_by_provider,
+          claude: key,
+        },
+      };
+    }),
+    reorderProfiles: vi.fn(async () => undefined),
+    activateProvider: vi.fn(async () => undefined),
+    updateProfileRuntimeSettings: vi.fn(async (profileKey, patch) => {
+      const currentRuntime = state.runtime_by_profile[profileKey];
+      if (!currentRuntime) {
+        throw new Error(`runtime not found: ${profileKey}`);
+      }
+      const nextRuntime = { ...currentRuntime, ...patch };
+      state = {
+        ...state,
+        runtime_by_profile: {
+          ...state.runtime_by_profile,
+          [profileKey]: nextRuntime,
+        },
+      };
+      return nextRuntime;
+    }),
+    saveSiteBalanceSession: vi.fn(async (_baseUrl, draft) => ({
+      id: draft.id ?? "site-session-1",
+      label: draft.label,
+      base_url: _baseUrl,
+      access_token: draft.access_token,
+      user_id: draft.user_id,
+      updated_at: "2026-05-07T10:00:00.000Z",
+    })),
+    deleteSiteBalanceSession: vi.fn(async () => undefined),
+    pickWorkingDirectory: vi.fn(async () => undefined),
+    openBaseUrl: vi.fn(async () => undefined),
+    previewForDraft: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
+    previewForProfile: vi.fn(async () => ({ command: "", cwd: "", env: [], valid: false })),
+    launch: vi.fn(async () => undefined),
+    listSessions,
+    getSessionDetail: vi.fn(async () => null),
+    refreshSessions: vi.fn(async () => undefined),
+    updateSessionsTabState: vi.fn(async () => undefined),
+    testBalance: vi.fn(async () => undefined),
+    getBalanceState: vi.fn(async () => ({
+      provider: "claude",
+      profile_name: "Alpha",
+      base_url: "https://alpha.example.com",
+      running: false,
+      supported: true,
+      success: false,
+      message: "",
+      items: [],
+      endpoint: "",
+      finished_at_display: "",
+    })),
+    getModelMappings: vi.fn(async () => createDefaultModelMappingsState()),
+    saveModelMappings: vi.fn(async (value) => value),
+    fetchSiteModels: vi.fn(async () => ({ models: [] })),
+    getGlobalSettings: vi.fn(async () => state.global_settings),
+    updateGlobalSettings: vi.fn(async (patch) => ({ ...state.global_settings, ...patch })),
+    getParameterSettings: vi.fn(async () => state.parameter_settings),
+    updateParameterSettings: vi.fn(async (patch) => ({ ...state.parameter_settings, ...patch })),
+    promptUnsavedProfileAction: vi.fn(async () => "discard" as const),
+    promptLaunchWithUnsavedChanges: vi.fn(async () => "save_and_launch" as const),
+    onStateChanged: vi.fn(() => () => undefined),
+    onBalanceProgress: vi.fn(() => () => undefined),
+    onUnlockError: vi.fn(() => () => undefined),
+  };
+
+  return {
+    manager,
+    listSessions,
+    alphaKey,
+    betaKey,
+    alphaSession,
+    betaSession,
+    alphaSessions,
+    betaSessions,
+    getAlphaProfile: () => ({ ...alphaProfile }),
+    getBetaProfile: () => ({ ...betaProfile }),
+  };
+}
+
+async function flushAsyncWork(times = 4) {
+  for (let index = 0; index < times; index += 1) {
+    await Promise.resolve();
+  }
+}
+
+async function flushProfileSessionLoad() {
+  await vi.advanceTimersByTimeAsync(800);
+  await flushAsyncWork();
+}
+
+async function setInputValue(input: HTMLInputElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  await act(async () => {
+    valueSetter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+async function unlockAppIfNeeded(container: HTMLElement) {
+  const passwordInput = container.querySelector<HTMLInputElement>('input[type="password"]');
+  if (!passwordInput) {
+    return;
+  }
+  const unlockButton = Array.from(container.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === "创建并进入" || candidate.textContent?.trim() === "解锁",
+  );
+  expect(unlockButton).toBeInstanceOf(HTMLButtonElement);
+  await setInputValue(passwordInput, "test-passphrase");
+  await act(async () => {
+    unlockButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+  });
+}
+
+async function renderUnlockedApp(manager: MockProfileManager) {
+  window.profileManager = manager;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  await act(async () => {
+    root.render(<App />);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  await unlockAppIfNeeded(container);
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  return { container, root };
+}
+
+describe("App command preview", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    resetAppStartupStateForTests();
+    delete window.profileManager;
+    document.body.innerHTML = "";
+  });
+
+  it("debounces draft preview updates and keeps the latest response", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    // 初始预览：ready 后立即计算（不再延迟 600ms）
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(1);
+
+    const nameInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "输入 Profile 名称",
+    );
+    expect(nameInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(nameInput, "Relay Next");
+      nameInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(nameInput, "Relay Next Draft");
+      nameInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(299);
+    });
+
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      fixture.secondPreview.resolve({
+        command: "latest-preview",
+        cwd: "C:/workspace/latest",
+        env: [],
+        valid: true,
+      });
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("latest-preview");
+
+    await act(async () => {
+      fixture.firstPreview.resolve({
+        command: "old-preview",
+        cwd: "C:/workspace/old",
+        env: [],
+        valid: true,
+      });
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("latest-preview");
+    expect(container.textContent).not.toContain("old-preview");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("includes draft permissions when refreshing the command preview", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture({
+      profile: {
+        ...profile,
+        permissions: {
+          mode: "bypassPermissions",
+          fullAccessConfirmed: true,
+        },
+      },
+    });
+    const { root } = await renderUnlockedApp(fixture.manager);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+
+    expect(fixture.manager.previewForDraft).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.previewForDraft).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        permissions: expect.objectContaining({
+          mode: "bypassPermissions",
+          fullAccessConfirmed: true,
+        }),
+      }),
+      expect.anything(),
+      undefined,
+      undefined,
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("clears stale profile sessions while loading sessions for the selected profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ delayBeta: true });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(0);
+    expect(container.textContent).toContain("正在加载会话...");
+
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.manager.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/alpha",
+      profile_key: fixture.alphaKey,
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+    expect(container.textContent).toContain("Alpha project session");
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/beta",
+      profile_key: fixture.betaKey,
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+    expect(container.textContent).toContain("正在加载会话...");
+    expect(container.textContent).not.toContain("Alpha project session");
+    expect(container.textContent).not.toContain("当前工作目录未找到会话。");
+
+    await act(async () => {
+      fixture.betaSessions.resolve([fixture.betaSession]);
+      await flushAsyncWork();
+    });
+
+    expect(container.textContent).toContain("Beta project session");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("keeps the launch monitor toggle independent for each selected profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    const alphaToggle = container.querySelector(".launch-monitor-toggle input") as HTMLInputElement | null;
+    if (!alphaToggle) {
+      throw new Error("Expected monitor toggle for Alpha");
+    }
+    expect(alphaToggle.checked).toBe(true);
+
+    await act(async () => {
+      alphaToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.manager.updateProfileRuntimeSettings).toHaveBeenCalledWith(
+      fixture.alphaKey,
+      { terminal_mode: "direct" },
+    );
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    const betaToggle = container.querySelector(".launch-monitor-toggle input") as HTMLInputElement | null;
+    if (!betaToggle) {
+      throw new Error("Expected monitor toggle for Beta");
+    }
+    expect(betaToggle.checked).toBe(true);
+
+    const alphaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Alpha"),
+    );
+    expect(alphaButton).toBeDefined();
+
+    await act(async () => {
+      alphaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    const restoredAlphaToggle = container.querySelector(".launch-monitor-toggle input") as HTMLInputElement | null;
+    if (!restoredAlphaToggle) {
+      throw new Error("Expected monitor toggle after returning to Alpha");
+    }
+    expect(restoredAlphaToggle.checked).toBe(false);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("saves the current profile draft before switching to another profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture();
+    fixture.manager.promptUnsavedProfileAction = vi.fn(async () => "save" as const);
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    const nameInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "输入 Profile 名称",
+    );
+    expect(nameInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(nameInput, "Alpha Saved");
+      nameInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.manager.promptUnsavedProfileAction).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.saveProfile).toHaveBeenCalledWith(
+      fixture.alphaKey,
+      expect.objectContaining({ name: "Alpha Saved" }),
+      expect.any(Object),
+    );
+    expect(fixture.manager.selectProfile).toHaveBeenCalledWith("claude", fixture.betaKey);
+    expect(vi.mocked(fixture.manager.saveProfile).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(fixture.manager.selectProfile).mock.invocationCallOrder[0],
+    );
+    expect(fixture.getAlphaProfile().name).toBe("Alpha Saved");
+    expect(fixture.getBetaProfile().name).toBe("Beta");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("silently saves reasoning effort changes before switching profiles", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture();
+    fixture.manager.promptUnsavedProfileAction = vi.fn(async () => "save" as const);
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    const effortSelect = Array.from(container.querySelectorAll("select")).find(
+      (select) => select.textContent?.includes("xhigh") && select.textContent?.includes("max"),
+    );
+    expect(effortSelect).toBeInstanceOf(HTMLSelectElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      valueSetter?.call(effortSelect, "max");
+      effortSelect?.dispatchEvent(new Event("change", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.manager.promptUnsavedProfileAction).not.toHaveBeenCalled();
+    expect(fixture.manager.saveProfile).toHaveBeenCalledWith(
+      fixture.alphaKey,
+      expect.objectContaining({
+        advancedModelMapping: expect.objectContaining({
+          claude: expect.objectContaining({ reasoningEffort: "max" }),
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(fixture.manager.selectProfile).toHaveBeenCalledWith("claude", fixture.betaKey);
+    expect(fixture.getAlphaProfile().advancedModelMapping?.claude?.reasoningEffort).toBe("max");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("restores the selected profile draft when canceling profile edits", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    const nameInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "输入 Profile 名称",
+    );
+    expect(nameInput).toBeInstanceOf(HTMLInputElement);
+
+    await setInputValue(nameInput as HTMLInputElement, "Relay Draft");
+    expect((nameInput as HTMLInputElement).value).toBe("Relay Draft");
+
+    const cancelButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "取消",
+    );
+    expect(cancelButton).toBeDefined();
+
+    await act(async () => {
+      cancelButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.manager.promptUnsavedProfileAction).not.toHaveBeenCalled();
+    expect(fixture.manager.saveProfile).not.toHaveBeenCalled();
+    expect((nameInput as HTMLInputElement).value).toBe("Relay");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("keeps loaded profile sessions visible without reloading when returning", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ delayAlphaAfterFirst: true });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(container.textContent).toContain("Alpha project session");
+
+    const skillsTab = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Skills",
+    );
+    expect(skillsTab).toBeDefined();
+
+    await act(async () => {
+      skillsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    const profilesTab = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Profiles",
+    );
+    expect(profilesTab).toBeDefined();
+
+    await act(async () => {
+      profilesTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Alpha project session");
+
+    expect(container.textContent).toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("reuses cached profile sessions when switching back to a previously loaded profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Alpha project session");
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Beta project session");
+
+    const alphaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Alpha"),
+    );
+    expect(alphaButton).toBeDefined();
+
+    await act(async () => {
+      alphaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Alpha project session");
+    expect(container.textContent).not.toContain("Beta project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("shows sessions cached for the same working directory while refreshing for the selected profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ sameCwd: true, delayBeta: true });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+    expect(container.textContent).toContain("Alpha project session");
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushProfileSessionLoad();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Alpha project session");
+
+    await act(async () => {
+      fixture.betaSessions.resolve([fixture.betaSession]);
+      await flushAsyncWork();
+    });
+    expect(container.textContent).toContain("Beta project session");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("ignores late profile session responses from a previously selected profile", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ delayAlpha: true, delayBeta: true });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/alpha",
+      profile_key: fixture.alphaKey,
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+
+    const betaButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    expect(betaButton).toBeDefined();
+
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/beta",
+      profile_key: fixture.betaKey,
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+
+    await act(async () => {
+      fixture.alphaSessions.resolve([fixture.alphaSession]);
+      await flushAsyncWork();
+    });
+
+    expect(container.textContent).toContain("正在加载会话...");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      fixture.betaSessions.resolve([fixture.betaSession]);
+      await flushAsyncWork();
+    });
+
+    expect(container.textContent).toContain("Beta project session");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("uses the downloads directory as the visible cwd when saved runtime cwd is empty", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture({ initialCwd: "" });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    const cwdInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "默认使用下载目录",
+    );
+    expect(cwdInput).toBeInstanceOf(HTMLInputElement);
+    expect((cwdInput as HTMLInputElement).value).toBe(DEFAULT_DOWNLOADS_CWD);
+    expect(fixture.manager.listSessions).toHaveBeenCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: DEFAULT_DOWNLOADS_CWD,
+      profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("persists the downloads directory when saving a profile without a saved runtime cwd", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture({ initialCwd: "" });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    const saveButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "保存",
+    );
+    expect(saveButton).toBeDefined();
+
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.saveProfile).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.saveProfile).toHaveBeenLastCalledWith(
+      "claude::Relay",
+      expect.objectContaining({ name: "Relay" }),
+      expect.objectContaining({ cwd: DEFAULT_DOWNLOADS_CWD }),
+    );
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("uses the downloads directory when launching a saved profile whose runtime cwd is empty", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture({ initialCwd: "" });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    const launchButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "直接启动",
+    );
+    expect(launchButton).toBeDefined();
+
+    await act(async () => {
+      launchButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.launch).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.launch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        profile_key: "claude::Relay",
+        terminal_mode: "monitored",
+        runtime_settings: expect.objectContaining({ cwd: DEFAULT_DOWNLOADS_CWD }),
+      }),
+    );
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(2);
+    expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: DEFAULT_DOWNLOADS_CWD,
+      profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("launches Claude directly when the shared monitor toggle is disabled", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    const monitorToggle = container.querySelector(".launch-monitor-toggle input") as HTMLInputElement | null;
+    if (!monitorToggle) {
+      throw new Error("Expected shared monitor toggle to render for Claude");
+    }
+    expect(monitorToggle.checked).toBe(true);
+
+    await act(async () => {
+      monitorToggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const launchButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "直接启动",
+    );
+    expect(launchButton).toBeDefined();
+
+    await act(async () => {
+      launchButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.launch).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.launch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        profile_key: "claude::Relay",
+        terminal_mode: "direct",
+      }),
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("does not reload profile sessions while editing cwd until the cwd is saved", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    const projectSessionCalls = () => vi.mocked(fixture.manager.listSessions).mock.calls.filter(
+      ([request]) => request.scope === "project",
+    );
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(projectSessionCalls()).toHaveLength(1);
+    expect(projectSessionCalls().at(-1)?.[0]).toEqual({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/initial",
+      profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+
+    const cwdInput = Array.from(container.querySelectorAll("input")).find(
+      (input) => input.placeholder === "默认使用下载目录",
+    );
+    expect(cwdInput).toBeInstanceOf(HTMLInputElement);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(cwdInput, "C:/workspace/draft");
+      cwdInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(projectSessionCalls()).toHaveLength(1);
+
+    await act(async () => {
+      cwdInput?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.saveProfile).toHaveBeenCalledTimes(1);
+    expect(projectSessionCalls()).toHaveLength(2);
+    expect(projectSessionCalls().at(-1)?.[0]).toEqual({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/draft",
+      profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("reloads profile sessions after picking and saving a cwd", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(1);
+
+    const pickButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "选择",
+    );
+    expect(pickButton).toBeDefined();
+
+    await act(async () => {
+      pickButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.pickWorkingDirectory).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.saveProfile).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.listSessions).toHaveBeenCalledTimes(2);
+    expect(fixture.manager.listSessions).toHaveBeenLastCalledWith({
+      provider: "claude",
+      scope: "project",
+      cwd: "C:/workspace/picked",
+      profile_key: "claude::Relay",
+      limit: 20,
+      offset: 0,
+      detail: "summary",
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+});
