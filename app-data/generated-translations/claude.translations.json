@@ -1,0 +1,594 @@
+{
+  "version": 1,
+  "updatedAt": "2026-05-02T16:46:34.859Z",
+  "entries": {
+    "claude:_shared": {
+      "translatedDescription": "共享系统目录，供多个 Claude skill 复用，不作为独立功能技能使用。",
+      "translatedSummary": "系统共享目录，不作为独立技能使用。"
+    },
+    "claude:0-autoresearch-skill": {
+      "translatedDescription": "用于端到端自主 AI 研究项目编排的技能，采用双循环架构：内环负责围绕明确目标快速迭代实验，外环负责综合结果、识别规律并调整研究方向。适合启动研究课题、运行自主实验或管理多假设研究流程。",
+      "translatedSummary": "双循环自主研究编排技能，覆盖实验推进与研究方向调度。"
+    },
+    "claude:academic-plotting": {
+      "translatedDescription": "用于为机器学习论文生成发表级图表的技能。既可从论文内容中提取组件关系生成架构图，也可根据实验数据自动选择图表类型并产出高质量可视化。",
+      "translatedSummary": "学术论文图表生成技能，覆盖架构图与实验结果可视化。"
+    },
+    "claude:accelerate": {
+      "translatedDescription": "提供 HuggingFace Accelerate 的实践指南，用少量改动即可为 PyTorch 脚本接入分布式训练能力，并统一管理 DeepSpeed、FSDP、Megatron、DDP 与混合精度。",
+      "translatedSummary": "轻量接入分布式训练的 Accelerate 指南。"
+    },
+    "claude:analyzing-research-papers": {
+      "translatedDescription": "提供研究论文分析与总结方法，帮助提炼核心问题、方法设计、实验结论、创新点与局限性，适合做高质量文献解读。",
+      "translatedSummary": "研究论文分析与结构化总结技能。"
+    },
+    "claude:audiocraft": {
+      "translatedDescription": "提供 AudioCraft 的使用指导，覆盖文本到音乐、文本到声音与旋律条件生成等场景，适用于根据文本描述生成音乐或音效。",
+      "translatedSummary": "AudioCraft 音频生成技能，支持文生音乐与音效。"
+    },
+    "claude:autogpt": {
+      "translatedDescription": "提供 AutoGPT 平台的实践指导，适合构建可持续运行的自主智能体、可视化工作流智能体以及多步骤 AI 自动化系统。",
+      "translatedSummary": "AutoGPT 自主智能体与工作流构建技能。"
+    },
+    "claude:awq": {
+      "translatedDescription": "提供 AWQ 量化方法的实践指南，用于在尽量保持精度的前提下将大语言模型压缩到 4 bit，并提升推理吞吐与显存效率。",
+      "translatedSummary": "AWQ 量化技能，面向 4 bit LLM 压缩与高效推理。"
+    },
+    "claude:axolotl": {
+      "translatedDescription": "提供 Axolotl 微调框架的实战指导，覆盖 YAML 配置、数据组织、训练流程、QLoRA/LoRA 与多模型适配。",
+      "translatedSummary": "Axolotl 大模型微调配置与训练技能。"
+    },
+    "claude:bigcode-evaluation-harness": {
+      "translatedDescription": "提供 BigCode 评测框架使用指导，用于系统评估代码生成模型在 HumanEval、MBPP、MultiPL-E 等基准上的表现。",
+      "translatedSummary": "代码生成模型评测技能，覆盖主流 benchmark。"
+    },
+    "claude:bitsandbytes": {
+      "translatedDescription": "提供 bitsandbytes 量化与低精度训练实践，帮助将模型压缩为 8 bit 或 4 bit，以显著降低显存占用并支持高效微调。",
+      "translatedSummary": "bitsandbytes 量化与低显存训练技能。"
+    },
+    "claude:blip-2": {
+      "translatedDescription": "提供 BLIP-2 视觉语言框架的使用指导，帮助理解其如何连接冻结视觉编码器与大语言模型，并应用于多模态问答、描述与对齐任务。",
+      "translatedSummary": "BLIP-2 视觉语言预训练与应用技能。"
+    },
+    "claude:brainstorm": {
+      "translatedDescription": "用于开展结构化头脑风暴，帮助快速扩展备选方案、梳理思路方向并形成可执行的探索清单。",
+      "translatedSummary": "通用头脑风暴与方案发散技能。"
+    },
+    "claude:brainstorming-research-ideas": {
+      "translatedDescription": "用于科研选题与研究创意发散，帮助从问题、假设、方法和验证路径等维度系统地产生研究想法。",
+      "translatedSummary": "科研创意发散与研究想法生成技能。"
+    },
+    "claude:ccw-help": {
+      "translatedDescription": "用于 CCW 相关工作流的帮助与指引，适合在不熟悉具体命令或流程时快速获得正确使用路径。",
+      "translatedSummary": "CCW 使用帮助与流程导航技能。"
+    },
+    "claude:chroma": {
+      "translatedDescription": "提供 Chroma 向量数据库的实践指导，适用于构建检索增强生成、语义搜索与嵌入检索类应用。",
+      "translatedSummary": "Chroma 向量数据库与 RAG 应用技能。"
+    },
+    "claude:clip": {
+      "translatedDescription": "提供 CLIP 模型的应用与原理指导，适用于文本与图像对齐、图文检索、零样本分类等视觉语言任务。",
+      "translatedSummary": "CLIP 图文对齐与多模态检索技能。"
+    },
+    "claude:codex": {
+      "translatedDescription": "用于与 Codex 协同工作的技能，帮助明确任务分工、信息准备方式以及高效协作节奏。",
+      "translatedSummary": "Claude 与 Codex 协作使用技能。"
+    },
+    "claude:codex-plan": {
+      "translatedDescription": "用于把需求整理成适合 Codex 执行的明确计划，强调目标拆解、上下文约束与可验证交付。",
+      "translatedSummary": "面向 Codex 的任务规划与拆解技能。"
+    },
+    "claude:collaborating-with-codex": {
+      "translatedDescription": "帮助用户与 Codex 建立高效协作方式，明确如何提供上下文、分解任务、约束输出并提升执行效率。",
+      "translatedSummary": "与 Codex 高效协作的方法技能。"
+    },
+    "claude:collaborating-with-gemini": {
+      "translatedDescription": "帮助用户与 Gemini 协同工作，明确任务交接、提示准备、结果复核与多模型协作边界。",
+      "translatedSummary": "与 Gemini 协作的流程与方法技能。"
+    },
+    "claude:command-generator": {
+      "translatedDescription": "用于根据任务目标生成可执行命令，强调命令的准确性、可复制性和上下文匹配，适合快速落地 CLI 操作。",
+      "translatedSummary": "面向终端任务的命令生成技能。"
+    },
+    "claude:concept-development": {
+      "translatedDescription": "用于从模糊想法发展为更清晰的产品、研究或方案概念，适合早期探索、定位和价值梳理。",
+      "translatedSummary": "概念发展与方案成形技能。"
+    },
+    "claude:constitutional-ai": {
+      "translatedDescription": "提供 Constitutional AI 方法的理解与应用指导，帮助构建更可控、更安全的模型行为约束机制。",
+      "translatedSummary": "Constitutional AI 安全与对齐技能。"
+    },
+    "claude:cosmos-policy": {
+      "translatedDescription": "提供 NVIDIA Cosmos Policy 的评测与使用指导，适合进行策略效果分析、能力边界验证与实验配置。",
+      "translatedSummary": "Cosmos Policy 策略评测与实验技能。"
+    },
+    "claude:creative-thinking-for-research": {
+      "translatedDescription": "用于在科研场景中应用创造性思维框架，帮助突破惯性解法，提出更有辨识度的问题设定、方法组合和验证思路。",
+      "translatedSummary": "科研创造性思维与方法创新技能。"
+    },
+    "claude:crewai": {
+      "translatedDescription": "提供 CrewAI 多智能体编排框架的实践指导，适合构建多角色协同、任务分工明确的 AI 工作流系统。",
+      "translatedSummary": "CrewAI 多智能体编排技能。"
+    },
+    "claude:deepspeed": {
+      "translatedDescription": "提供 DeepSpeed 分布式训练与内存优化实践，覆盖 ZeRO、混合精度、大模型训练与吞吐优化等关键能力。",
+      "translatedSummary": "DeepSpeed 大模型分布式训练优化技能。"
+    },
+    "claude:dspy": {
+      "translatedDescription": "提供 DSPy 框架的使用指导，帮助用可编程方式组织提示、推理链和优化目标，构建更稳健的 LLM 系统。",
+      "translatedSummary": "DSPy 提示编排与 LLM 程序化构建技能。"
+    },
+    "claude:extract-tikz": {
+      "translatedDescription": "用于从 LaTeX/Beamer 文档中提取 TikZ 图形，方便复用、维护与单独调试复杂示意图。",
+      "translatedSummary": "TikZ 图形提取与复用技能。"
+    },
+    "claude:faiss": {
+      "translatedDescription": "提供 FAISS 相似度检索库的实践指导，适合构建高性能向量检索、语义搜索和大规模嵌入召回系统。",
+      "translatedSummary": "FAISS 高性能向量检索技能。"
+    },
+    "claude:flash-attention": {
+      "translatedDescription": "提供 FlashAttention 的原理与接入指导，通过更高效的注意力实现降低显存占用并提升训练和推理速度。",
+      "translatedSummary": "FlashAttention 高效注意力优化技能。"
+    },
+    "claude:gguf": {
+      "translatedDescription": "提供 GGUF 模型格式与 llama.cpp 生态的实践指导，适合本地部署、量化模型分发和轻量推理场景。",
+      "translatedSummary": "GGUF 模型格式与本地推理技能。"
+    },
+    "claude:gptq": {
+      "translatedDescription": "提供 GPTQ 后训练量化方案的实践指导，帮助将模型压缩到低比特表示并保持较好的推理精度。",
+      "translatedSummary": "GPTQ 后训练量化技能。"
+    },
+    "claude:grpo-rl-training": {
+      "translatedDescription": "提供 GRPO 强化学习训练方法的指导，覆盖训练流程、目标构造、数据准备和稳定性要点。",
+      "translatedSummary": "GRPO 强化学习后训练技能。"
+    },
+    "claude:guidance": {
+      "translatedDescription": "提供 Guidance 框架的使用方法，用于通过约束、模板和结构控制模型输出格式与生成过程。",
+      "translatedSummary": "Guidance 受控生成与结构化输出技能。"
+    },
+    "claude:hqq": {
+      "translatedDescription": "提供 HQQ 量化方法的实践指导，面向更高压缩率的大模型部署与推理效率优化。",
+      "translatedSummary": "HQQ 大模型量化与部署技能。"
+    },
+    "claude:huggingface-tokenizers": {
+      "translatedDescription": "提供 HuggingFace Tokenizers 的使用指导，覆盖分词器训练、编码效率、特殊 token 配置与集成实践。",
+      "translatedSummary": "HuggingFace 高性能分词器技能。"
+    },
+    "claude:instructor": {
+      "translatedDescription": "提供 Instructor 结构化抽取框架的使用方法，帮助从模型输出中稳定获得 JSON 或类型化结果。",
+      "translatedSummary": "Instructor 结构化抽取与类型化输出技能。"
+    },
+    "claude:issue-manage": {
+      "translatedDescription": "用于问题与任务管理，帮助梳理 issue、安排优先级、明确状态流转并保持执行闭环。",
+      "translatedSummary": "Issue 管理与任务跟踪技能。"
+    },
+    "claude:knowledge-distillation": {
+      "translatedDescription": "提供知识蒸馏方法的实践指导，帮助把大模型能力迁移到更小模型，以兼顾性能、成本与部署效率。",
+      "translatedSummary": "知识蒸馏与模型压缩技能。"
+    },
+    "claude:lambda-labs": {
+      "translatedDescription": "提供 Lambda Labs GPU 云服务的使用指导，适合快速申请算力、启动训练环境和管理实验资源。",
+      "translatedSummary": "Lambda Labs 云 GPU 使用技能。"
+    },
+    "claude:langchain": {
+      "translatedDescription": "提供 LangChain 框架的实践指导，帮助构建带有工具调用、检索、记忆和代理能力的 LLM 应用。",
+      "translatedSummary": "LangChain 应用编排与 RAG 技能。"
+    },
+    "claude:langsmith": {
+      "translatedDescription": "提供 LangSmith 可观测性平台的使用方法，适合跟踪提示、链路、评测结果和应用运行质量。",
+      "translatedSummary": "LangSmith 观测与调试技能。"
+    },
+    "claude:literature-gap-finder": {
+      "translatedDescription": "用于系统识别文献空白和研究切入点，帮助从已有工作中发现值得深入的问题与差异化方向。",
+      "translatedSummary": "文献空白识别与研究切入点发现技能。"
+    },
+    "claude:literature-review": {
+      "translatedDescription": "用于撰写和组织文献综述，帮助搭建研究背景、方法脉络、关键争议和研究缺口分析。",
+      "translatedSummary": "文献综述写作与整理技能。"
+    },
+    "claude:litgpt": {
+      "translatedDescription": "提供 LitGPT 的训练、推理与实现指导，适合以更简洁的代码路径理解和实验大模型。",
+      "translatedSummary": "LitGPT 训练与实现实践技能。"
+    },
+    "claude:llama-cpp": {
+      "translatedDescription": "提供 llama.cpp 的部署与优化指导，适合在 CPU 或轻量硬件环境中本地运行量化模型。",
+      "translatedSummary": "llama.cpp 本地推理与部署技能。"
+    },
+    "claude:llama-factory": {
+      "translatedDescription": "提供 LLaMA-Factory 的使用指导，覆盖数据配置、LoRA/QLoRA 微调、评测与导出流程。",
+      "translatedSummary": "LLaMA-Factory 微调与训练技能。"
+    },
+    "claude:llamaguard": {
+      "translatedDescription": "提供 Llama Guard 安全模型的使用与评估指导，适用于内容安全审核与风险过滤。",
+      "translatedSummary": "Llama Guard 安全审核技能。"
+    },
+    "claude:llamaindex": {
+      "translatedDescription": "提供 LlamaIndex 框架的实践指导，适合构建以数据接入、索引、检索和问答为核心的 LLM 应用。",
+      "translatedSummary": "LlamaIndex 数据接入与 RAG 构建技能。"
+    },
+    "claude:llava": {
+      "translatedDescription": "提供 LLaVA 多模态模型的理解与使用指导，适用于图像问答、视觉对话和图文理解任务。",
+      "translatedSummary": "LLaVA 多模态理解与问答技能。"
+    },
+    "claude:lm-evaluation-harness": {
+      "translatedDescription": "提供 LM Evaluation Harness 的使用指导，用于统一评测语言模型在多种 benchmark 上的能力表现。",
+      "translatedSummary": "统一语言模型评测框架技能。"
+    },
+    "claude:long-context": {
+      "translatedDescription": "提供长上下文建模与使用实践，覆盖位置编码、缓存策略、数据构造和长文推理注意事项。",
+      "translatedSummary": "长上下文建模与推理技能。"
+    },
+    "claude:mamba": {
+      "translatedDescription": "提供 Mamba 状态空间模型架构的理解与实践指导，适合研究高效序列建模替代方案。",
+      "translatedSummary": "Mamba 模型架构与高效序列建模技能。"
+    },
+    "claude:megatron-core": {
+      "translatedDescription": "提供 Megatron Core 分布式训练框架的实战指导，覆盖张量并行、流水并行和大规模训练策略。",
+      "translatedSummary": "Megatron Core 大规模分布式训练技能。"
+    },
+    "claude:memory-capture": {
+      "translatedDescription": "用于把会话中的关键信息沉淀为可复用记忆，帮助长期任务保持上下文一致性与决策连续性。",
+      "translatedSummary": "会话记忆提取与沉淀技能。"
+    },
+    "claude:memory-manage": {
+      "translatedDescription": "用于管理已有记忆的结构、质量和生命周期，帮助清理冗余、保留高价值上下文并改善后续检索。",
+      "translatedSummary": "长期记忆管理与整理技能。"
+    },
+    "claude:miles": {
+      "translatedDescription": "提供 MILES 强化学习训练框架或方法的使用指导，适合企业级或复杂后训练场景。",
+      "translatedSummary": "MILES 强化学习训练技能。"
+    },
+    "claude:ml-paper-writing": {
+      "translatedDescription": "用于撰写机器学习论文，帮助组织问题背景、方法设计、实验结果、图表叙述与学术表达。",
+      "translatedSummary": "机器学习论文写作技能。"
+    },
+    "claude:mlflow": {
+      "translatedDescription": "提供 MLflow 的实验跟踪与模型管理指导，适合记录参数、指标、产物并管理实验生命周期。",
+      "translatedSummary": "MLflow 实验跟踪与模型管理技能。"
+    },
+    "claude:modal": {
+      "translatedDescription": "提供 Modal 云端运行环境的使用指导，适合部署函数、批处理任务和 GPU 推理服务。",
+      "translatedSummary": "Modal 云端部署与运行技能。"
+    },
+    "claude:model-merging": {
+      "translatedDescription": "提供模型合并方法与实践指导，用于融合多个微调模型或权重变体，平衡不同任务能力。",
+      "translatedSummary": "模型合并与能力融合技能。"
+    },
+    "claude:model-pruning": {
+      "translatedDescription": "提供模型剪枝方法的实践指导，帮助在降低参数量和计算量的同时尽量保留性能。",
+      "translatedSummary": "模型剪枝与轻量化技能。"
+    },
+    "claude:moe-training": {
+      "translatedDescription": "提供 Mixture of Experts 训练指导，覆盖路由、并行、负载均衡和大规模专家模型训练要点。",
+      "translatedSummary": "MoE 专家模型训练技能。"
+    },
+    "claude:nanogpt": {
+      "translatedDescription": "提供 NanoGPT 的实现、训练与学习指导，适合理解 GPT 类模型的精简实现与实验方法。",
+      "translatedSummary": "NanoGPT 教学型 GPT 实现技能。"
+    },
+    "claude:nemo-curator": {
+      "translatedDescription": "提供 NVIDIA NeMo Curator 的数据清洗与数据构建指导，适合大规模训练语料筛选和预处理。",
+      "translatedSummary": "NeMo Curator 数据清洗技能。"
+    },
+    "claude:nemo-evaluator": {
+      "translatedDescription": "提供 NVIDIA NeMo Evaluator 的评测使用指导，适合系统评估模型在多个基准上的效果。",
+      "translatedSummary": "NeMo Evaluator 模型评测技能。"
+    },
+    "claude:nemo-guardrails": {
+      "translatedDescription": "提供 NeMo Guardrails 的安全与对话约束配置指导，适合为 LLM 应用增加行为边界与安全策略。",
+      "translatedSummary": "NeMo Guardrails 安全约束技能。"
+    },
+    "claude:nnsight": {
+      "translatedDescription": "提供 NNsight 解释性分析工具的使用指导，适合做中间层观测、干预与机理研究。",
+      "translatedSummary": "NNsight 机理解释与干预技能。"
+    },
+    "claude:openpi": {
+      "translatedDescription": "提供 OpenPI 的微调与服务化实践指导，适合面向具身或物理智能任务的模型训练和部署。",
+      "translatedSummary": "OpenPI 微调与服务化技能。"
+    },
+    "claude:openrlhf": {
+      "translatedDescription": "提供 OpenRLHF 的使用指导，覆盖奖励建模、偏好优化、对齐训练与大规模 RLHF 流程。",
+      "translatedSummary": "OpenRLHF 对齐训练技能。"
+    },
+    "claude:openvla-oft": {
+      "translatedDescription": "提供 OpenVLA OFT 的微调与评估指导，适合视觉-动作类模型训练与具身任务实验。",
+      "translatedSummary": "OpenVLA OFT 微调与评估技能。"
+    },
+    "claude:outlines": {
+      "translatedDescription": "提供 Outlines 结构化生成框架的使用方法，帮助用正则、JSON Schema 或类型约束稳定控制模型输出。",
+      "translatedSummary": "Outlines 结构化与受控生成技能。"
+    },
+    "claude:paper-innovate": {
+      "translatedDescription": "用于挖掘论文创新点与差异化表述，帮助把已有方法、实验和贡献梳理为更清晰的学术卖点。",
+      "translatedSummary": "论文创新点提炼与表达技能。"
+    },
+    "claude:peft": {
+      "translatedDescription": "提供 PEFT 参数高效微调方法的实践指导，覆盖 LoRA、Prefix Tuning、Adapter 等常见技术。",
+      "translatedSummary": "PEFT 参数高效微调技能。"
+    },
+    "claude:phoenix": {
+      "translatedDescription": "提供 Phoenix 可观测性平台的使用指导，帮助监控、调试并评估 AI 应用在生产环境中的行为。",
+      "translatedSummary": "Phoenix AI 可观测性与评估技能。"
+    },
+    "claude:pinecone": {
+      "translatedDescription": "提供 Pinecone 向量数据库的实践指导，适合构建可扩展的语义检索和 RAG 服务。",
+      "translatedSummary": "Pinecone 向量数据库与 RAG 技能。"
+    },
+    "claude:playwright-skill": {
+      "translatedDescription": "提供 Playwright 浏览器自动化实践指导，适合做页面测试、自动操作、抓取与回归验证。",
+      "translatedSummary": "Playwright 浏览器自动化与测试技能。"
+    },
+    "claude:prompt-guard": {
+      "translatedDescription": "提供 Prompt Guard 的使用指导，帮助识别提示注入与输入风险，增强 LLM 应用的安全性。",
+      "translatedSummary": "Prompt Guard 提示注入防护技能。"
+    },
+    "claude:pytorch-fsdp2": {
+      "translatedDescription": "提供 PyTorch FSDP2 分布式训练的配置与调优指导，适合超大模型的高效参数分片训练。",
+      "translatedSummary": "PyTorch FSDP2 分布式训练技能。"
+    },
+    "claude:pytorch-lightning": {
+      "translatedDescription": "提供 PyTorch Lightning 的工程化训练指导，帮助以更规范的结构组织训练、验证与实验流程。",
+      "translatedSummary": "PyTorch Lightning 工程化训练技能。"
+    },
+    "claude:pyvene": {
+      "translatedDescription": "提供 PyVene 干预工具的使用指导，适合对模型内部表示进行控制、替换和分析。",
+      "translatedSummary": "PyVene 表示干预与分析技能。"
+    },
+    "claude:qdrant": {
+      "translatedDescription": "提供 Qdrant 向量数据库的使用指导，适合构建高性能、可筛选的语义检索与 RAG 系统。",
+      "translatedSummary": "Qdrant 向量数据库技能。"
+    },
+    "claude:ray-data": {
+      "translatedDescription": "提供 Ray Data 的分布式数据处理指导，适合做大规模数据加载、转换、预处理和流水线构建。",
+      "translatedSummary": "Ray Data 分布式数据处理技能。"
+    },
+    "claude:ray-train": {
+      "translatedDescription": "提供 Ray Train 的分布式训练实践指导，适合在多机多卡环境中编排训练任务。",
+      "translatedSummary": "Ray Train 分布式训练技能。"
+    },
+    "claude:research-writing-skill": {
+      "translatedDescription": "用于研究写作全流程支持，覆盖选题、综述、实验叙述、章节组织和学术表达优化。",
+      "translatedSummary": "研究写作全流程支持技能。"
+    },
+    "claude:review-code": {
+      "translatedDescription": "用于执行代码审查，重点识别逻辑缺陷、行为风险、回归点、可维护性问题与测试缺口。",
+      "translatedSummary": "代码审查与风险识别技能。"
+    },
+    "claude:review-cycle": {
+      "translatedDescription": "提供完整评审循环指导，帮助从需求、实现、测试到复盘形成闭环质量控制。",
+      "translatedSummary": "从实现到复盘的评审闭环技能。"
+    },
+    "claude:rwkv": {
+      "translatedDescription": "提供 RWKV 架构的理解与实践指导，适合研究 RNN 与 Transformer 混合思路下的序列建模。",
+      "translatedSummary": "RWKV 架构研究与实践技能。"
+    },
+    "claude:saelens": {
+      "translatedDescription": "提供稀疏自编码器训练与解释性分析相关指导，适合做表征分解与神经元特征研究。",
+      "translatedSummary": "稀疏自编码器训练与解释技能。"
+    },
+    "claude:scholar-evaluation": {
+      "translatedDescription": "用于学术成果评估与审视，帮助从研究问题、方法、实验和论证强度等方面给出结构化判断。",
+      "translatedSummary": "学术工作评估与质量判断技能。"
+    },
+    "claude:scientific-brainstorming": {
+      "translatedDescription": "用于科学研究场景下的结构化头脑风暴，帮助快速产生可检验的问题、假设、变量与验证方案。",
+      "translatedSummary": "科研问题与假设生成技能。"
+    },
+    "claude:scientific-writing": {
+      "translatedDescription": "用于科学写作与学术表达优化，帮助提升论文、报告和研究说明的清晰度、正式性与逻辑性。",
+      "translatedSummary": "科学写作与学术表达优化技能。"
+    },
+    "claude:segment-anything": {
+      "translatedDescription": "提供 Segment Anything 模型的应用指导，适用于交互式分割、目标选区和视觉预处理场景。",
+      "translatedSummary": "Segment Anything 图像分割技能。"
+    },
+    "claude:sentence-transformers": {
+      "translatedDescription": "提供 Sentence Transformers 的使用指导，适合构建文本嵌入、语义搜索、聚类和匹配系统。",
+      "translatedSummary": "Sentence Transformers 文本嵌入技能。"
+    },
+    "claude:sentencepiece": {
+      "translatedDescription": "提供 SentencePiece 分词库的使用指导，适合训练子词分词器和构建多语言预处理流程。",
+      "translatedSummary": "SentencePiece 分词训练技能。"
+    },
+    "claude:sglang": {
+      "translatedDescription": "提供 SGLang 的推理与服务化指导，适合构建高吞吐、可控输出的 LLM 推理服务。",
+      "translatedSummary": "SGLang 推理服务与受控生成技能。"
+    },
+    "claude:shared": {
+      "translatedDescription": "共享资源目录技能，用于承载多个相关技能之间复用的说明或公共材料。",
+      "translatedSummary": "共享资源与公共材料目录。"
+    },
+    "claude:simpo": {
+      "translatedDescription": "提供 SimPO 偏好优化训练方法的实践指导，适合做偏好对齐和后训练实验。",
+      "translatedSummary": "SimPO 偏好优化训练技能。"
+    },
+    "claude:skill-creator": {
+      "translatedDescription": "用于创建高质量 skill，帮助定义触发条件、工作流结构、边界说明和可复用模板。",
+      "translatedSummary": "Skill 创建与设计技能。"
+    },
+    "claude:skill-generator": {
+      "translatedDescription": "用于批量或半自动生成 skill 草案，帮助快速搭建技能框架并统一元数据格式。",
+      "translatedSummary": "Skill 自动生成与初稿搭建技能。"
+    },
+    "claude:skill-tuning": {
+      "translatedDescription": "用于优化已有 skill 的内容质量与触发效果，帮助调整描述、结构、边界和可执行性。",
+      "translatedSummary": "Skill 调优与质量改进技能。"
+    },
+    "claude:skypilot": {
+      "translatedDescription": "提供 SkyPilot 多云算力编排指导，适合跨云启动训练任务、管理集群与控制成本。",
+      "translatedSummary": "SkyPilot 多云算力编排技能。"
+    },
+    "claude:slime": {
+      "translatedDescription": "提供 SLIME 或相关后训练框架的使用指导，适合偏好优化与对齐训练实验。",
+      "translatedSummary": "SLIME 后训练与对齐实验技能。"
+    },
+    "claude:spec-generator": {
+      "translatedDescription": "用于生成结构化规格说明，把模糊需求转化为清晰的目标、约束、接口与验收条件。",
+      "translatedSummary": "需求规格说明生成技能。"
+    },
+    "claude:speculative-decoding": {
+      "translatedDescription": "提供投机解码的原理与工程实践指导，帮助用草稿模型和验证模型协同提升推理速度。",
+      "translatedSummary": "投机解码加速推理技能。"
+    },
+    "claude:stable-diffusion": {
+      "translatedDescription": "提供 Stable Diffusion 图像生成与微调指导，适合做文生图、图像编辑与风格生成任务。",
+      "translatedSummary": "Stable Diffusion 图像生成技能。"
+    },
+    "claude:swanlab": {
+      "translatedDescription": "提供 SwanLab 实验跟踪平台的使用指导，适合记录训练过程、指标、配置与可视化结果。",
+      "translatedSummary": "SwanLab 实验跟踪与可视化技能。"
+    },
+    "claude:team-brainstorm": {
+      "translatedDescription": "用于团队场景下的协作式头脑风暴，帮助多个角色共同扩展方案并收敛成行动方向。",
+      "translatedSummary": "团队协作头脑风暴技能。"
+    },
+    "claude:team-coordinate": {
+      "translatedDescription": "用于多角色团队协作协调，帮助明确任务分工、依赖关系、顺序安排和沟通节奏。",
+      "translatedSummary": "团队协作协调与任务编排技能。"
+    },
+    "claude:team-coordinate-v2": {
+      "translatedDescription": "team-coordinate 的增强版本，用于更复杂的多角色协同场景，强调并行安排、上下文传递与边界控制。",
+      "translatedSummary": "增强版团队协调与协作编排技能。"
+    },
+    "claude:team-executor": {
+      "translatedDescription": "用于团队执行场景，把既定计划落为可操作步骤，强调责任清晰、结果回传与执行闭环。",
+      "translatedSummary": "团队执行推进技能。"
+    },
+    "claude:team-executor-v2": {
+      "translatedDescription": "team-executor 的增强版本，用于更复杂的执行编排与状态推进场景。",
+      "translatedSummary": "增强版团队执行推进技能。"
+    },
+    "claude:team-frontend": {
+      "translatedDescription": "用于前端专项协作，帮助组织界面实现、交互细节、视觉约束与前端验证流程。",
+      "translatedSummary": "前端团队协作与交付技能。"
+    },
+    "claude:team-issue": {
+      "translatedDescription": "用于团队级问题跟踪与分派，帮助统一问题登记、优先级、责任归属与处理进度。",
+      "translatedSummary": "团队问题管理与分派技能。"
+    },
+    "claude:team-iterdev": {
+      "translatedDescription": "用于迭代式开发协作，强调小步交付、持续反馈与滚动修正。",
+      "translatedSummary": "团队迭代开发与反馈闭环技能。"
+    },
+    "claude:team-lifecycle-v3": {
+      "translatedDescription": "用于管理团队开发生命周期的第三版工作流，覆盖计划、执行、审查与交付衔接。",
+      "translatedSummary": "团队开发生命周期管理技能 v3。"
+    },
+    "claude:team-lifecycle-v4": {
+      "translatedDescription": "用于管理团队开发生命周期的第四版工作流，相比旧版更强调并行协作和上下游衔接。",
+      "translatedSummary": "团队开发生命周期管理技能 v4。"
+    },
+    "claude:team-lifecycle-v5": {
+      "translatedDescription": "用于管理团队开发生命周期的第五版工作流，适合更成熟、更复杂的团队交付场景。",
+      "translatedSummary": "团队开发生命周期管理技能 v5。"
+    },
+    "claude:team-planex": {
+      "translatedDescription": "用于团队级计划制定与执行衔接，帮助把目标拆成阶段性动作并跟踪推进。",
+      "translatedSummary": "团队计划制定与执行衔接技能。"
+    },
+    "claude:team-quality-assurance": {
+      "translatedDescription": "用于团队质量保障，帮助组织测试策略、回归检查、质量门禁和风险评估。",
+      "translatedSummary": "团队质量保障与回归控制技能。"
+    },
+    "claude:team-review": {
+      "translatedDescription": "用于团队评审流程，帮助从设计、实现、风险和测试覆盖率等维度做结构化审查。",
+      "translatedSummary": "团队评审与质量把关技能。"
+    },
+    "claude:team-roadmap-dev": {
+      "translatedDescription": "用于技术路线图规划，帮助团队拆解中长期目标、阶段里程碑与依赖关系。",
+      "translatedSummary": "团队技术路线图规划技能。"
+    },
+    "claude:team-tech-debt": {
+      "translatedDescription": "用于识别、分类和治理技术债，帮助团队平衡交付速度、维护成本与架构健康。",
+      "translatedSummary": "团队技术债识别与治理技能。"
+    },
+    "claude:team-testing": {
+      "translatedDescription": "用于团队测试协作，帮助统一测试策略、覆盖层级与缺陷回归流程。",
+      "translatedSummary": "团队测试规划与执行技能。"
+    },
+    "claude:team-uidesign": {
+      "translatedDescription": "用于团队 UI 设计协作，帮助统一界面方向、组件语言和视觉交付要求。",
+      "translatedSummary": "团队 UI 设计协作技能。"
+    },
+    "claude:team-ultra-analyze": {
+      "translatedDescription": "用于高强度分析任务协作，适合复杂问题拆解、证据归纳和多维度判断。",
+      "translatedSummary": "复杂问题深度分析协作技能。"
+    },
+    "claude:tensorboard": {
+      "translatedDescription": "提供 TensorBoard 的使用指导，适合观察训练曲线、参数分布、图结构和调试信息。",
+      "translatedSummary": "TensorBoard 训练可视化技能。"
+    },
+    "claude:tensorrt-llm": {
+      "translatedDescription": "提供 TensorRT-LLM 推理优化与部署指导，适合在 NVIDIA 平台上实现高吞吐、低延迟的大模型服务。",
+      "translatedSummary": "TensorRT-LLM 高性能推理部署技能。"
+    },
+    "claude:tikz-layout-fixer": {
+      "translatedDescription": "用于修复 TikZ 图形布局问题，帮助调整节点、边、间距与排版，以提升可读性和版面稳定性。",
+      "translatedSummary": "TikZ 布局修复与排版优化技能。"
+    },
+    "claude:torchforge": {
+      "translatedDescription": "提供 TorchForge 相关训练框架或工具的使用指导，适合做 PyTorch 训练组织与实验执行。",
+      "translatedSummary": "TorchForge 训练组织技能。"
+    },
+    "claude:torchtitan": {
+      "translatedDescription": "提供 TorchTitan 分布式训练指导，适合大规模预训练与系统级训练实验。",
+      "translatedSummary": "TorchTitan 大规模训练技能。"
+    },
+    "claude:transformer-lens": {
+      "translatedDescription": "提供 TransformerLens 的解释性分析指导，适合观察注意力头、激活与中间表示，做机理研究。",
+      "translatedSummary": "TransformerLens 机理解释技能。"
+    },
+    "claude:trl-fine-tuning": {
+      "translatedDescription": "提供 TRL 微调与偏好优化指导，覆盖 SFT、DPO、PPO 等常见后训练方法。",
+      "translatedSummary": "TRL 微调与偏好优化技能。"
+    },
+    "claude:unsloth": {
+      "translatedDescription": "提供 Unsloth 的快速微调与加速训练指导，适合以更低资源成本完成 LoRA/QLoRA 微调。",
+      "translatedSummary": "Unsloth 低成本快速微调技能。"
+    },
+    "claude:verl": {
+      "translatedDescription": "提供 VERL 强化学习训练框架的实践指导，适合大模型后训练和偏好优化实验。",
+      "translatedSummary": "VERL 强化学习后训练技能。"
+    },
+    "claude:vllm": {
+      "translatedDescription": "提供 vLLM 推理服务框架的使用指导，适合构建高吞吐大模型 API 与批量推理服务。",
+      "translatedSummary": "vLLM 高吞吐推理服务技能。"
+    },
+    "claude:weights-and-biases": {
+      "translatedDescription": "提供 Weights & Biases 的实验跟踪和可视化指导，适合管理训练过程、指标、数据集与模型版本。",
+      "translatedSummary": "Weights & Biases 实验跟踪技能。"
+    },
+    "claude:whisper": {
+      "translatedDescription": "提供 Whisper 语音识别模型的使用指导，适合做语音转写、多语言识别与语音处理应用。",
+      "translatedSummary": "Whisper 语音识别与转写技能。"
+    },
+    "claude:workflow-execute": {
+      "translatedDescription": "用于执行既定工作流，把计划转成顺序明确、可回报状态的实际动作。",
+      "translatedSummary": "既定工作流执行技能。"
+    },
+    "claude:workflow-lite-plan": {
+      "translatedDescription": "用于快速生成轻量计划，适合中小型任务的目标拆解与步骤组织。",
+      "translatedSummary": "轻量任务规划技能。"
+    },
+    "claude:workflow-multi-cli-plan": {
+      "translatedDescription": "用于多 CLI 工具协同场景下的执行规划，帮助安排工具顺序、输入输出衔接和失败回退策略。",
+      "translatedSummary": "多命令行工具协同规划技能。"
+    },
+    "claude:workflow-plan": {
+      "translatedDescription": "用于生成结构化工作流计划，帮助定义阶段、输入、输出、约束和验收方式。",
+      "translatedSummary": "结构化工作流规划技能。"
+    },
+    "claude:workflow-skill-designer": {
+      "translatedDescription": "用于设计工作流型 skill，帮助定义触发场景、步骤结构、边界条件和复用模板。",
+      "translatedSummary": "工作流型 skill 设计技能。"
+    },
+    "claude:workflow-tdd-plan": {
+      "translatedDescription": "用于生成遵循测试驱动开发的执行计划，强调先写失败测试、最小实现与回归验证。",
+      "translatedSummary": "TDD 工作流规划技能。"
+    },
+    "claude:workflow-test-fix": {
+      "translatedDescription": "用于测试失败后的修复闭环，强调复现、定位、最小修复与回归验证。",
+      "translatedSummary": "测试失败修复与回归闭环技能。"
+    }
+  }
+}

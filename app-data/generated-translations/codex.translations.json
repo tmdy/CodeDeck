@@ -1,0 +1,526 @@
+{
+  "version": 1,
+  "updatedAt": "2026-05-02T17:31:29.422Z",
+  "entries": {
+    "codex:_shared": {
+      "translatedDescription": "共享系统目录，供多个 Codex skill 复用，不作为独立功能技能使用。",
+      "translatedSummary": "系统共享目录，不作为独立技能使用。"
+    },
+    "codex:.system": {
+      "translatedDescription": "系统内置共享目录，包含 Codex 运行时自带的系统技能与基础资源，不作为独立技能使用。",
+      "translatedSummary": "系统共享目录，不作为独立技能使用。"
+    },
+    "codex:0-autoresearch-skill": {
+      "translatedDescription": "用于端到端自主 AI 研究项目编排的技能，采用双循环架构：内环负责围绕明确目标快速迭代实验，外环负责综合结果、识别规律并调整研究方向。适合启动研究课题、运行自主实验或管理多假设研究流程。",
+      "translatedSummary": "双循环自主研究编排技能，覆盖实验推进与研究方向调度。"
+    },
+    "codex:academic-plotting": {
+      "translatedDescription": "用于为机器学习论文生成发表级图表的技能。既可从论文内容中提取组件关系生成架构图，也可根据实验数据自动选择图表类型并产出高质量可视化。",
+      "translatedSummary": "学术论文图表生成技能，覆盖架构图与实验结果可视化。"
+    },
+    "codex:accelerate": {
+      "translatedDescription": "提供 HuggingFace Accelerate 的实践指南，用少量改动即可为 PyTorch 脚本接入分布式训练能力，并统一管理 DeepSpeed、FSDP、Megatron、DDP 与混合精度。",
+      "translatedSummary": "轻量接入分布式训练的 Accelerate 指南。"
+    },
+    "codex:analyze-with-file": {
+      "translatedDescription": "面向带文件输入的交互式协作分析技能，强调边读边探索、把讨论与发现记录成文档，并在过程中逐步澄清理解。该流程严格串行执行，不进行子代理并发委派。",
+      "translatedSummary": "串行的文件驱动协作分析流程。"
+    },
+    "codex:android-native-dev": {
+      "translatedDescription": "Android 原生应用开发与 UI 设计指南，覆盖 Material Design 3、Kotlin/Jetpack Compose 开发、工程配置、无障碍、以及常见构建与打包问题排查。适合在开始 Android 原生开发前作为基线参考。",
+      "translatedSummary": "Android 原生开发与 Compose/UI 设计指南。"
+    },
+    "codex:audiocraft": {
+      "translatedDescription": "提供 AudioCraft 的使用指导，覆盖文本到音乐、文本到声音与旋律条件生成等场景，适用于根据文本描述生成音乐或音效。",
+      "translatedSummary": "AudioCraft 音频生成技能，支持文生音乐与音效。"
+    },
+    "codex:autogpt": {
+      "translatedDescription": "提供 AutoGPT 平台的实践指导，适合构建可持续运行的自主智能体、可视化工作流智能体以及多步骤 AI 自动化系统。",
+      "translatedSummary": "AutoGPT 自主智能体与工作流构建技能。"
+    },
+    "codex:awq": {
+      "translatedDescription": "提供 AWQ 量化方法的实践指南，用于在尽量保持精度的前提下将大语言模型压缩到 4 bit，并提升推理吞吐与显存效率。",
+      "translatedSummary": "AWQ 量化技能，面向 4 bit LLM 压缩与高效推理。"
+    },
+    "codex:axolotl": {
+      "translatedDescription": "提供 Axolotl 微调框架的实战指导，覆盖 YAML 配置、数据组织、训练流程、QLoRA/LoRA 与多模型适配。",
+      "translatedSummary": "Axolotl 大模型微调配置与训练技能。"
+    },
+    "codex:beta": {
+      "translatedDescription": "Beta 测试占位技能，用于验证技能加载与触发链路，不承载具体业务能力。",
+      "translatedSummary": "Beta 占位技能。"
+    },
+    "codex:bigcode-evaluation-harness": {
+      "translatedDescription": "提供 BigCode 评测框架使用指导，用于系统评估代码生成模型在 HumanEval、MBPP、MultiPL-E 等基准上的表现。",
+      "translatedSummary": "代码生成模型评测技能，覆盖主流 benchmark。"
+    },
+    "codex:bitsandbytes": {
+      "translatedDescription": "提供 bitsandbytes 量化与低精度训练实践，帮助将模型压缩为 8 bit 或 4 bit，以显著降低显存占用并支持高效微调。",
+      "translatedSummary": "bitsandbytes 量化与低显存训练技能。"
+    },
+    "codex:blip-2": {
+      "translatedDescription": "提供 BLIP-2 视觉语言框架的使用指导，帮助理解其如何连接冻结视觉编码器与大语言模型，并应用于多模态问答、描述与对齐任务。",
+      "translatedSummary": "BLIP-2 视觉语言预训练与应用技能。"
+    },
+    "codex:brainstorm-with-file": {
+      "translatedDescription": "面向带文件上下文的交互式头脑风暴技能，支持并行子代理从多角度扩展思路，并把推演过程与结论沉淀为可追溯的文档记录。",
+      "translatedSummary": "文件驱动的并行头脑风暴与多视角扩展。"
+    },
+    "codex:brainstorming-research-ideas": {
+      "translatedDescription": "用于科研选题与研究创意发散，帮助从问题、假设、方法和验证路径等维度系统地产生研究想法。",
+      "translatedSummary": "科研创意发散与研究想法生成技能。"
+    },
+    "codex:ccw-cli-tools": {
+      "translatedDescription": "多模型 CLI 工具的统一执行规范与提示词模板，覆盖常见的分析/编写/评审模式，并提供自动触发规则与可配置的 CLI 端点，便于在代码分析与实现任务中统一调用不同 CLI 能力。",
+      "translatedSummary": "多模型 CLI 调用规范与统一提示词模板。"
+    },
+    "codex:chroma": {
+      "translatedDescription": "提供 Chroma 向量数据库的实践指导，适用于构建检索增强生成、语义搜索与嵌入检索类应用。",
+      "translatedSummary": "Chroma 向量数据库与 RAG 应用技能。"
+    },
+    "codex:clean": {
+      "translatedDescription": "面向代码仓库的智能清理技能，关注主线识别、陈旧产物与残留工件发现，并在安全约束下进行定向清理与二次确认，避免误删。",
+      "translatedSummary": "安全约束下的代码仓库清理与残留发现。"
+    },
+    "codex:clip": {
+      "translatedDescription": "提供 CLIP 模型的应用与原理指导，适用于文本与图像对齐、图文检索、零样本分类等视觉语言任务。",
+      "translatedSummary": "CLIP 图文对齐与多模态检索技能。"
+    },
+    "codex:collaborative-plan-with-file": {
+      "translatedDescription": "基于 Plan Note 的串行协作规划技能：把跨域任务拆解为可执行步骤，统一产出 plan-note.md，并进行冲突检测与收敛。该流程不进行子代理并发委派，强调一步步对齐与可追溯记录。",
+      "translatedSummary": "串行协作规划，统一沉淀 plan-note.md。"
+    },
+    "codex:constitutional-ai": {
+      "translatedDescription": "提供 Constitutional AI 方法的理解与应用指导，帮助构建更可控、更安全的模型行为约束机制。",
+      "translatedSummary": "Constitutional AI 安全与对齐技能。"
+    },
+    "codex:cosmos-policy": {
+      "translatedDescription": "提供 NVIDIA Cosmos Policy 的评测与使用指导，适合进行策略效果分析、能力边界验证与实验配置。",
+      "translatedSummary": "Cosmos Policy 策略评测与实验技能。"
+    },
+    "codex:creative-thinking-for-research": {
+      "translatedDescription": "用于在科研场景中应用创造性思维框架，帮助突破惯性解法，提出更有辨识度的问题设定、方法组合和验证思路。",
+      "translatedSummary": "科研创造性思维与方法创新技能。"
+    },
+    "codex:crewai": {
+      "translatedDescription": "提供 CrewAI 多智能体编排框架的实践指导，适合构建多角色协同、任务分工明确的 AI 工作流系统。",
+      "translatedSummary": "CrewAI 多智能体编排技能。"
+    },
+    "codex:csv-wave-pipeline": {
+      "translatedDescription": "将需求拆解为基于 CSV 的分波次执行流水线：先把需求转成按依赖排序的任务列表，计算执行波次，再按波次调用 spawn_agents_on_csv 执行，并在波次间传递上下文以保证收敛。",
+      "translatedSummary": "CSV 分波次任务拆解与执行流水线。"
+    },
+    "codex:debug-with-file": {
+      "translatedDescription": "交互式、假设驱动的调试流程技能：围绕现象提出假设、收集证据、记录探索过程，并在分析辅助下完成修正与验证，适合需要逐步定位与回归确认的故障排查。",
+      "translatedSummary": "假设驱动的调试与修复闭环（带文档记录）。"
+    },
+    "codex:deepspeed": {
+      "translatedDescription": "提供 DeepSpeed 分布式训练与内存优化实践，覆盖 ZeRO、混合精度、大模型训练与吞吐优化等关键能力。",
+      "translatedSummary": "DeepSpeed 大模型分布式训练优化技能。"
+    },
+    "codex:dspy": {
+      "translatedDescription": "提供 DSPy 框架的使用指导，帮助用可编程方式组织提示、推理链和优化目标，构建更稳健的 LLM 系统。",
+      "translatedSummary": "DSPy 提示编排与 LLM 程序化构建技能。"
+    },
+    "codex:extract-tikz": {
+      "translatedDescription": "用于从 LaTeX/Beamer 文档中提取 TikZ 图形，方便复用、维护与单独调试复杂示意图。",
+      "translatedSummary": "TikZ 图形提取与复用技能。"
+    },
+    "codex:faiss": {
+      "translatedDescription": "提供 FAISS 相似度检索库的实践指导，适合构建高性能向量检索、语义搜索和大规模嵌入召回系统。",
+      "translatedSummary": "FAISS 高性能向量检索技能。"
+    },
+    "codex:flash-attention": {
+      "translatedDescription": "提供 FlashAttention 的原理与接入指导，通过更高效的注意力实现降低显存占用并提升训练和推理速度。",
+      "translatedSummary": "FlashAttention 高效注意力优化技能。"
+    },
+    "codex:flutter-dev": {
+      "translatedDescription": "Flutter 跨平台开发指南，涵盖组件模式、Riverpod/Bloc 状态管理、GoRouter 路由导航、性能优化与 DevTools Profiling，并包含响应式布局、测试策略与平台差异实现等实践要点。",
+      "translatedSummary": "Flutter 开发实践指南（状态管理、路由与性能）。"
+    },
+    "codex:fullstack-dev": {
+      "translatedDescription": "全栈开发实践指南，聚焦后端架构与前后端集成：服务分层、接口设计、错误处理、配置与鉴权、API 客户端、文件上传、以及 SSE/WebSocket 等实时能力，并包含上线前的构建、联调与验证清单。",
+      "translatedSummary": "全栈架构与前后端集成的实践基线。"
+    },
+    "codex:gguf": {
+      "translatedDescription": "提供 GGUF 模型格式与 llama.cpp 生态的实践指导，适合本地部署、量化模型分发和轻量推理场景。",
+      "translatedSummary": "GGUF 模型格式与本地推理技能。"
+    },
+    "codex:gptq": {
+      "translatedDescription": "提供 GPTQ 后训练量化方案的实践指导，帮助将模型压缩到低比特表示并保持较好的推理精度。",
+      "translatedSummary": "GPTQ 后训练量化技能。"
+    },
+    "codex:grpo-rl-training": {
+      "translatedDescription": "提供 GRPO 强化学习训练方法的指导，覆盖训练流程、目标构造、数据准备和稳定性要点。",
+      "translatedSummary": "GRPO 强化学习后训练技能。"
+    },
+    "codex:guidance": {
+      "translatedDescription": "提供 Guidance 框架的使用方法，用于通过约束、模板和结构控制模型输出格式与生成过程。",
+      "translatedSummary": "Guidance 受控生成与结构化输出技能。"
+    },
+    "codex:hqq": {
+      "translatedDescription": "提供 HQQ 量化方法的实践指导，面向更高压缩率的大模型部署与推理效率优化。",
+      "translatedSummary": "HQQ 大模型量化与部署技能。"
+    },
+    "codex:huggingface-tokenizers": {
+      "translatedDescription": "提供 HuggingFace Tokenizers 的使用指导，覆盖分词器训练、编码效率、特殊 token 配置与集成实践。",
+      "translatedSummary": "HuggingFace 高性能分词器技能。"
+    },
+    "codex:humanizer-zh": {
+      "translatedDescription": "中文文本去 AI 味的编辑指南，用于识别并修正常见 AI 写作模式（夸大意义、宣传性措辞、空泛归因、过度连接词、否定式排比、模板化三段式等），在不改变原意的前提下让文本更自然、更像真人写作。",
+      "translatedSummary": "中文文本去 AI 痕迹的审读与改写指南。"
+    },
+    "codex:instructor": {
+      "translatedDescription": "提供 Instructor 结构化抽取框架的使用方法，帮助从模型输出中稳定获得 JSON 或类型化结果。",
+      "translatedSummary": "Instructor 结构化抽取与类型化输出技能。"
+    },
+    "codex:ios-application-dev": {
+      "translatedDescription": "iOS 应用开发指南，覆盖 UIKit、SnapKit 与 SwiftUI 的常用布局与交互模式，并强调 Apple 平台规范（安全区、触控目标、Dynamic Type、暗黑模式、无障碍、导航结构等）。适合开发或评审 iOS 代码时作为实践基线。",
+      "translatedSummary": "iOS UIKit/SnapKit/SwiftUI 开发与规范指南。"
+    },
+    "codex:issue-discover": {
+      "translatedDescription": "统一的 Issue 发现与创建技能：可从 GitHub/文本中生成 Issue，也可通过多视角分析或提示词驱动的迭代探索来挖掘潜在问题点，并输出可执行的 Issue 列表。",
+      "translatedSummary": "Issue 发现、分析与创建的一体化流程。"
+    },
+    "codex:knowledge-distillation": {
+      "translatedDescription": "提供知识蒸馏方法的实践指导，帮助把大模型能力迁移到更小模型，以兼顾性能、成本与部署效率。",
+      "translatedSummary": "知识蒸馏与模型压缩技能。"
+    },
+    "codex:lambda-labs": {
+      "translatedDescription": "提供 Lambda Labs GPU 云服务的使用指导，适合快速申请算力、启动训练环境和管理实验资源。",
+      "translatedSummary": "Lambda Labs 云 GPU 使用技能。"
+    },
+    "codex:langchain": {
+      "translatedDescription": "提供 LangChain 框架的实践指导，帮助构建带有工具调用、检索、记忆和代理能力的 LLM 应用。",
+      "translatedSummary": "LangChain 应用编排与 RAG 技能。"
+    },
+    "codex:langsmith": {
+      "translatedDescription": "提供 LangSmith 可观测性平台的使用方法，适合跟踪提示、链路、评测结果和应用运行质量。",
+      "translatedSummary": "LangSmith 观测与调试技能。"
+    },
+    "codex:litgpt": {
+      "translatedDescription": "提供 LitGPT 的训练、推理与实现指导，适合以更简洁的代码路径理解和实验大模型。",
+      "translatedSummary": "LitGPT 训练与实现实践技能。"
+    },
+    "codex:llama-cpp": {
+      "translatedDescription": "提供 llama.cpp 的部署与优化指导，适合在 CPU 或轻量硬件环境中本地运行量化模型。",
+      "translatedSummary": "llama.cpp 本地推理与部署技能。"
+    },
+    "codex:llama-factory": {
+      "translatedDescription": "提供 LLaMA-Factory 的使用指导，覆盖数据配置、LoRA/QLoRA 微调、评测与导出流程。",
+      "translatedSummary": "LLaMA-Factory 微调与训练技能。"
+    },
+    "codex:llamaguard": {
+      "translatedDescription": "提供 Llama Guard 安全模型的使用与评估指导，适用于内容安全审核与风险过滤。",
+      "translatedSummary": "Llama Guard 安全审核技能。"
+    },
+    "codex:llamaindex": {
+      "translatedDescription": "提供 LlamaIndex 框架的实践指导，适合构建以数据接入、索引、检索和问答为核心的 LLM 应用。",
+      "translatedSummary": "LlamaIndex 数据接入与 RAG 构建技能。"
+    },
+    "codex:llava": {
+      "translatedDescription": "提供 LLaVA 多模态模型的理解与使用指导，适用于图像问答、视觉对话和图文理解任务。",
+      "translatedSummary": "LLaVA 多模态理解与问答技能。"
+    },
+    "codex:lm-evaluation-harness": {
+      "translatedDescription": "提供 LM Evaluation Harness 的使用指导，用于统一评测语言模型在多种 benchmark 上的能力表现。",
+      "translatedSummary": "统一语言模型评测框架技能。"
+    },
+    "codex:long-context": {
+      "translatedDescription": "提供长上下文建模与使用实践，覆盖位置编码、缓存策略、数据构造和长文推理注意事项。",
+      "translatedSummary": "长上下文建模与推理技能。"
+    },
+    "codex:mamba": {
+      "translatedDescription": "提供 Mamba 状态空间模型架构的理解与实践指导，适合研究高效序列建模替代方案。",
+      "translatedSummary": "Mamba 模型架构与高效序列建模技能。"
+    },
+    "codex:megatron-core": {
+      "translatedDescription": "提供 Megatron Core 分布式训练框架的实战指导，覆盖张量并行、流水并行和大规模训练策略。",
+      "translatedSummary": "Megatron Core 大规模分布式训练技能。"
+    },
+    "codex:memory-compact": {
+      "translatedDescription": "将当前会话的关键上下文压缩为结构化文本，用于会话恢复与持续工作；支持自定义描述与标签，便于后续快速接续。",
+      "translatedSummary": "会话记忆压缩与结构化沉淀。"
+    },
+    "codex:miles": {
+      "translatedDescription": "提供 MILES 强化学习训练框架或方法的使用指导，适合企业级或复杂后训练场景。",
+      "translatedSummary": "MILES 强化学习训练技能。"
+    },
+    "codex:minimax-docx": {
+      "translatedDescription": "面向 DOCX（Word）文档的专业生成、编辑与排版技能，基于 OpenXML SDK（.NET）。支持从零创建、在现有文档中填充/修改内容，以及按模板套用样式并做结构与校验门禁，适合需要可打印、格式严格的 .docx 交付。",
+      "translatedSummary": "DOCX 专业生成与排版（OpenXML/.NET）。"
+    },
+    "codex:minimax-pdf": {
+      "translatedDescription": "面向高视觉质量 PDF 的生成/填表/重排技能：支持从零生成带设计体系的 PDF、为现有 PDF 填写表单字段，以及把现有内容按统一设计 token 重排为可打印的成品文档。适合对版式与设计识别度有要求的 PDF 交付。",
+      "translatedSummary": "高质量 PDF 生成、填表与重排。"
+    },
+    "codex:minimax-xlsx": {
+      "translatedDescription": "处理 Excel/电子表格文件（.xlsx/.xlsm/.csv/.tsv）：支持创建、读取分析、无损编辑、公式重算与校验，并强调保留原格式与结构的编辑路径，适合财务模型、透视表与表格化数据的生产级处理。",
+      "translatedSummary": "Excel 表格创建、分析与无损编辑（XLSX）。"
+    },
+    "codex:ml-paper-writing": {
+      "translatedDescription": "用于撰写机器学习论文，帮助组织问题背景、方法设计、实验结果、图表叙述与学术表达。",
+      "translatedSummary": "机器学习论文写作技能。"
+    },
+    "codex:mlflow": {
+      "translatedDescription": "提供 MLflow 的实验跟踪与模型管理指导，适合记录参数、指标、产物并管理实验生命周期。",
+      "translatedSummary": "MLflow 实验跟踪与模型管理技能。"
+    },
+    "codex:modal": {
+      "translatedDescription": "提供 Modal 云端运行环境的使用指导，适合部署函数、批处理任务和 GPU 推理服务。",
+      "translatedSummary": "Modal 云端部署与运行技能。"
+    },
+    "codex:model-merging": {
+      "translatedDescription": "提供模型合并方法与实践指导，用于融合多个微调模型或权重变体，平衡不同任务能力。",
+      "translatedSummary": "模型合并与能力融合技能。"
+    },
+    "codex:model-pruning": {
+      "translatedDescription": "提供模型剪枝方法的实践指导，帮助在降低参数量和计算量的同时尽量保留性能。",
+      "translatedSummary": "模型剪枝与轻量化技能。"
+    },
+    "codex:moe-training": {
+      "translatedDescription": "提供 Mixture of Experts 训练指导，覆盖路由、并行、负载均衡和大规模专家模型训练要点。",
+      "translatedSummary": "MoE 专家模型训练技能。"
+    },
+    "codex:mumu-xhs-research": {
+      "translatedDescription": "用于运行或扩展 MuMu 模拟器 + 小红书的主题调研流程，可用于通用主题调研、时政提纲构建或政审类样本验证。强调脚本化采集与工件落盘，同时在 OCR 歧义校验、样本质量筛选与最终总结写作上保留 agent 介入检查点。",
+      "translatedSummary": "MuMu + 小红书的主题调研与工件化采集流程。"
+    },
+    "codex:nanogpt": {
+      "translatedDescription": "提供 NanoGPT 的实现、训练与学习指导，适合理解 GPT 类模型的精简实现与实验方法。",
+      "translatedSummary": "NanoGPT 教学型 GPT 实现技能。"
+    },
+    "codex:nemo-curator": {
+      "translatedDescription": "提供 NVIDIA NeMo Curator 的数据清洗与数据构建指导，适合大规模训练语料筛选和预处理。",
+      "translatedSummary": "NeMo Curator 数据清洗技能。"
+    },
+    "codex:nemo-evaluator": {
+      "translatedDescription": "提供 NVIDIA NeMo Evaluator 的评测使用指导，适合系统评估模型在多个基准上的效果。",
+      "translatedSummary": "NeMo Evaluator 模型评测技能。"
+    },
+    "codex:nemo-guardrails": {
+      "translatedDescription": "提供 NeMo Guardrails 的安全与对话约束配置指导，适合为 LLM 应用增加行为边界与安全策略。",
+      "translatedSummary": "NeMo Guardrails 安全约束技能。"
+    },
+    "codex:nnsight": {
+      "translatedDescription": "提供 NNsight 解释性分析工具的使用指导，适合做中间层观测、干预与机理研究。",
+      "translatedSummary": "NNsight 机理解释与干预技能。"
+    },
+    "codex:openpi": {
+      "translatedDescription": "提供 OpenPI 的微调与服务化实践指导，适合面向具身或物理智能任务的模型训练和部署。",
+      "translatedSummary": "OpenPI 微调与服务化技能。"
+    },
+    "codex:openrlhf": {
+      "translatedDescription": "提供 OpenRLHF 的使用指导，覆盖奖励建模、偏好优化、对齐训练与大规模 RLHF 流程。",
+      "translatedSummary": "OpenRLHF 对齐训练技能。"
+    },
+    "codex:openvla-oft": {
+      "translatedDescription": "提供 OpenVLA OFT 的微调与评估指导，适合视觉-动作类模型训练与具身任务实验。",
+      "translatedSummary": "OpenVLA OFT 微调与评估技能。"
+    },
+    "codex:outlines": {
+      "translatedDescription": "提供 Outlines 结构化生成框架的使用方法，帮助用正则、JSON Schema 或类型约束稳定控制模型输出。",
+      "translatedSummary": "Outlines 结构化与受控生成技能。"
+    },
+    "codex:parallel-dev-cycle": {
+      "translatedDescription": "并行开发循环流程：从需求分析与探索规划开始，组织多代理并行开发实现，并在每轮迭代后进行验证与收敛；主流程内联编排（不额外启用编排代理），并用 Markdown 记录进度与结论，适合需要加速推进的中型开发任务。",
+      "translatedSummary": "并行开发与验证的迭代闭环流程。"
+    },
+    "codex:pdf-to-markdown": {
+      "translatedDescription": "将大体量或结构复杂的 PDF 转为结构化 Markdown，尽量保留全文内容并按章节切片，补充图片说明，并支持通过 plan.json 断点续跑与自动化工作区整理。适合把教材、手册、法律文本等长文档变成可搜索、可引用的 Markdown 资料库。",
+      "translatedSummary": "长 PDF 转结构化 Markdown（可断点续跑）。"
+    },
+    "codex:peft": {
+      "translatedDescription": "提供 PEFT 参数高效微调方法的实践指导，覆盖 LoRA、Prefix Tuning、Adapter 等常见技术。",
+      "translatedSummary": "PEFT 参数高效微调技能。"
+    },
+    "codex:phoenix": {
+      "translatedDescription": "提供 Phoenix 可观测性平台的使用指导，帮助监控、调试并评估 AI 应用在生产环境中的行为。",
+      "translatedSummary": "Phoenix AI 可观测性与评估技能。"
+    },
+    "codex:pinecone": {
+      "translatedDescription": "提供 Pinecone 向量数据库的实践指导，适合构建可扩展的语义检索和 RAG 服务。",
+      "translatedSummary": "Pinecone 向量数据库与 RAG 技能。"
+    },
+    "codex:pptx-generator": {
+      "translatedDescription": "PowerPoint（PPTX）生成与编辑技能：支持基于 PptxGenJS 从零生成封面/目录/内容页等结构化幻灯片，也支持通过 XML 工作流编辑既有 PPTX，或用工具抽取文本用于分析与改稿。",
+      "translatedSummary": "PPTX 生成、编辑与文本抽取。"
+    },
+    "codex:project-to-skillizer": {
+      "translatedDescription": "把现有项目/仓库/论文代码或参考资料目录整理为可复用的 Agent Skill 包，包含 SKILL.md、脚本、参考资料、资源文件与校验检查，适合把一次性项目经验沉淀为可重复执行的工作流能力。",
+      "translatedSummary": "将项目沉淀为可复用的 Skill 目录与工作流。"
+    },
+    "codex:prompt-guard": {
+      "translatedDescription": "提供 Prompt Guard 的使用指导，帮助识别提示注入与输入风险，增强 LLM 应用的安全性。",
+      "translatedSummary": "Prompt Guard 提示注入防护技能。"
+    },
+    "codex:pytorch-fsdp2": {
+      "translatedDescription": "提供 PyTorch FSDP2 分布式训练的配置与调优指导，适合超大模型的高效参数分片训练。",
+      "translatedSummary": "PyTorch FSDP2 分布式训练技能。"
+    },
+    "codex:pytorch-lightning": {
+      "translatedDescription": "提供 PyTorch Lightning 的工程化训练指导，帮助以更规范的结构组织训练、验证与实验流程。",
+      "translatedSummary": "PyTorch Lightning 工程化训练技能。"
+    },
+    "codex:pyvene": {
+      "translatedDescription": "提供 PyVene 干预工具的使用指导，适合对模型内部表示进行控制、替换和分析。",
+      "translatedSummary": "PyVene 表示干预与分析技能。"
+    },
+    "codex:qdrant": {
+      "translatedDescription": "提供 Qdrant 向量数据库的使用指导，适合构建高性能、可筛选的语义检索与 RAG 系统。",
+      "translatedSummary": "Qdrant 向量数据库技能。"
+    },
+    "codex:ray-data": {
+      "translatedDescription": "提供 Ray Data 的分布式数据处理指导，适合做大规模数据加载、转换、预处理和流水线构建。",
+      "translatedSummary": "Ray Data 分布式数据处理技能。"
+    },
+    "codex:ray-train": {
+      "translatedDescription": "提供 Ray Train 的分布式训练实践指导，适合在多机多卡环境中编排训练任务。",
+      "translatedSummary": "Ray Train 分布式训练技能。"
+    },
+    "codex:react-native-dev": {
+      "translatedDescription": "React Native 与 Expo 的工程化开发指南，覆盖组件与样式、动画与导航、状态管理与表单、网络请求、性能优化、测试，以及发布部署与 SDK 升级等生产实践。",
+      "translatedSummary": "React Native/Expo 生产级开发与发布指南。"
+    },
+    "codex:RedBookSkills": {
+      "translatedDescription": "小红书（XHS）自动发布与互动技能，支持图文/视频发布、登录检查与扫码、内容检索（首页推荐/搜索/详情）、评论与回复、点赞收藏、以及抓取内容数据等常见运营与调研操作。发布前必须让用户确认标题、正文与素材。",
+      "translatedSummary": "小红书自动发布、检索与评论互动工具链。"
+    },
+    "codex:review-cycle": {
+      "translatedDescription": "提供完整评审循环指导，帮助从需求、实现、测试到复盘形成闭环质量控制。",
+      "translatedSummary": "从实现到复盘的评审闭环技能。"
+    },
+    "codex:roadmap-with-file": {
+      "translatedDescription": "战略层需求 Roadmap 规划技能：通过迭代拆解与 Issue 创建，把路线图沉淀为单一事实来源的 roadmap.md，并同步产出可机器执行的 issues.jsonl，便于后续交接给执行型流程进行落地。",
+      "translatedSummary": "路线图规划 + Issue 拆解与落盘。"
+    },
+    "codex:rwkv": {
+      "translatedDescription": "提供 RWKV 架构的理解与实践指导，适合研究 RNN 与 Transformer 混合思路下的序列建模。",
+      "translatedSummary": "RWKV 架构研究与实践技能。"
+    },
+    "codex:saelens": {
+      "translatedDescription": "提供稀疏自编码器训练与解释性分析相关指导，适合做表征分解与神经元特征研究。",
+      "translatedSummary": "稀疏自编码器训练与解释技能。"
+    },
+    "codex:segment-anything": {
+      "translatedDescription": "提供 Segment Anything 模型的应用指导，适用于交互式分割、目标选区和视觉预处理场景。",
+      "translatedSummary": "Segment Anything 图像分割技能。"
+    },
+    "codex:sentence-transformers": {
+      "translatedDescription": "提供 Sentence Transformers 的使用指导，适合构建文本嵌入、语义搜索、聚类和匹配系统。",
+      "translatedSummary": "Sentence Transformers 文本嵌入技能。"
+    },
+    "codex:sentencepiece": {
+      "translatedDescription": "提供 SentencePiece 分词库的使用指导，适合训练子词分词器和构建多语言预处理流程。",
+      "translatedSummary": "SentencePiece 分词训练技能。"
+    },
+    "codex:sglang": {
+      "translatedDescription": "提供 SGLang 的推理与服务化指导，适合构建高吞吐、可控输出的 LLM 推理服务。",
+      "translatedSummary": "SGLang 推理服务与受控生成技能。"
+    },
+    "codex:shader-dev": {
+      "translatedDescription": "GLSL Shader 技术指南，覆盖 Ray Marching、SDF 建模、流体与粒子模拟、程序化生成、光照与后处理等常见路径，用于构建高质量实时视觉特效与着色器实现。",
+      "translatedSummary": "GLSL 视觉特效与着色器技术指南。"
+    },
+    "codex:simpo": {
+      "translatedDescription": "提供 SimPO 偏好优化训练方法的实践指导，适合做偏好对齐和后训练实验。",
+      "translatedSummary": "SimPO 偏好优化训练技能。"
+    },
+    "codex:skypilot": {
+      "translatedDescription": "提供 SkyPilot 多云算力编排指导，适合跨云启动训练任务、管理集群与控制成本。",
+      "translatedSummary": "SkyPilot 多云算力编排技能。"
+    },
+    "codex:slime": {
+      "translatedDescription": "提供 SLIME 或相关后训练框架的使用指导，适合偏好优化与对齐训练实验。",
+      "translatedSummary": "SLIME 后训练与对齐实验技能。"
+    },
+    "codex:speculative-decoding": {
+      "translatedDescription": "提供投机解码的原理与工程实践指导，帮助用草稿模型和验证模型协同提升推理速度。",
+      "translatedSummary": "投机解码加速推理技能。"
+    },
+    "codex:stable-diffusion": {
+      "translatedDescription": "提供 Stable Diffusion 图像生成与微调指导，适合做文生图、图像编辑与风格生成任务。",
+      "translatedSummary": "Stable Diffusion 图像生成技能。"
+    },
+    "codex:swanlab": {
+      "translatedDescription": "提供 SwanLab 实验跟踪平台的使用指导，适合记录训练过程、指标、配置与可视化结果。",
+      "translatedSummary": "SwanLab 实验跟踪与可视化技能。"
+    },
+    "codex:team-lifecycle": {
+      "translatedDescription": "全生命周期编排技能，覆盖规格澄清、实现与测试验证三段主链；通过 spawn/wait/close 的管线管理子代理协作，并复用探索缓存与一致性问题分级路由，适合需要端到端推进的工程任务。",
+      "translatedSummary": "规格-实现-测试的全流程编排与协作。"
+    },
+    "codex:team-planex": {
+      "translatedDescription": "用于团队级计划制定与执行衔接，帮助把目标拆成阶段性动作并跟踪推进。",
+      "translatedSummary": "团队计划制定与执行衔接技能。"
+    },
+    "codex:tensorboard": {
+      "translatedDescription": "提供 TensorBoard 的使用指导，适合观察训练曲线、参数分布、图结构和调试信息。",
+      "translatedSummary": "TensorBoard 训练可视化技能。"
+    },
+    "codex:tensorrt-llm": {
+      "translatedDescription": "提供 TensorRT-LLM 推理优化与部署指导，适合在 NVIDIA 平台上实现高吞吐、低延迟的大模型服务。",
+      "translatedSummary": "TensorRT-LLM 高性能推理部署技能。"
+    },
+    "codex:timezone-tools": {
+      "translatedDescription": "时区工具技能：查询任意时区的当前时间，并在不同时区之间做时间转换。适用于跨地区排期、对齐会议时间、以及用户提到城市/地区需要给出准确本地时间的场景。支持 IANA 时区名称。",
+      "translatedSummary": "时区时间查询与跨时区换算。"
+    },
+    "codex:torchforge": {
+      "translatedDescription": "提供 TorchForge 相关训练框架或工具的使用指导，适合做 PyTorch 训练组织与实验执行。",
+      "translatedSummary": "TorchForge 训练组织技能。"
+    },
+    "codex:torchtitan": {
+      "translatedDescription": "提供 TorchTitan 分布式训练指导，适合大规模预训练与系统级训练实验。",
+      "translatedSummary": "TorchTitan 大规模训练技能。"
+    },
+    "codex:transformer-lens": {
+      "translatedDescription": "提供 TransformerLens 的解释性分析指导，适合观察注意力头、激活与中间表示，做机理研究。",
+      "translatedSummary": "TransformerLens 机理解释技能。"
+    },
+    "codex:trl-fine-tuning": {
+      "translatedDescription": "提供 TRL 微调与偏好优化指导，覆盖 SFT、DPO、PPO 等常见后训练方法。",
+      "translatedSummary": "TRL 微调与偏好优化技能。"
+    },
+    "codex:unified-execute-with-file": {
+      "translatedDescription": "通用执行引擎：消费 .task/*.json 的目录格式，按串行方式执行任务并做收敛验证，同时用 execution.md 与 execution-events.md 记录进度与事件，适合把结构化任务清单稳定落地为可追溯的执行日志。",
+      "translatedSummary": "基于 .task/*.json 的串行任务执行与进度记录。"
+    },
+    "codex:unsloth": {
+      "translatedDescription": "提供 Unsloth 的快速微调与加速训练指导，适合以更低资源成本完成 LoRA/QLoRA 微调。",
+      "translatedSummary": "Unsloth 低成本快速微调技能。"
+    },
+    "codex:verl": {
+      "translatedDescription": "提供 VERL 强化学习训练框架的实践指导，适合大模型后训练和偏好优化实验。",
+      "translatedSummary": "VERL 强化学习后训练技能。"
+    },
+    "codex:vllm": {
+      "translatedDescription": "提供 vLLM 推理服务框架的使用指导，适合构建高吞吐大模型 API 与批量推理服务。",
+      "translatedSummary": "vLLM 高吞吐推理服务技能。"
+    },
+    "codex:wave-plan-pipeline": {
+      "translatedDescription": "探索优先的分波次管线：先把需求拆成多个探索角度，用 spawn_agents_on_csv 分波次探索并综合发现；再把探索结果链接到执行任务（E*→T*），随后按波次执行，适合不确定性高、需要先摸清再落地的任务。",
+      "translatedSummary": "先探索后执行的分波次编排管线（E*→T*）。"
+    },
+    "codex:weflow": {
+      "translatedDescription": "面向本地 WeFlow 工程的辅助技能：用于梳理项目结构、修复 Windows 开发启动问题、通过本地 HTTP API 查看聊天与朋友圈/SNS 内容、对齐 Electron/Vite 命令，以及解释 API 集成方式。",
+      "translatedSummary": "本地 WeFlow 工程结构、启动与 API 集成辅助。"
+    },
+    "codex:weflow-local-toolkit": {
+      "translatedDescription": "WeFlow 本地开发/调试工具集的共享目录，供相关流程复用，不作为独立技能使用。",
+      "translatedSummary": "WeFlow 共享工具目录。"
+    },
+    "codex:weights-and-biases": {
+      "translatedDescription": "提供 Weights & Biases 的实验跟踪和可视化指导，适合管理训练过程、指标、数据集与模型版本。",
+      "translatedSummary": "Weights & Biases 实验跟踪技能。"
+    },
+    "codex:whisper": {
+      "translatedDescription": "提供 Whisper 语音识别模型的使用指导，适合做语音转写、多语言识别与语音处理应用。",
+      "translatedSummary": "Whisper 语音识别与转写技能。"
+    },
+    "codex:workflow-test-fix-cycle": {
+      "translatedDescription": "端到端测试-修复循环工作流：先按渐进层级（L0-L3）生成测试会话，再迭代执行修复循环直到通过率达到 95% 以上；把测试生成与测试执行/修复收敛合并为统一流水线，适合需要持续回归与质量门禁的工程任务。",
+      "translatedSummary": "测试生成 + 迭代修复的闭环流水线（目标通过率>=95%）。"
+    }
+  }
+}

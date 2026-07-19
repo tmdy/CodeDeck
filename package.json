@@ -1,0 +1,137 @@
+{
+  "name": "codedeck",
+  "private": true,
+  "version": "0.2.0",
+  "productName": "CodeDeck",
+  "author": "99395",
+  "description": "CodeDeck：AI CLI 工具统一管理，覆盖 Skills 管理、Profile 配置启动器、模型映射与参数设置",
+  "type": "module",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:build:electron:watch\" \"npm:dev:electron\"",
+    "dev:renderer": "vite --port 5173 --strictPort",
+    "dev:electron": "wait-on tcp:5173 dist-electron/electron/main.js http-get://localhost:5173/src/main.tsx http-get://localhost:5173/src/App.tsx && set VITE_DEV_SERVER_URL=http://localhost:5173&& electron ./dist-electron/electron/main.js",
+    "build:electron": "tsc -p tsconfig.node.json",
+    "build:electron:watch": "tsc -p tsconfig.node.json --watch",
+    "rebuild:native": "electron-rebuild -f -w node-pty",
+    "merge:translations": "node ./scripts/merge-generated-translations.mjs",
+    "tag:ai-research": "npm run build:electron && node ./scripts/apply-ai-research-user-tags.mjs",
+    "prepare:package": "node ./scripts/prepare-package.mjs",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "build": "npm run typecheck && vite build && npm run build:electron",
+    "dist:win": "npm run build && npm run prepare:package && electron-builder --win nsis --x64 --publish never",
+    "dist:win:dir": "npm run build && npm run prepare:package && electron-builder --win dir --x64 --publish never",
+    "dist:win:zip": "npm run build && npm run prepare:package && electron-builder --win zip --x64 --publish never",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.13.24",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "gray-matter": "^4.0.3",
+    "node-pty": "^1.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.1.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@types/node": "^24.9.1",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "concurrently": "^9.2.1",
+    "electron": "^38.3.0",
+    "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^3.2.4",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.local.codedeck",
+    "productName": "CodeDeck",
+    "copyright": "Copyright © 2026 99395",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "compression": "maximum",
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      {
+        "from": "dist-electron",
+        "to": "dist-electron",
+        "filter": [
+          "**/*",
+          "!**/__tests__/**",
+          "!**/*.map",
+          "!**/*.d.ts",
+          "!**/*.md",
+          "!**/*.txt",
+          "!**/*.test.*",
+          "!**/*.spec.*",
+          "!vite.config.js"
+        ]
+      },
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/workspace-seed",
+        "to": "workspace-seed"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "extraFiles": [
+      {
+        "from": "CodeDeck.project-root.example.txt",
+        "to": "CodeDeck.project-root.example.txt"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "legalTrademarks": "",
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CodeDeck",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "displayLanguageSelector": false,
+      "packElevateHelper": false,
+      "allowElevation": true,
+      "license": "LICENSE.txt",
+      "unicode": true,
+      "menuCategory": "开发工具"
+    }
+  }
+}
