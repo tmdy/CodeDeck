@@ -64,6 +64,26 @@ describe("site-balance-sessions", () => {
     expect(normalized["https://console.aihubmix.com"][0].user_id).toBe("");
   });
 
+  it("preserves optional Sub2API refresh credentials while normalizing sessions", () => {
+    const normalized = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://sub2api.example.com": [{
+        id: "sub-account",
+        label: "Sub2API",
+        base_url: "https://sub2api.example.com",
+        access_token: " access-a ",
+        refresh_token: " refresh-a ",
+        token_expires_at: 1_800_000_000_000,
+        user_id: "",
+      }],
+    });
+
+    expect(normalized["https://sub2api.example.com"][0]).toEqual(expect.objectContaining({
+      access_token: "access-a",
+      refresh_token: "refresh-a",
+      token_expires_at: 1_800_000_000_000,
+    }));
+  });
+
   it("normalizes balance base urls to the site root", () => {
     expect(normalizeBalanceBaseUrl("https://new-api.example.com/v1/chat/completions")).toBe(
       "https://new-api.example.com",

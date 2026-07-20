@@ -770,6 +770,77 @@ describe("BalanceService", () => {
     expect(result.message).toContain("暂未适配");
   });
 
+  it("uses New API response headers to avoid treating a generic 502 as Sub2API", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://relay.example.com/api/user/self") {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "X-New-API-Version": "v1.0.0-rc.20" }),
+          text: async () => JSON.stringify({
+            success: true,
+            data: { quota: 1_000_000, used_quota: 250_000 },
+          }),
+        };
+      }
+      if (url === "https://relay.example.com/api/v1/auth/me") {
+        return textResponse(502, "bad gateway");
+      }
+      return textResponse(404, "not found");
+    });
+    const service = new BalanceService(fetchMock as unknown as typeof fetch);
+
+    const result = await service.query(makeProfile("https://relay.example.com/v1"));
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://relay.example.com/api/user/self");
+    expect(result.success).toBe(true);
+    expect(result.items[0].remaining).toBe(2);
+  });
+
+  it("refreshes an expired Sub2API session before reading the balance", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/auth/refresh")) {
+        expect(init?.method).toBe("POST");
+        expect(init?.body).toBe(JSON.stringify({ refresh_token: "refresh-a" }));
+        return jsonResponse({
+          data: {
+            access_token: "access-b",
+            refresh_token: "refresh-b",
+            expires_in: 3600,
+          },
+        });
+      }
+      return jsonResponse({ data: { balance: 8.5 } });
+    });
+    const service = new BalanceService(fetchMock as unknown as typeof fetch);
+    const updated = vi.fn();
+
+    const result = await service.query(
+      makeProfile("https://sub2api.example.com/v1"),
+      8000,
+      makeResolvedSession({
+        base_url: "https://sub2api.example.com",
+        access_token: "access-a",
+        refresh_token: "refresh-a",
+        token_expires_at: Date.now() - 1000,
+      }),
+      { onSessionUpdated: updated },
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://sub2api.example.com/api/v1/auth/refresh");
+    expect(fetchMock.mock.calls[1][1]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer access-b" }),
+    }));
+    expect(updated).toHaveBeenCalledWith(expect.objectContaining({
+      access_token: "access-b",
+      refresh_token: "refresh-b",
+    }));
+    expect(result.success).toBe(true);
+    expect(result.items[0].remaining).toBe(8.5);
+  });
+
   it("marks official OpenAI-compatible vendors without public balance APIs as unsupported", async () => {
     const fetchMock = vi.fn();
     const service = new BalanceService(fetchMock as typeof fetch);

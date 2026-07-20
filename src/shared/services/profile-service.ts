@@ -381,6 +381,8 @@ export class ProfileService {
       label,
       base_url: baseUrl,
       access_token: normalizedDraft.access_token,
+      ...(normalizedDraft.refresh_token ? { refresh_token: normalizedDraft.refresh_token } : {}),
+      ...(normalizedDraft.token_expires_at ? { token_expires_at: normalizedDraft.token_expires_at } : {}),
       user_id: normalizedDraft.user_id,
       auto_checkin_enabled: existingSession?.auto_checkin_enabled ?? false,
       updated_at: new Date().toISOString(),

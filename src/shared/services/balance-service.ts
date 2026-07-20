@@ -40,10 +40,17 @@ interface RequestResult {
   payload: unknown;
   bodyText: string;
   error: string;
+  headers?: Headers;
 }
 
 interface RequestJsonOptions {
   includeAuthorization?: boolean;
+  method?: "GET" | "POST";
+  body?: unknown;
+}
+
+export interface BalanceQueryOptions {
+  onSessionUpdated?: (session: SiteBalanceSession) => Promise<void> | void;
 }
 
 interface ManagementInspectionResult {
@@ -690,6 +697,19 @@ function detectManagementFamilyByText(bodyText: string): ManagementFamily | null
   return null;
 }
 
+function detectManagementFamilyByHeaders(headers: Headers | undefined): ManagementFamily | null {
+  if (!headers) {
+    return null;
+  }
+  if (headers.get("x-new-api-version")) {
+    return "new_api_family";
+  }
+  if (headers.get("x-oneapi-request-id")) {
+    return "one_api";
+  }
+  return null;
+}
+
 function detectPlatformFamily(baseUrl: string): PlatformFamily {
   if (isDeepSeekBaseUrl(baseUrl)) {
     return "unknown";
@@ -757,7 +777,6 @@ function sub2ApiPayloadLooksSupported(payload: unknown): boolean {
       || "monthly_limit_usd" in candidate
       || "monthly_used_usd" in candidate
       || Array.isArray(candidate.subscriptions)
-      || (typeof candidate.code === "number" && ("data" in candidate || "message" in candidate))
     ) {
       return true;
     }
@@ -1109,6 +1128,7 @@ export class BalanceService {
     profile: Pick<Profile, "provider" | "name" | "url" | "key">,
     timeoutMs: number = 8000,
     resolvedSession: SiteBalanceSession | null = null,
+    options: BalanceQueryOptions = {},
   ): Promise<BalanceCheckState> {
     const context = buildContext(profile);
     const apiKey = profile.key.trim();
@@ -1135,7 +1155,14 @@ export class BalanceService {
       return unsupportedState(context, "官方兼容接口不提供公开余额查询");
     }
     if (familyHint === "sub2api") {
-      return (await this.querySub2Api(context, apiKey, timeoutMs, true))
+      return (await this.querySub2Api(
+        context,
+        apiKey,
+        timeoutMs,
+        resolvedSession,
+        options,
+        true,
+      ))
         ?? unsupportedState(context, NOT_SUPPORTED_MESSAGE);
     }
     if (familyHint !== "unknown") {
@@ -1149,6 +1176,18 @@ export class BalanceService {
       )) ?? unsupportedState(context, NOT_SUPPORTED_MESSAGE);
     }
 
+    const managementResult = await this.queryManagementFamily(
+      context,
+      apiKey,
+      timeoutMs,
+      resolvedSession,
+      null,
+      false,
+    );
+    if (managementResult) {
+      return managementResult;
+    }
+
     const voApiV2Result = await this.queryVoApiV2(
       context,
       apiKey,
@@ -1160,21 +1199,16 @@ export class BalanceService {
       return voApiV2Result;
     }
 
-    const sub2ApiResult = await this.querySub2Api(context, apiKey, timeoutMs, false);
-    if (sub2ApiResult) {
-      return sub2ApiResult;
-    }
-
-    const managementResult = await this.queryManagementFamily(
+    const sub2ApiResult = await this.querySub2Api(
       context,
       apiKey,
       timeoutMs,
       resolvedSession,
-      null,
+      options,
       false,
     );
-    if (managementResult) {
-      return managementResult;
+    if (sub2ApiResult) {
+      return sub2ApiResult;
     }
 
     return unsupportedState(context, NOT_SUPPORTED_MESSAGE);
@@ -1195,12 +1229,18 @@ export class BalanceService {
         Accept: "application/json",
         ...extraHeaders,
       };
+      if (options.method === "POST") {
+        headers["Content-Type"] = "application/json";
+      }
       if (options.includeAuthorization !== false) {
         headers.Authorization = `Bearer ${apiKey}`;
       }
       const response = await this.fetchImpl(endpoint, {
-        method: "GET",
+        method: options.method ?? "GET",
         headers,
+        ...(options.method === "POST"
+          ? { body: JSON.stringify(options.body ?? {}) }
+          : {}),
         signal: controller.signal,
       });
 
@@ -1220,6 +1260,7 @@ export class BalanceService {
         payload,
         bodyText,
         error: "",
+        headers: response.headers,
       };
     } catch (error) {
       const message = describeNetworkError(error);
@@ -1419,10 +1460,37 @@ export class BalanceService {
     context: BalanceContext,
     apiKey: string,
     timeoutMs: number,
+    resolvedSession: SiteBalanceSession | null,
+    options: BalanceQueryOptions,
     assumeFamily: boolean,
   ): Promise<BalanceCheckState | null> {
     const endpoint = `${context.base_url}/api/v1/auth/me`;
-    const response = await this.requestJson(endpoint, apiKey, timeoutMs);
+    let authToken = (resolvedSession?.access_token ?? apiKey).trim();
+    if (!authToken) {
+      return assumeFamily ? supportedFailureState(context, endpoint, AUTH_FAILURE_MESSAGE) : null;
+    }
+
+    if (
+      resolvedSession?.refresh_token
+      && resolvedSession.token_expires_at
+      && resolvedSession.token_expires_at <= Date.now() + 30_000
+    ) {
+      const refreshed = await this.refreshSub2ApiSession(context, resolvedSession, timeoutMs, options);
+      if (!refreshed) {
+        return supportedFailureState(context, endpoint, SESSION_EXPIRED_MESSAGE);
+      }
+      authToken = refreshed.access_token;
+    }
+
+    let response = await this.requestJson(endpoint, authToken, timeoutMs);
+    if ((response.status === 401 || response.status === 403) && resolvedSession?.refresh_token) {
+      const refreshed = await this.refreshSub2ApiSession(context, resolvedSession, timeoutMs, options);
+      if (!refreshed) {
+        return supportedFailureState(context, endpoint, SESSION_EXPIRED_MESSAGE);
+      }
+      authToken = refreshed.access_token;
+      response = await this.requestJson(endpoint, authToken, timeoutMs);
+    }
     const matched = assumeFamily || sub2ApiPayloadLooksSupported(response.payload);
 
     if (response.error) {
@@ -1451,6 +1519,57 @@ export class BalanceService {
     }
 
     return parseSub2ApiBalanceState(context, endpoint, response.payload);
+  }
+
+  private async refreshSub2ApiSession(
+    context: BalanceContext,
+    session: SiteBalanceSession,
+    timeoutMs: number,
+    options: BalanceQueryOptions,
+  ): Promise<SiteBalanceSession | null> {
+    const refreshToken = session.refresh_token?.trim();
+    if (!refreshToken) {
+      return null;
+    }
+    const response = await this.requestJson(
+      `${context.base_url}/api/v1/auth/refresh`,
+      "",
+      timeoutMs,
+      {},
+      {
+        includeAuthorization: false,
+        method: "POST",
+        body: { refresh_token: refreshToken },
+      },
+    );
+    if (!response.ok || response.error) {
+      return null;
+    }
+    for (const candidate of collectObjectCandidates(response.payload)) {
+      const accessToken = typeof candidate.access_token === "string"
+        ? candidate.access_token.trim()
+        : "";
+      if (!accessToken) {
+        continue;
+      }
+      const nextRefreshToken = typeof candidate.refresh_token === "string"
+        && candidate.refresh_token.trim()
+        ? candidate.refresh_token.trim()
+        : refreshToken;
+      const expiresIn = coerceNumber(candidate.expires_in);
+      const updatedSession: SiteBalanceSession = {
+        ...session,
+        access_token: accessToken,
+        refresh_token: nextRefreshToken,
+        ...(expiresIn !== null && expiresIn > 0
+          ? { token_expires_at: Date.now() + expiresIn * 1000 }
+          : {}),
+        updated_at: new Date().toISOString(),
+      };
+      await options.onSessionUpdated?.(updatedSession);
+      return updatedSession;
+    }
+    return null;
   }
 
   private async queryManagementFamily(
@@ -1613,10 +1732,11 @@ export class BalanceService {
     preferNewApi: boolean,
   ): ManagementInspectionResult {
     const bodyMessage = extractResponseMessage(response.payload) || response.bodyText;
+    const responseFamilyHint = familyHint ?? detectManagementFamilyByHeaders(response.headers);
     const family = resolveManagementFamily(
       response.payload,
       response.bodyText,
-      familyHint,
+      responseFamilyHint,
       authMode,
       preferNewApi,
     );
@@ -1626,7 +1746,7 @@ export class BalanceService {
         return { family: null, state: null, shouldRetryWithUserId: false };
       }
       return {
-        family: family ?? familyHint,
+        family: family ?? responseFamilyHint,
         state: supportedFailureState(context, endpoint, CHALLENGE_MESSAGE),
         shouldRetryWithUserId: false,
       };
@@ -1637,7 +1757,7 @@ export class BalanceService {
         return { family: null, state: null, shouldRetryWithUserId: false };
       }
       return {
-        family: family ?? familyHint,
+        family: family ?? responseFamilyHint,
         state: supportedFailureState(context, endpoint, response.error),
         shouldRetryWithUserId: false,
       };
@@ -1653,7 +1773,7 @@ export class BalanceService {
           ? formatManagementFailureMessage(bodyMessage, apiKey, authMode, preferNewApi)
           : (authMode === "session_cookie" || preferNewApi ? SESSION_EXPIRED_MESSAGE : AUTH_FAILURE_MESSAGE);
         return {
-          family: family ?? familyHint,
+          family: family ?? responseFamilyHint,
           state: supportedFailureState(context, endpoint, message),
           shouldRetryWithUserId: shouldRetryWithManagementUserId(bodyMessage),
         };
@@ -1662,7 +1782,7 @@ export class BalanceService {
       if (response.status === 404 || response.status === 405) {
         return assumeFamily
           ? {
-            family: family ?? familyHint,
+            family: family ?? responseFamilyHint,
             state: supportedFailureState(
               context,
               endpoint,
@@ -1677,7 +1797,7 @@ export class BalanceService {
         ? formatManagementFailureMessage(bodyMessage, apiKey, authMode, preferNewApi)
         : `余额接口请求失败（HTTP ${response.status}）`;
       return {
-        family: family ?? familyHint,
+        family: family ?? responseFamilyHint,
         state: supportedFailureState(context, endpoint, message),
         shouldRetryWithUserId: shouldRetryWithManagementUserId(bodyMessage),
       };
@@ -1685,11 +1805,11 @@ export class BalanceService {
 
     if (payloadSignalsFailure(response.payload)) {
       const message = formatManagementFailureMessage(bodyMessage, apiKey, authMode, preferNewApi);
-      if (!message && !family && !assumeFamily) {
+      if (!family && !assumeFamily) {
         return { family: null, state: null, shouldRetryWithUserId: false };
       }
       return {
-        family: family ?? familyHint,
+        family: family ?? responseFamilyHint,
         state: supportedFailureState(
           context,
           endpoint,
@@ -1702,7 +1822,7 @@ export class BalanceService {
     const resolvedFamily = family ?? resolveManagementFamily(
       response.payload,
       bodyMessage,
-      familyHint,
+      responseFamilyHint,
       authMode,
       preferNewApi,
     );

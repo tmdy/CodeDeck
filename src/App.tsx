@@ -78,6 +78,8 @@ type SettingsSubTab = "global" | "parameters";
 type BalanceSessionDraftState = {
   label: string;
   access_token: string;
+  refresh_token: string;
+  token_expires_at?: number;
   user_id: string;
 };
 type HydratedProfilesResult = {
@@ -241,13 +243,18 @@ function emptyBalanceSessionDraft(): BalanceSessionDraftState {
   return {
     label: "",
     access_token: "",
+    refresh_token: "",
     user_id: "",
   };
 }
 
-function isEmptyNewBalanceSessionDraft(selection: string, draft: BalanceSessionDraftState): boolean {
+function isEmptyNewBalanceSessionDraft(
+  selection: string,
+  draft: ProfileEditorDraft["balanceSessionDraft"],
+): boolean {
   return selection === "new"
     && !draft.access_token.trim()
+    && !(draft.refresh_token ?? "").trim()
     && !draft.user_id.trim();
 }
 
@@ -326,6 +333,18 @@ function sessionSourceFromSummary(session?: SessionSummary): LaunchSessionSource
     source_kind: session.source_kind,
     source_home: session.source_home,
     source_file_relative_path: session.source_file_relative_path,
+  };
+}
+
+function normalizeBalanceSessionDraftState(
+  draft: ProfileEditorDraft["balanceSessionDraft"],
+): BalanceSessionDraftState {
+  return {
+    label: draft.label ?? "",
+    access_token: draft.access_token ?? "",
+    refresh_token: draft.refresh_token ?? "",
+    token_expires_at: draft.token_expires_at,
+    user_id: draft.user_id ?? "",
   };
 }
 
@@ -976,7 +995,7 @@ function App() {
     setDraftAdvancedModelMapping(draft.advancedModelMapping);
     setDraftPermissions(draft.permissions);
     setDraftBalanceSessionSelection(draft.balanceSessionSelection);
-    setDraftBalanceSession({ ...draft.balanceSessionDraft });
+    setDraftBalanceSession(normalizeBalanceSessionDraftState(draft.balanceSessionDraft));
     setDraftCwd(draft.cwd);
     setDraftCommandBase(draft.command_base);
     setDraftSettingsFile(draft.settings_file);
@@ -1028,6 +1047,8 @@ function App() {
     const nextDraft = {
       label: matched.label,
       access_token: matched.access_token,
+      refresh_token: matched.refresh_token ?? "",
+      token_expires_at: matched.token_expires_at,
       user_id: matched.user_id,
     };
     setDraftBalanceSession(nextDraft);
@@ -1169,6 +1190,8 @@ function App() {
         }
         if (
           existingSession.access_token !== snapshot.balanceSessionDraft.access_token
+          || (existingSession.refresh_token ?? "") !== (snapshot.balanceSessionDraft.refresh_token ?? "")
+          || (existingSession.token_expires_at ?? 0) !== (snapshot.balanceSessionDraft.token_expires_at ?? 0)
           || existingSession.user_id !== snapshot.balanceSessionDraft.user_id
         ) {
           const updated = await window.profileManager.saveSiteBalanceSession(snapshot.url, {
@@ -2859,10 +2882,12 @@ function App() {
     setDraftBalanceSession(matched ? {
       label: matched.label,
       access_token: matched.access_token,
+      refresh_token: matched.refresh_token ?? "",
+      token_expires_at: matched.token_expires_at,
       user_id: matched.user_id,
     } : emptyBalanceSessionDraft());
   }, [draftSiteBalanceSessions]);
-  const handleBalanceSessionDraftChange = useCallback((field: "label" | "access_token" | "user_id", value: string) => {
+  const handleBalanceSessionDraftChange = useCallback((field: "label" | "access_token" | "refresh_token" | "user_id", value: string) => {
     setDraftBalanceSession((current) => ({
       ...current,
       [field]: value,
