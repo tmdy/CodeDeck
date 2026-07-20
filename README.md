@@ -174,6 +174,10 @@ npm run dist:win
 
 提交修改前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题请按 [SECURITY.md](SECURITY.md) 中的方式报告，不要在公开 Issue 中粘贴凭据或完整运行日志。
 
+## 友情链接
+
+- [LinuxDo](https://linux.do) — 开发者交流社区。
+
 ## License
 
 源码使用 [MIT License](LICENSE)。Windows 安装器展示的 [LICENSE.txt](LICENSE.txt) 是中文说明文本；它不替代仓库根目录的 MIT License。
