@@ -128,13 +128,13 @@ function createProviderRaceFixture() {
       profiles: profiles.map((profile) => ({ ...profile })),
       state: createBootstrapState(state),
       siteBalanceSessionsByBaseUrl: {},
-      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+      defaultWorkingDirectory: "C:/Users/example/Downloads",
     })),
     listProfiles: vi.fn(async () => ({
       profiles: profiles.map((profile) => ({ ...profile })),
       state: cloneState(state),
       siteBalanceSessionsByBaseUrl: {},
-      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+      defaultWorkingDirectory: "C:/Users/example/Downloads",
     })),
     saveProfile: vi.fn(async (_targetKey, draft) => draft),
     deleteProfile: vi.fn(async () => undefined),
@@ -268,13 +268,13 @@ function createFavoritesFixture() {
       profiles: profiles.map((profile) => ({ ...profile })),
       state: createBootstrapState(state),
       siteBalanceSessionsByBaseUrl: {},
-      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+      defaultWorkingDirectory: "C:/Users/example/Downloads",
     })),
     listProfiles: vi.fn(async () => ({
       profiles: profiles.map((profile) => ({ ...profile })),
       state: cloneState(state),
       siteBalanceSessionsByBaseUrl: {},
-      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+      defaultWorkingDirectory: "C:/Users/example/Downloads",
     })),
     saveProfile: vi.fn(async (_targetKey, draft) => draft),
     deleteProfile: vi.fn(async () => undefined),
@@ -362,7 +362,7 @@ function createPrefetchFixture(options: {
       [codexKey]: runtime(options.runtimeCwd ?? "C:/repo-codex", "codex"),
     },
   };
-  const defaultWorkingDirectory = options.defaultWorkingDirectory ?? "C:/Users/99395/Downloads";
+  const defaultWorkingDirectory = options.defaultWorkingDirectory ?? "C:/Users/example/Downloads";
   const sessions = Array.from({ length: 60 }, (_, index) => createSession(index + 1));
   const listSessions = vi.fn(async (request) => {
     const offset = request.offset ?? 0;

@@ -38,7 +38,7 @@ describe("session-list-cache", () => {
       offset: 40,
     });
     const homes: CodexSessionHome[] = [
-      { kind: "global_codex", home: "C:/Users/99395/.codex" },
+      { kind: "global_codex", home: "C:/Users/example/.codex" },
       { kind: "app_runtime", home: "C:/workspace/runtime-home" },
     ];
 

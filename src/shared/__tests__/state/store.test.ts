@@ -156,7 +156,7 @@ describe("LocalStateStore", () => {
             updated_at: "2026-06-13T08:00:00.000Z",
             preview: " Important Codex session ",
             source_kind: "global_codex",
-            source_home: " C:/Users/99395/.codex ",
+            source_home: " C:/Users/example/.codex ",
             favorited_at: "2026-06-13T09:00:00.000Z",
             user_prompts: [" first prompt ", "", 42],
             conversation_excerpts: [
@@ -172,7 +172,7 @@ describe("LocalStateStore", () => {
             updated_at: "2026-06-13T08:30:00.000Z",
             preview: "Duplicate",
             source_kind: "global_codex",
-            source_home: "C:/Users/99395/.codex",
+            source_home: "C:/Users/example/.codex",
             favorited_at: "2026-06-13T09:30:00.000Z",
           },
           {
@@ -194,14 +194,14 @@ describe("LocalStateStore", () => {
 
     expect((loaded as unknown as { session_favorites: unknown[] }).session_favorites).toEqual([
       {
-        favorite_key: "codex|global_codex|C:/Users/99395/.codex|codex-fav-1",
+        favorite_key: "codex|global_codex|C:/Users/example/.codex|codex-fav-1",
         provider: "codex",
         session_id: "codex-fav-1",
         cwd: "C:/repo-codex",
         updated_at: "2026-06-13T08:00:00.000Z",
         preview: "Important Codex session",
         source_kind: "global_codex",
-        source_home: "C:/Users/99395/.codex",
+            source_home: "C:/Users/example/.codex",
         favorited_at: "2026-06-13T09:00:00.000Z",
         user_prompts: ["first prompt"],
         conversation_excerpts: [

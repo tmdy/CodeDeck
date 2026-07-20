@@ -226,7 +226,7 @@ describe("SessionList", () => {
             updated_at: "2026-05-05T07:00:00.000Z",
             preview: "全局历史会话",
             source_kind: "global_codex",
-            source_home: "C:/Users/99395/.codex",
+            source_home: "C:/Users/example/.codex",
           },
         ]}
         selectedId="global-session"
@@ -242,7 +242,7 @@ describe("SessionList", () => {
 
     expect(html).toContain("来源");
     expect(html).toContain("全局 .codex");
-    expect(html).toContain("C:/Users/99395/.codex");
+    expect(html).toContain("C:/Users/example/.codex");
   });
 
   it("shows an explicit provider-missing hint when there is no available restore profile", () => {

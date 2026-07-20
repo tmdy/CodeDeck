@@ -14,7 +14,7 @@ import type { SessionSummary } from "../../services/session-service.js";
 const longSession: SessionSummary = {
   provider: "claude",
   session_id: "session-long",
-  cwd: "C:/Users/99395/Downloads/新建 文本文档/一个非常长的项目目录/继续嵌套/直到足以撑开原生下拉框",
+  cwd: "C:/Users/example/Downloads/新建 文本文档/一个非常长的项目目录/继续嵌套/直到足以撑开原生下拉框",
   updated_at: "2026-05-04T10:00:00.000Z",
   preview: "可以再加一句更适合 Claude Code 的执行指令，并且这是一段非常长的会话预览文本",
 };
@@ -256,7 +256,7 @@ describe("SessionPicker", () => {
             {
               provider: "codex",
               session_id: "session-image-prompt",
-              cwd: "C:/Users/99395/Sync/软件开发项目/CodeDeck/一个很长的目录/继续嵌套/直到足够长",
+              cwd: "C:/Users/example/Projects/CodeDeck/一个很长的目录/继续嵌套/直到足够长",
               updated_at: "2026-06-09T10:00:00.000Z",
               preview: longImagePrompt,
               conversation_excerpts: [

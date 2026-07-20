@@ -150,7 +150,7 @@ npm run dist:win:zip  # Windows zip 包
 打包版如果需要继续使用仓库工作空间，可以在 `CodeDeck.exe` 同目录创建 `CodeDeck.project-root.txt`，内容示例：
 
 ```text
-C:\Users\99395\Sync\软件开发项目\CodeDeck
+C:\Users\example\Projects\CodeDeck
 ```
 
 这只改变 CodeDeck 自己读取 `app-data/` 和 `library/` 的位置，不等同于 Codex CLI 的 `CODEX_HOME`。

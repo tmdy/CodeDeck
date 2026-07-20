@@ -101,7 +101,7 @@ function createProfileManagerFixture(
       sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
     },
     siteBalanceSessionsByBaseUrl: cloneSiteBalanceSessions(siteBalanceSessionsByBaseUrl),
-    defaultWorkingDirectory: "C:/Users/99395/Downloads",
+    defaultWorkingDirectory: "C:/Users/example/Downloads",
   }));
   const saveSiteBalanceSession = vi.fn(async (_baseUrl: string, draft) => {
     const baseUrl = "https://new-api.example.com";
@@ -149,7 +149,7 @@ function createProfileManagerFixture(
       profiles: profiles.map((profile) => ({ ...profile })),
       state: createBootstrapState(state),
       siteBalanceSessionsByBaseUrl: cloneSiteBalanceSessions(siteBalanceSessionsByBaseUrl),
-      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+      defaultWorkingDirectory: "C:/Users/example/Downloads",
     })),
     listProfiles,
     saveProfile,

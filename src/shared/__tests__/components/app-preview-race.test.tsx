@@ -25,7 +25,7 @@ const profile: Profile = {
   url: "https://new-api.example.com/v1",
   key: "sk-relay",
 };
-const DEFAULT_DOWNLOADS_CWD = "C:/Users/99395/Downloads";
+const DEFAULT_DOWNLOADS_CWD = "C:/Users/example/Downloads";
 
 function createState(runtime: RuntimeSettings, sourceProfile: Profile = profile): LocalState {
   const key = itemKey(sourceProfile);

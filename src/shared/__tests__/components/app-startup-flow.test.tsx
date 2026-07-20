@@ -85,7 +85,7 @@ function createBootstrapResult(state: LocalState): BootstrapResult {
     profiles: [{ ...baseProfile }],
     state: createBootstrapState(state),
     siteBalanceSessionsByBaseUrl: {},
-    defaultWorkingDirectory: "C:/Users/99395/Downloads",
+    defaultWorkingDirectory: "C:/Users/example/Downloads",
   };
 }
 
@@ -135,7 +135,7 @@ function createProfileManagerFixture(options: {
       profiles: [{ ...baseProfile }],
       state: cloneState(state),
       siteBalanceSessionsByBaseUrl: {},
-      defaultWorkingDirectory: "C:/Users/99395/Downloads",
+      defaultWorkingDirectory: "C:/Users/example/Downloads",
     })),
     saveProfile: vi.fn(async (_targetKey, draft) => draft),
     deleteProfile: vi.fn(async () => undefined),
