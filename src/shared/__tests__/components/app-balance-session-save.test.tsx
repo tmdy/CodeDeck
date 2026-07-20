@@ -576,6 +576,7 @@ describe("App balance session autosave", () => {
       {
         label: "",
         access_token: "token-a",
+        refresh_token: "",
         user_id: "42",
       },
     );
@@ -644,6 +645,8 @@ describe("App balance session autosave", () => {
         id: "sess-1",
         label: "",
         access_token: "new-token",
+        refresh_token: "",
+        token_expires_at: undefined,
         user_id: "7945",
       },
     );
