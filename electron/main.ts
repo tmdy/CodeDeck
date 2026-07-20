@@ -1289,6 +1289,20 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
         resolvedAuth.kind === "explicit_session"
           ? resolvedAuth.session
           : null,
+        {
+          onSessionUpdated: resolvedAuth.kind === "explicit_session"
+            ? async (session) => {
+              await getProfileService().saveSiteBalanceSession(session.base_url, {
+                id: session.id,
+                label: session.label,
+                access_token: session.access_token,
+                refresh_token: session.refresh_token,
+                token_expires_at: session.token_expires_at,
+                user_id: session.user_id,
+              });
+            }
+            : undefined,
+        },
       );
     }
     await saveAndEmitBalanceState(sharedProfileKeys, {

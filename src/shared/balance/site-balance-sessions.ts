@@ -19,6 +19,8 @@ export interface SiteBalanceSession {
   label: string;
   base_url: string;
   access_token: string;
+  refresh_token?: string;
+  token_expires_at?: number;
   user_id: string;
   /** Missing in legacy configs; normalization always supplies false. */
   auto_checkin_enabled?: boolean;
@@ -29,6 +31,8 @@ export interface SiteBalanceSessionDraft {
   id?: string;
   label: string;
   access_token: string;
+  refresh_token?: string;
+  token_expires_at?: number;
   user_id: string;
 }
 
@@ -156,6 +160,10 @@ export function normalizeSiteBalanceSessionDraft(
     id: draft.id?.trim() || undefined,
     label: draft.label.trim(),
     access_token: draft.access_token.trim(),
+    refresh_token: draft.refresh_token?.trim() || undefined,
+    token_expires_at: Number.isFinite(draft.token_expires_at) && (draft.token_expires_at ?? 0) > 0
+      ? draft.token_expires_at
+      : undefined,
     user_id: draft.user_id.trim(),
   };
 }
@@ -268,6 +276,12 @@ function normalizeSiteBalanceSession(
   const id = record.id?.trim();
   const label = record.label?.trim();
   const accessToken = record.access_token?.trim();
+  const refreshToken = record.refresh_token?.trim() || undefined;
+  const tokenExpiresAt = typeof record.token_expires_at === "number"
+    && Number.isFinite(record.token_expires_at)
+    && record.token_expires_at > 0
+    ? record.token_expires_at
+    : undefined;
   const userId = record.user_id?.trim() ?? "";
   const baseUrl = normalizeBalanceBaseUrl(record.base_url ?? fallbackBaseUrl);
 
@@ -280,6 +294,8 @@ function normalizeSiteBalanceSession(
     label,
     base_url: baseUrl,
     access_token: accessToken,
+    ...(refreshToken ? { refresh_token: refreshToken } : {}),
+    ...(tokenExpiresAt ? { token_expires_at: tokenExpiresAt } : {}),
     user_id: userId,
     auto_checkin_enabled: record.auto_checkin_enabled === true,
     updated_at: record.updated_at?.trim() || "",

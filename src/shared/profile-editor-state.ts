@@ -22,6 +22,8 @@ export interface ProfileEditorDraft {
   balanceSessionDraft: {
     label: string;
     access_token: string;
+    refresh_token?: string;
+    token_expires_at?: number;
     user_id: string;
   };
   cwd: string;
@@ -40,6 +42,8 @@ export function buildSelectedProfileDraft(
   balanceSessionDraft?: {
     label?: string;
     access_token?: string;
+    refresh_token?: string;
+    token_expires_at?: number;
     user_id?: string;
   },
 ): ProfileEditorDraft {
@@ -55,6 +59,12 @@ export function buildSelectedProfileDraft(
     balanceSessionDraft: {
       label: balanceSessionDraft?.label ?? "",
       access_token: balanceSessionDraft?.access_token ?? "",
+      ...(balanceSessionDraft?.refresh_token
+        ? { refresh_token: balanceSessionDraft.refresh_token }
+        : {}),
+      ...(balanceSessionDraft?.token_expires_at
+        ? { token_expires_at: balanceSessionDraft.token_expires_at }
+        : {}),
       user_id: balanceSessionDraft?.user_id ?? "",
     },
     cwd: baseRuntime.cwd,
@@ -321,6 +331,8 @@ export function balanceSessionDraftsEqual(
 ): boolean {
   return (left.label ?? "") === (right.label ?? "")
     && (left.access_token ?? "") === (right.access_token ?? "")
+    && (left.refresh_token ?? "") === (right.refresh_token ?? "")
+    && (left.token_expires_at ?? 0) === (right.token_expires_at ?? 0)
     && (left.user_id ?? "") === (right.user_id ?? "");
 }
 

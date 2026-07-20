@@ -8,11 +8,13 @@ export interface SiteBalanceSessionPanelProps {
   balanceSessionDraft: {
     label: string;
     access_token: string;
+    refresh_token?: string;
+    token_expires_at?: number;
     user_id: string;
   };
   onBalanceSessionSelectionChange: (value: string) => void;
   onBalanceSessionDraftChange: (
-    field: "label" | "access_token" | "user_id",
+    field: "label" | "access_token" | "refresh_token" | "user_id",
     value: string,
   ) => void;
   onSaveBalanceSession?: () => void;
@@ -72,6 +74,16 @@ export const SiteBalanceSessionPanel = memo(function SiteBalanceSessionPanel({
                     value={balanceSessionDraft.access_token}
                     onChange={(e) => onBalanceSessionDraftChange("access_token", e.target.value)}
                     placeholder="输入后台 Access Token 或 Session"
+                    disabled={disabled}
+                  />
+                </label>
+                <label>
+                  Refresh Token（Sub2API 可选）
+                  <input
+                    type="password"
+                    value={balanceSessionDraft.refresh_token ?? ""}
+                    onChange={(e) => onBalanceSessionDraftChange("refresh_token", e.target.value)}
+                    placeholder="输入 Sub2API Refresh Token"
                     disabled={disabled}
                   />
                 </label>
