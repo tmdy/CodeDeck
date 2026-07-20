@@ -33,9 +33,9 @@
 
 ## 界面预览
 
-![CodeDeck Skills 页面：宿主统计、筛选、状态列表与批次操作](docs/assets/screenshots/skills.png)
+![CodeDeck Profiles 页面：Profile、权限、运行时设置与命令预览](docs/assets/screenshots/profiles.png)
 
-上图来自实际运行的 Windows 应用。公开版本裁掉了包含用户名和绝对路径的详情栏，没有使用设计稿替代产品界面。
+上图来自实际运行的 Windows 应用。公开版本将个人工作目录替换为示例路径，没有使用设计稿替代产品界面。
 
 ## 已实现的功能
 
