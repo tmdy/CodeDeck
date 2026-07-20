@@ -1,7 +1,7 @@
 {
   "name": "codedeck",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "productName": "CodeDeck",
   "author": "99395",
   "description": "Windows desktop app for managing Claude Code and Codex profiles, skills, permissions, sessions, and monitored terminals.",
