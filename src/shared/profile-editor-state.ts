@@ -146,7 +146,7 @@ export function hasProfileDraftChanges(
       current.advancedModelMapping.claude?.haikuTarget ||
       current.advancedModelMapping.claude?.subagentTarget ||
       current.advancedModelMapping.claude?.reasoningEffort ||
-      current.advancedModelMapping.codex?.commandLineModelOverride ||
+      current.advancedModelMapping.codex?.subagentTarget ||
       current.advancedModelMapping.codex?.reasoningEffort ||
       current.cwd ||
       current.command_base ||
@@ -270,7 +270,7 @@ function advancedModelMappingsEqual(left: AdvancedModelMapping, right: AdvancedM
     && (left.claude?.haikuTarget ?? "") === (right.claude?.haikuTarget ?? "")
     && (left.claude?.subagentTarget ?? "") === (right.claude?.subagentTarget ?? "")
     && (left.claude?.reasoningEffort ?? "") === (right.claude?.reasoningEffort ?? "")
-    && (left.codex?.commandLineModelOverride ?? "") === (right.codex?.commandLineModelOverride ?? "")
+    && (left.codex?.subagentTarget ?? "") === (right.codex?.subagentTarget ?? "")
     && (left.codex?.reasoningEffort ?? "") === (right.codex?.reasoningEffort ?? "");
 }
 
@@ -337,6 +337,7 @@ export function balanceSessionDraftsEqual(
 }
 
 function cloneAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedModelMapping {
+  const legacyCodex = value?.codex as (AdvancedModelMapping["codex"] & { commandLineModelOverride?: string }) | undefined;
   return {
     enabled: value?.enabled ?? false,
     claude: {
@@ -349,7 +350,7 @@ function cloneAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedModelM
       subagentTarget: value?.claude?.subagentTarget ?? "",
     },
     codex: {
-      commandLineModelOverride: value?.codex?.commandLineModelOverride ?? "",
+      subagentTarget: value?.codex?.subagentTarget ?? legacyCodex?.commandLineModelOverride ?? "",
       reasoningEffort: normalizeCodexReasoningEffort(value?.codex?.reasoningEffort),
     },
   };

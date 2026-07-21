@@ -151,6 +151,7 @@ export class ProfileService {
       ...patch,
     }, profile.provider);
     st.runtime_by_profile[nKey] = nextRuntime;
+    await this.saveConfig(this.profiles, this.siteBalanceSessionsByBaseUrl, st);
     await this.stateAccessor.save(st);
     return nextRuntime;
   }
@@ -244,7 +245,7 @@ export class ProfileService {
     st.selected_profile_key = newKey;
     st.selected_profile_key_by_provider[nProv] = newKey;
 
-    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl);
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl, st);
     this.profiles = nextProfiles;
     await this.stateAccessor.save(st);
 
@@ -285,7 +286,7 @@ export class ProfileService {
       clonedKey,
     ];
 
-    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl);
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl, st);
     this.profiles = nextProfiles;
     await this.stateAccessor.save(st);
 
@@ -346,7 +347,7 @@ export class ProfileService {
       }
     }
 
-    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl);
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl, st);
     this.profiles = nextProfiles;
     await this.stateAccessor.save(st);
   }
@@ -457,7 +458,7 @@ export class ProfileService {
     const deletedAccountKey = `${baseUrl}::${sessionId}`;
     delete state.checkin_states_by_account[deletedAccountKey];
 
-    await this.saveConfig(nextProfiles, nextSessionsByBaseUrl);
+    await this.saveConfig(nextProfiles, nextSessionsByBaseUrl, state);
     this.profiles = nextProfiles;
     this.siteBalanceSessionsByBaseUrl = nextSessionsByBaseUrl;
     await this.stateAccessor.save(state);
@@ -493,13 +494,20 @@ export class ProfileService {
   private async saveConfig(
     profiles: Profile[],
     siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl,
+    state: LocalState = this.stateAccessor.get(),
   ): Promise<void> {
     if (!this.syncStore) return;
+    const runtimeEnvByProfile = Object.fromEntries(
+      Object.entries(state.runtime_by_profile)
+        .filter(([, runtime]) => Object.keys(runtime.extra_env ?? {}).length > 0)
+        .map(([key, runtime]) => [key, { ...runtime.extra_env }]),
+    );
     await this.syncStore.saveConfig({
       profiles: profiles.map(extractSyncedProfile),
       site_balance_sessions_by_base_url: cloneSiteBalanceSessionsByBaseUrl(
         siteBalanceSessionsByBaseUrl,
       ),
+      runtime_env_by_profile: runtimeEnvByProfile,
     });
   }
 }

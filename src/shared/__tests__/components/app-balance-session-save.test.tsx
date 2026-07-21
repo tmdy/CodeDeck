@@ -141,7 +141,7 @@ function createProfileManagerFixture(
   };
 
   const manager: MockProfileManager = {
-    checkEncryptedConfig: vi.fn(async () => false),
+    checkEncryptedConfig: vi.fn(async () => true),
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),

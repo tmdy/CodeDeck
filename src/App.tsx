@@ -58,6 +58,7 @@ import {
   type ProfileEditorDraft,
 } from "./shared/profile-editor-state.js";
 import { APP_NAME } from "./shared/branding.js";
+import type { EncryptionSetupStatus } from "./shared/encryption-status.js";
 
 // Components
 import {
@@ -156,16 +157,23 @@ const SettingsPageComponent = EagerSettingsPage ?? LazySettingsPage;
 const SkillsPanelComponent = EagerSkillsPanel ?? LazySkillsPanel;
 
 type StartupCheckResult = {
-  hasEncryptedConfig: boolean;
+  encryptionStatus: EncryptionSetupStatus;
+};
+type ProfileAuthResult = {
+  success: boolean;
+  bootstrap?: BootstrapResult;
+  warnings?: string[];
 };
 
 let startupCheckPromise: Promise<StartupCheckResult> | null = null;
 let startupCheckResult: StartupCheckResult | null = null;
+let startupAutoUnlockPromise: Promise<ProfileAuthResult> | null = null;
 let startupMilestonesLogged = new Set<string>();
 
 export function resetAppStartupStateForTests(): void {
   startupCheckPromise = null;
   startupCheckResult = null;
+  startupAutoUnlockPromise = null;
   startupMilestonesLogged = new Set<string>();
 }
 
@@ -189,9 +197,17 @@ async function resolveStartupCheckResult(): Promise<StartupCheckResult> {
     throw new Error("当前环境未注入 Profile API，请通过 Electron 运行。");
   }
   if (!startupCheckPromise) {
-    startupCheckPromise = window.profileManager.checkEncryptedConfig()
-      .then((hasEncryptedConfig) => {
-        startupCheckResult = { hasEncryptedConfig };
+    const statusPromise = window.profileManager.getEncryptionStatus
+      ? window.profileManager.getEncryptionStatus()
+      : window.profileManager.checkEncryptedConfig
+        ? window.profileManager.checkEncryptedConfig().then((hasEncryptedConfig) => ({
+            mode: hasEncryptedConfig ? "unlock" as const : "create" as const,
+            source: hasEncryptedConfig ? "canonical" as const : "none" as const,
+          }))
+        : Promise.reject(new Error("当前环境未注入加密状态 API。"));
+    startupCheckPromise = statusPromise
+      .then((encryptionStatus) => {
+        startupCheckResult = { encryptionStatus };
         return startupCheckResult;
       })
       .catch((error) => {
@@ -200,6 +216,20 @@ async function resolveStartupCheckResult(): Promise<StartupCheckResult> {
       });
   }
   return startupCheckPromise;
+}
+
+function resolveStartupAutoUnlock(): Promise<ProfileAuthResult> {
+  const unlockWithoutPassphrase = window.profileManager?.unlockWithoutPassphrase;
+  if (!unlockWithoutPassphrase) {
+    return Promise.reject(new Error("当前环境不支持免口令自动解锁。"));
+  }
+  if (!startupAutoUnlockPromise) {
+    startupAutoUnlockPromise = unlockWithoutPassphrase().catch((error) => {
+      startupAutoUnlockPromise = null;
+      throw error;
+    });
+  }
+  return startupAutoUnlockPromise;
 }
 
 function LoadingCard({ message }: { message: string }) {
@@ -493,7 +523,12 @@ function App() {
   const [startupPhase, setStartupPhase] = useState<StartupPhase>("checking");
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
-  const [hasEncryptedConfig, setHasEncryptedConfig] = useState(false);
+  const [confirmPassphrase, setConfirmPassphrase] = useState("");
+  const [usePassphrase, setUsePassphrase] = useState(true);
+  const [encryptionStatus, setEncryptionStatus] = useState<EncryptionSetupStatus>({
+    mode: "create",
+    source: "none",
+  });
 
   // 编辑状态
   const [editingKey, setEditingKey] = useState<ProfileKey>("");
@@ -780,11 +815,23 @@ function App() {
       if (isCancelled?.()) {
         return;
       }
-      setHasEncryptedConfig(result.hasEncryptedConfig);
-      setStartupPhase("locked");
+      setEncryptionStatus(result.encryptionStatus);
       logRendererMilestoneOnce("startup_check_complete", "checkConfigAndInit completed", {
-        hasEncryptedConfig: result.hasEncryptedConfig,
+        encryptionMode: result.encryptionStatus.mode,
       });
+      if (result.encryptionStatus.mode === "auto-unlock") {
+        setStartupPhase("unlocking");
+        const unlockResult = await resolveStartupAutoUnlock();
+        if (isCancelled?.()) {
+          return;
+        }
+        await completeAuthentication(unlockResult, {
+          mode: "auto-unlock",
+          source: "canonical",
+        });
+        return;
+      }
+      setStartupPhase("locked");
     } catch (err) {
       if (isCancelled?.()) {
         return;
@@ -794,38 +841,126 @@ function App() {
     }
   }
 
+  async function completeAuthentication(
+    unlockResult: ProfileAuthResult,
+    nextStatus: EncryptionSetupStatus,
+  ): Promise<void> {
+    logRendererMilestoneOnce("bootstrap_start", "Bootstrap hydration started");
+    const data = unlockResult.bootstrap
+      ? applyBootstrapResult(unlockResult.bootstrap)
+      : await loadBootstrapData();
+    setInitialPreviewDeferred(true);
+    markProfilesSessionsHydrated(null);
+    clearProfilesSessionsState({ clearCache: true });
+    syncEditorFromData(data);
+    setIsUnlocked(true);
+    setEncryptionStatus(nextStatus);
+    setStartupPhase("ready");
+    setPassphrase("");
+    setConfirmPassphrase("");
+    setUsePassphrase(true);
+    if (unlockResult.warnings?.length) {
+      setErrorMessage(unlockResult.warnings.join(" "));
+    }
+    logRendererMilestoneOnce("bootstrap_ready", "Bootstrap hydration ready", {
+      profileCount: data.profiles.length,
+    });
+    logRendererMilestoneOnce("unlock_success", "Unlock succeeded", {
+      encryptionMode: nextStatus.mode,
+      profileCount: data.profiles.length,
+    });
+  }
+
+  async function refreshEncryptionStatusAfterError(): Promise<void> {
+    if (!window.profileManager?.getEncryptionStatus) {
+      return;
+    }
+    try {
+      setEncryptionStatus(await window.profileManager.getEncryptionStatus());
+    } catch {
+      // Keep the last known setup mode when status refresh also fails.
+    }
+  }
+
   async function handleUnlock() {
     if (!window.profileManager) return;
+    if (
+      encryptionStatus.mode !== "unlock"
+      && encryptionStatus.mode !== "auto-unlock"
+      && !usePassphrase
+    ) {
+      await handleInitializeWithoutPassphrase();
+      return;
+    }
     if (!passphrase) return;
+    if (
+      encryptionStatus.mode !== "unlock"
+      && encryptionStatus.mode !== "auto-unlock"
+      && passphrase !== confirmPassphrase
+    ) {
+      setUnlockError("两次输入的配置口令不一致");
+      return;
+    }
     setIsBusy(true);
     setUnlockError(null);
     setStartupPhase("unlocking");
     logRendererEvent("unlock_submit", "Unlock submitted", {
       passphraseLength: passphrase.length,
-      hasEncryptedConfig,
+      encryptionMode: encryptionStatus.mode,
     });
     try {
-      const unlockResult = await window.profileManager.unlock(passphrase);
-      logRendererMilestoneOnce("bootstrap_start", "Bootstrap hydration started");
-      const data = unlockResult.bootstrap
-        ? applyBootstrapResult(unlockResult.bootstrap)
-        : await loadBootstrapData();
-      setInitialPreviewDeferred(true);
-      markProfilesSessionsHydrated(null);
-      clearProfilesSessionsState({ clearCache: true });
-      syncEditorFromData(data);
-      setIsUnlocked(true);
-      setStartupPhase("ready");
-      setPassphrase("");
-      logRendererMilestoneOnce("bootstrap_ready", "Bootstrap hydration ready", {
-        profileCount: data.profiles.length,
-      });
-      logRendererMilestoneOnce("unlock_success", "Unlock succeeded", {
-        hasEncryptedConfig,
-        profileCount: data.profiles.length,
+      const unlockResult = encryptionStatus.mode === "unlock" || encryptionStatus.mode === "auto-unlock"
+        ? await window.profileManager.unlock(passphrase)
+        : await window.profileManager.initializeEncryption(passphrase);
+      await completeAuthentication(unlockResult, {
+        mode: "unlock",
+        source: "canonical",
       });
     } catch (err) {
       setUnlockError(err instanceof Error ? err.message : "解锁失败");
+      await refreshEncryptionStatusAfterError();
+      setStartupPhase("locked");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleInitializeWithoutPassphrase() {
+    const initializeWithoutPassphrase = window.profileManager?.initializeWithoutPassphrase;
+    if (!initializeWithoutPassphrase) {
+      setUnlockError("当前环境不支持免口令模式。");
+      return;
+    }
+    setIsBusy(true);
+    setUnlockError(null);
+    setStartupPhase("unlocking");
+    try {
+      const unlockResult = await initializeWithoutPassphrase();
+      await completeAuthentication(unlockResult, {
+        mode: "auto-unlock",
+        source: "canonical",
+      });
+    } catch (err) {
+      setUnlockError(err instanceof Error ? err.message : "免口令初始化失败");
+      await refreshEncryptionStatusAfterError();
+      setStartupPhase("locked");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleRetryAutoUnlock() {
+    setIsBusy(true);
+    setUnlockError(null);
+    setStartupPhase("unlocking");
+    try {
+      const unlockResult = await resolveStartupAutoUnlock();
+      await completeAuthentication(unlockResult, {
+        mode: "auto-unlock",
+        source: "canonical",
+      });
+    } catch (err) {
+      setUnlockError(err instanceof Error ? err.message : "自动解锁失败");
       setStartupPhase("locked");
     } finally {
       setIsBusy(false);
@@ -2702,28 +2837,80 @@ function App() {
   }
 
   async function handleChangePassphrase(currentPassword: string, nextPassword: string) {
-    if (!window.profileManager) return;
-    const current = currentPassword.trim();
-    const next = nextPassword.trim();
+    if (!window.profileManager) return false;
+    const current = currentPassword;
+    const next = nextPassword;
     if (!current) {
       setErrorMessage("当前密码不能为空");
-      return;
+      return false;
     }
     if (!next) {
       setErrorMessage("新密码不能为空");
-      return;
+      return false;
     }
     if (current === next) {
       setErrorMessage("新密码不能与当前密码相同");
-      return;
+      return false;
     }
     setIsBusy(true);
     setErrorMessage(null);
     try {
       await window.profileManager.changePassphrase(current, next);
       setSuccessMessage("配置密码已修改");
+      return true;
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "修改密码失败");
+      return false;
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleEnablePassphrase(nextPassword: string) {
+    const enablePassphrase = window.profileManager?.enablePassphrase;
+    if (!enablePassphrase) {
+      setErrorMessage("当前环境不支持启用配置口令");
+      return false;
+    }
+    if (!nextPassword) {
+      setErrorMessage("新密码不能为空");
+      return false;
+    }
+    setIsBusy(true);
+    setErrorMessage(null);
+    try {
+      await enablePassphrase(nextPassword);
+      setEncryptionStatus({ mode: "unlock", source: "canonical" });
+      setSuccessMessage("配置口令已启用");
+      return true;
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "启用配置口令失败");
+      return false;
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleDisablePassphrase(currentPassword: string) {
+    const disablePassphrase = window.profileManager?.disablePassphrase;
+    if (!disablePassphrase) {
+      setErrorMessage("当前环境不支持免口令模式");
+      return false;
+    }
+    if (!currentPassword) {
+      setErrorMessage("当前密码不能为空");
+      return false;
+    }
+    setIsBusy(true);
+    setErrorMessage(null);
+    try {
+      await disablePassphrase(currentPassword);
+      setEncryptionStatus({ mode: "auto-unlock", source: "canonical" });
+      setSuccessMessage("已改为免口令模式");
+      return true;
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "切换免口令模式失败");
+      return false;
     } finally {
       setIsBusy(false);
     }
@@ -2988,6 +3175,8 @@ function App() {
   const stableHandleToggleSessionFavorite = useEventCallback(handleToggleSessionFavorite);
   const stableHandleGlobalSettingsChange = useEventCallback(handleGlobalSettingsChange);
   const stableHandleChangePassphrase = useEventCallback(handleChangePassphrase);
+  const stableHandleEnablePassphrase = useEventCallback(handleEnablePassphrase);
+  const stableHandleDisablePassphrase = useEventCallback(handleDisablePassphrase);
   const stableHandleParameterSettingsChange = useEventCallback(handleParameterSettingsChange);
   const stableSetErrorMessage = useCallback((message: string) => setErrorMessage(message), []);
   const stableSetSuccessMessage = useCallback((message: string) => setSuccessMessage(message), []);
@@ -3075,8 +3264,16 @@ function App() {
   );
   const stableHistoryRestoreLaunchAction = useCallback(() => void stableHandleHistoryRestoreLaunch(), [stableHandleHistoryRestoreLaunch]);
   const stableChangePassphraseAction = useCallback(
-    (currentPassword: string, nextPassword: string) => void stableHandleChangePassphrase(currentPassword, nextPassword),
+    (currentPassword: string, nextPassword: string) => stableHandleChangePassphrase(currentPassword, nextPassword),
     [stableHandleChangePassphrase],
+  );
+  const stableEnablePassphraseAction = useCallback(
+    (nextPassword: string) => stableHandleEnablePassphrase(nextPassword),
+    [stableHandleEnablePassphrase],
+  );
+  const stableDisablePassphraseAction = useCallback(
+    (currentPassword: string) => stableHandleDisablePassphrase(currentPassword),
+    [stableHandleDisablePassphrase],
   );
 
   if (startupPhase === "checking") {
@@ -3089,26 +3286,86 @@ function App() {
 
   // ---- 解锁界面 ----
   if (startupPhase === "locked") {
+    const isUnlock = encryptionStatus.mode === "unlock";
+    const isAutoUnlock = encryptionStatus.mode === "auto-unlock";
+    const isSetup = !isUnlock && !isAutoUnlock;
+    const submitLabel = isUnlock || isAutoUnlock
+      ? "解锁"
+      : encryptionStatus.mode === "migrate-plaintext"
+        ? usePassphrase ? "设置口令并迁移" : "免口令迁移并进入"
+        : usePassphrase ? "创建并进入" : "免口令进入";
     return (
       <div className="unlock-screen">
-        <div className="unlock-card">
+        <form
+          className="unlock-card"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleUnlock();
+          }}
+        >
           <h1>{APP_NAME}</h1>
-          <input
-            type="password"
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleUnlock();
-            }}
-            placeholder="输入密码"
-            autoFocus
-            disabled={isBusy}
-          />
-          <button type="button" onClick={handleUnlock} disabled={isBusy || !passphrase}>
-            {hasEncryptedConfig ? "解锁" : "创建并进入"}
+          {isAutoUnlock && (
+            <p>自动解锁未成功。可重试，或使用刚设置的配置口令恢复访问。</p>
+          )}
+          {isSetup && (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={usePassphrase}
+                onChange={(event) => {
+                  setUsePassphrase(event.target.checked);
+                  setUnlockError(null);
+                }}
+                disabled={isBusy}
+              />
+              使用配置口令
+            </label>
+          )}
+          {isSetup && (
+            <p>
+              {usePassphrase
+                ? encryptionStatus.mode === "migrate-plaintext"
+                  ? "设置本地配置口令以加密迁移现有 Profile。口令无法找回。"
+                  : "设置本地配置口令以保护 Profile 与凭据。口令无法找回。"
+                : "免口令模式由当前 Windows 账户保护本地密钥并自动解锁。"}
+            </p>
+          )}
+          {(isUnlock || isAutoUnlock || usePassphrase) && (
+            <input
+              type="password"
+              value={passphrase}
+              onChange={(event) => setPassphrase(event.target.value)}
+              placeholder={isUnlock || isAutoUnlock ? "输入配置口令" : "设置配置口令"}
+              autoComplete={isUnlock || isAutoUnlock ? "current-password" : "new-password"}
+              autoFocus
+              disabled={isBusy}
+            />
+          )}
+          {isSetup && usePassphrase && (
+            <input
+              type="password"
+              value={confirmPassphrase}
+              onChange={(event) => setConfirmPassphrase(event.target.value)}
+              placeholder="确认配置口令"
+              autoComplete="new-password"
+              disabled={isBusy}
+            />
+          )}
+          {isAutoUnlock && (
+            <button type="button" className="secondary-button" onClick={() => void handleRetryAutoUnlock()}>
+              重试自动解锁
+            </button>
+          )}
+          <button
+            type="submit"
+            disabled={isBusy || ((isUnlock || isAutoUnlock || usePassphrase) && (
+              !passphrase || (isSetup && !confirmPassphrase)
+            ))}
+          >
+            {submitLabel}
           </button>
           {unlockError && <div className="banner error">{unlockError}</div>}
-        </div>
+        </form>
       </div>
     );
   }
@@ -3326,7 +3583,10 @@ function App() {
               globalSettingsProps={{
                 settings: state?.global_settings ?? {} as GlobalSettings,
                 onChange: stableHandleGlobalSettingsChange,
+                passphraseMode: encryptionStatus.mode === "auto-unlock" ? "automatic" : "password",
                 onChangePassphrase: stableChangePassphraseAction,
+                onEnablePassphrase: stableEnablePassphraseAction,
+                onDisablePassphrase: stableDisablePassphraseAction,
                 disabled: isBusy,
               }}
               parameterSettingsProps={{

@@ -35,4 +35,25 @@ describe("vite config", () => {
       script.indexOf("electron ./dist-electron/electron/main.js"),
     );
   });
+
+  it("packages only the explicit public workspace seed file", async () => {
+    const packageJson = JSON.parse(await readFile(path.join(process.cwd(), "package.json"), "utf8")) as {
+      build: { extraResources: Array<{ from: string; to: string }> };
+    };
+    const resources = packageJson.build.extraResources;
+
+    expect(resources).toContainEqual({
+      from: "app-data/translations.json",
+      to: "workspace-seed/app-data/translations.json",
+    });
+    expect(resources.some((entry) => entry.from.includes("library"))).toBe(false);
+    expect(resources.some((entry) => entry.from === "build/workspace-seed")).toBe(false);
+
+    const prepareSource = await readFile(
+      path.join(process.cwd(), "scripts", "prepare-package.mjs"),
+      "utf8",
+    );
+    expect(prepareSource).not.toContain('path.join(root, "library")');
+    expect(prepareSource).not.toContain("copyTreeFiltered");
+  });
 });

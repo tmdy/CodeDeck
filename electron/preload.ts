@@ -85,18 +85,34 @@ const codeDeckSkillsApi = {
 
 const profileApi = {
   // 加密 & 认证
+  getEncryptionStatus: () =>
+    ipcRenderer.invoke("profile:get-encryption-status"),
+  // 兼容旧 Renderer；新代码使用结构化状态。
   checkEncryptedConfig: (): Promise<boolean> =>
     ipcRenderer.invoke("profile:check-encrypted-config"),
   unlock: (
     passphrase: string,
-  ): Promise<{ success: boolean; bootstrap?: unknown }> =>
+  ): Promise<{ success: boolean; bootstrap?: unknown; warnings?: string[] }> =>
     ipcRenderer.invoke("profile:unlock", passphrase),
+  unlockWithoutPassphrase: (): Promise<{ success: boolean; bootstrap?: unknown; warnings?: string[] }> =>
+    ipcRenderer.invoke("profile:unlock-without-passphrase"),
   bootstrap: (): Promise<unknown> =>
     ipcRenderer.invoke("profile:bootstrap"),
-  initializeEncryption: (passphrase: string): Promise<{ success: boolean }> =>
+  initializeEncryption: (
+    passphrase: string,
+  ): Promise<{ success: boolean; bootstrap?: unknown; warnings?: string[] }> =>
     ipcRenderer.invoke("profile:initialize-encryption", passphrase),
+  initializeWithoutPassphrase: (): Promise<{
+    success: boolean;
+    bootstrap?: unknown;
+    warnings?: string[];
+  }> => ipcRenderer.invoke("profile:initialize-without-passphrase"),
   changePassphrase: (currentPassphrase: string, nextPassphrase: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke("profile:change-passphrase", currentPassphrase, nextPassphrase),
+  enablePassphrase: (nextPassphrase: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke("profile:enable-passphrase", nextPassphrase),
+  disablePassphrase: (currentPassphrase: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke("profile:disable-passphrase", currentPassphrase),
 
   // Profile CRUD
   listProfiles: (): Promise<{ profiles: unknown[]; state: unknown }> =>

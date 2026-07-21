@@ -767,7 +767,7 @@ describe("LaunchService", () => {
     expect(plan.env[apiKeyEnv]).toBe("sk-glm");
   });
 
-  it("should allow an explicit Codex command-line model override only in advanced mapping mode", () => {
+  it("should generate a Codex worker subagent mapping without overriding the main command model", () => {
     const profile: Profile = {
       provider: "codex",
       name: "Kimi",
@@ -777,7 +777,7 @@ describe("LaunchService", () => {
       advancedModelMapping: {
         enabled: true,
         codex: {
-          commandLineModelOverride: "gpt-5.5",
+          subagentTarget: "gpt-5.5",
         },
       },
     };
@@ -795,7 +795,10 @@ describe("LaunchService", () => {
 
     expect(plan.valid).toBe(true);
     expect(plan.codexConfig?.content).toContain('model = "kimi-k2-0711-preview"');
-    expect(plan.command).toBe("codex --profile site-39b645351a70122a --model gpt-5.5");
+    expect(plan.command).toBe("codex --profile site-39b645351a70122a");
+    expect(plan.commandArgs).not.toContain("--model");
+    expect(plan.codexConfig?.workerAgentContent).toContain('name = "worker"');
+    expect(plan.codexConfig?.workerAgentContent).toContain('model = "gpt-5.5"');
   });
 
   it("should pass structured Codex reasoning effort as a config override", () => {

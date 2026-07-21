@@ -16,8 +16,15 @@ export interface SessionsTabStatePatch {
   restore_profile_key?: ProfileKey;
 }
 
+export interface SecureSettingsStore {
+  updateGlobalProxy(proxy: string): Promise<void>;
+}
+
 export class SettingsStateService {
-  constructor(private stateAccessor: LocalStateAccessor) {}
+  constructor(
+    private stateAccessor: LocalStateAccessor,
+    private secureSettingsStore?: SecureSettingsStore,
+  ) {}
 
   getParameterSettings(): ParameterSettings {
     return this.stateAccessor.get().parameter_settings;
@@ -43,6 +50,9 @@ export class SettingsStateService {
       ...state.global_settings,
       ...settings,
     });
+    if (settings.proxy !== undefined) {
+      await this.secureSettingsStore?.updateGlobalProxy(state.global_settings.proxy);
+    }
     await this.stateAccessor.save(state);
     return state.global_settings;
   }

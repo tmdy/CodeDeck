@@ -140,6 +140,29 @@ describe("ProfileService", () => {
       );
     });
 
+    it("should persist runtime environment values only through the encrypted config store", async () => {
+      const savedConfigs: Array<{ runtime_env_by_profile?: Record<string, Record<string, string>> }> = [];
+      const profile = makeProfiles()[0];
+      const profileKey = itemKey(profile);
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), {
+        async saveConfig(config) {
+          savedConfigs.push(config);
+        },
+      });
+
+      await localService.saveProfile(profileKey, profile, {
+        ...makeRuntime(),
+        extra_env: { PRIVATE_TOKEN: "secret" },
+      });
+      await localService.updateProfileRuntimeSettings(profileKey, {
+        terminal_mode: "direct",
+      });
+
+      expect(savedConfigs.at(-1)?.runtime_env_by_profile).toEqual({
+        [profileKey]: { PRIVATE_TOKEN: "secret" },
+      });
+    });
+
     it("should persist profile permissions with the encrypted synced profile data", async () => {
       const savedConfigs: unknown[] = [];
       const localService = new ProfileService([], new MemoryStateAccessor(), {

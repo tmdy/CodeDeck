@@ -439,7 +439,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
           {claudeCompatibilityCard}
 
           {provider === "codex" && (
-            <GlassCard title="高级选项" subtitle="默认关闭，仅在确实需要覆盖 Codex 命令行模型时启用">
+            <GlassCard title="Codex 子代理模型映射" subtitle="默认关闭；启用后仅覆盖 Codex 内置 worker 子代理的模型">
               <label className="checkbox-label">
                 <input
                   type="checkbox"
@@ -447,14 +447,14 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                   onChange={(e) => updateAdvancedMapping({ enabled: e.target.checked })}
                   disabled={disabled}
                 />
-                启用高级模型别名映射
+                启用子代理模型映射
               </label>
               <label>
-                Codex 命令行模型覆盖
+                子代理模型
                 <input
-                  value={advancedMapping.codex?.commandLineModelOverride ?? ""}
-                  onChange={(e) => updateAdvancedMapping({ enabled: true, codex: { commandLineModelOverride: e.target.value } })}
-                  placeholder="可选：仅在需要显式追加 --model 时填写"
+                  value={advancedMapping.codex?.subagentTarget ?? ""}
+                  onChange={(e) => updateAdvancedMapping({ enabled: true, codex: { subagentTarget: e.target.value } })}
+                  placeholder={draft.selectedModelId || "例如 gpt-5.6-terra"}
                   disabled={disabled || !advancedMapping.enabled}
                 />
               </label>

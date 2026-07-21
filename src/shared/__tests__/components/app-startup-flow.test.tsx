@@ -128,8 +128,12 @@ function createProfileManagerFixture(options: {
           ? { success: true, bootstrap: options.unlockBootstrap }
           : { success: true })
     )),
+    unlockWithoutPassphrase: vi.fn(async () => ({ success: true, bootstrap: bootstrapResult })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
+    initializeWithoutPassphrase: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
+    enablePassphrase: vi.fn(async () => ({ success: true })),
+    disablePassphrase: vi.fn(async () => ({ success: true })),
     bootstrap: vi.fn(async () => bootstrapResult),
     listProfiles: vi.fn(async () => ({
       profiles: [{ ...baseProfile }],
@@ -418,11 +422,14 @@ describe("App startup flow", () => {
 
     expect(container.querySelector(".unlock-screen")).toBeTruthy();
     expect(container.textContent).toContain("创建并进入");
+    expect(container.textContent).toContain("口令无法找回");
 
-    const input = container.querySelector("input[type='password']");
-    expect(input).toBeInstanceOf(HTMLInputElement);
+    const inputs = container.querySelectorAll("input[type='password']");
+    expect(inputs).toHaveLength(2);
 
-    await setInputValue(input as HTMLInputElement, "new-pass");
+    await setInputValue(inputs[0] as HTMLInputElement, "new-pass");
+    expect(getButtonByText(container, "创建并进入").disabled).toBe(true);
+    await setInputValue(inputs[1] as HTMLInputElement, "new-pass");
     expect(getButtonByText(container, "创建并进入").disabled).toBe(false);
 
     await act(async () => {
@@ -430,7 +437,8 @@ describe("App startup flow", () => {
     });
     await flush();
 
-    expect(fixture.manager.unlock).toHaveBeenCalledWith("new-pass");
+    expect(fixture.manager.unlock).not.toHaveBeenCalled();
+    expect(fixture.manager.initializeEncryption).toHaveBeenCalledWith("new-pass");
     expect(fixture.manager.bootstrap).toHaveBeenCalledTimes(1);
     expect(fixture.manager.listProfiles).not.toHaveBeenCalled();
     expect(container.textContent).toContain("AI CLI 工具统一管理");
@@ -438,6 +446,113 @@ describe("App startup flow", () => {
     await act(async () => {
       root.unmount();
     });
+  });
+
+  it("allows first-time startup without a user passphrase", async () => {
+    installWindowStubs();
+    const fixture = createProfileManagerFixture({ hasEncryptedConfig: false });
+    window.profileManager = fixture.manager;
+    const { container, root } = await renderApp(<App />);
+    const usePassphrase = container.querySelector("input[type='checkbox']") as HTMLInputElement;
+
+    expect(usePassphrase.checked).toBe(true);
+    await act(async () => {
+      usePassphrase.click();
+    });
+
+    expect(container.querySelectorAll("input[type='password']")).toHaveLength(0);
+    await act(async () => {
+      getButtonByText(container, "免口令进入").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(fixture.manager.initializeWithoutPassphrase).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.initializeEncryption).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("AI CLI 工具统一管理");
+
+    await act(async () => root.unmount());
+  });
+
+  it("automatically unlocks an existing no-passphrase config", async () => {
+    installWindowStubs();
+    const fixture = createProfileManagerFixture({ hasEncryptedConfig: true });
+    fixture.manager.getEncryptionStatus = vi.fn(async () => ({
+      mode: "auto-unlock" as const,
+      source: "canonical" as const,
+    }));
+    window.profileManager = fixture.manager;
+
+    const { container, root } = await renderApp(<App />);
+    await flush();
+
+    expect(fixture.manager.unlockWithoutPassphrase).toHaveBeenCalledTimes(1);
+    expect(fixture.manager.unlock).not.toHaveBeenCalled();
+    expect(container.querySelector(".unlock-screen")).toBeFalsy();
+    expect(container.textContent).toContain("AI CLI 工具统一管理");
+
+    await act(async () => root.unmount());
+  });
+
+  it("shows legacy cleanup warnings after entering the main UI", async () => {
+    installWindowStubs();
+    const bootstrap = createBootstrapResult(createState(baseProfile));
+    const fixture = createProfileManagerFixture({
+      hasEncryptedConfig: true,
+      unlockResult: Promise.resolve({
+        success: true,
+        bootstrap,
+        warnings: ["迁移后的旧配置文件未能删除：C:/workspace/profiles.json"],
+      }),
+    });
+    window.profileManager = fixture.manager;
+    const { container, root } = await renderApp(<App />);
+    const input = container.querySelector("input[type='password']");
+
+    await setInputValue(input as HTMLInputElement, "pass-123");
+    await act(async () => {
+      getButtonByText(container, "解锁").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(container.textContent).toContain("迁移后的旧配置文件未能删除");
+    expect(container.textContent).toContain("C:/workspace/profiles.json");
+
+    await act(async () => root.unmount());
+  });
+
+  it("does not initialize encryption when the confirmation does not match", async () => {
+    installWindowStubs();
+    const fixture = createProfileManagerFixture({ hasEncryptedConfig: false });
+    window.profileManager = fixture.manager;
+    const { container, root } = await renderApp(<App />);
+    const inputs = container.querySelectorAll("input[type='password']");
+
+    await setInputValue(inputs[0] as HTMLInputElement, "new-pass");
+    await setInputValue(inputs[1] as HTMLInputElement, "different-pass");
+    await act(async () => {
+      getButtonByText(container, "创建并进入").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(fixture.manager.initializeEncryption).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("两次输入的配置口令不一致");
+
+    await act(async () => root.unmount());
+  });
+
+  it("shows the explicit plaintext migration action", async () => {
+    installWindowStubs();
+    const fixture = createProfileManagerFixture({ hasEncryptedConfig: false });
+    fixture.manager.getEncryptionStatus = vi.fn(async () => ({
+      mode: "migrate-plaintext" as const,
+      source: "legacy-plaintext" as const,
+    }));
+    window.profileManager = fixture.manager;
+    const { container, root } = await renderApp(<App />);
+
+    expect(container.textContent).toContain("设置口令并迁移");
+    expect(container.textContent).toContain("加密迁移现有 Profile");
+
+    await act(async () => root.unmount());
   });
 
   it("deduplicates the startup auth check under React StrictMode", async () => {

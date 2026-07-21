@@ -49,6 +49,7 @@ export interface CodexConfigWritePlan {
   providerName: string;
   apiKeyEnv: string;
   targetModel: string;
+  workerAgentContent?: string;
 }
 
 export interface ClaudeSettingsWritePlan {
@@ -350,8 +351,8 @@ export class LaunchService {
     permissions: ProfilePermissions,
     overlay?: LaunchCapabilityOverlay["codex"],
   ): ProviderLaunchArtifacts {
-    const advancedOverride = profile.advancedModelMapping?.enabled
-      ? profile.advancedModelMapping.codex?.commandLineModelOverride?.trim() ?? ""
+    const subagentTarget = profile.advancedModelMapping?.enabled
+      ? profile.advancedModelMapping.codex?.subagentTarget?.trim() ?? ""
       : "";
     const reasoningEffort = normalizeCodexReasoningEffort(profile.advancedModelMapping?.codex?.reasoningEffort);
     const profileKey = itemKey(profile);
@@ -366,7 +367,6 @@ export class LaunchService {
       this.getCombinedExtraArgs(runtime),
       `--profile ${JSON.stringify(siteProfileName)}`,
       ...this.buildCodexPermissionCliArgs(permissions),
-      advancedOverride ? `--model ${JSON.stringify(advancedOverride)}` : "",
       reasoningEffort ? `-c model_reasoning_effort=${reasoningEffort}` : "",
     ].filter(Boolean).join(" ").trim();
     const commandBase = normalizeCommandExecutable(runtime.command_base, DEFAULT_CODEX_COMMAND);
@@ -378,7 +378,6 @@ export class LaunchService {
       extraArgs,
       sessionId,
       baseUrl: profile.url,
-      model: advancedOverride,
       wireApi,
     });
     const command = buildCodexCommand({
@@ -387,7 +386,6 @@ export class LaunchService {
       extraArgs,
       sessionId,
       baseUrl: profile.url,
-      model: advancedOverride,
       wireApi,
     });
 
@@ -422,6 +420,9 @@ export class LaunchService {
         providerName,
         apiKeyEnv,
         targetModel: selectedModelId,
+        workerAgentContent: subagentTarget
+          ? this.buildCodexWorkerAgentContent(subagentTarget)
+          : undefined,
       },
       permissionSummary: summarizePermissions(profile.provider, permissions),
     };
@@ -751,6 +752,17 @@ export class LaunchService {
       "",
       ...rules,
     ].join("\n").trimEnd() + "\n";
+  }
+
+  private buildCodexWorkerAgentContent(targetModel: string): string {
+    return [
+      `# Managed by ${APP_NAME}. Do not edit by hand.`,
+      'name = "worker"',
+      'description = "Execution-focused subagent for implementation and fixes."',
+      `model = ${JSON.stringify(targetModel.trim())}`,
+      'developer_instructions = "Own the assigned task end to end. Make focused changes, validate them, and report concrete results to the parent agent."',
+      "",
+    ].join("\n");
   }
 }
 

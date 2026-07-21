@@ -99,8 +99,8 @@
     ],
     "extraResources": [
       {
-        "from": "build/workspace-seed",
-        "to": "workspace-seed"
+        "from": "app-data/translations.json",
+        "to": "workspace-seed/app-data/translations.json"
       },
       {
         "from": "build/icon.png",

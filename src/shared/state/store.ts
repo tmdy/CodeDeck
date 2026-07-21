@@ -2,7 +2,6 @@
 // 与 Go/Python 版本的 local_state.json 格式完全兼容
 
 import { promises as fs } from "node:fs";
-import path from "node:path";
 import type { ProfileKey, RuntimeSettings, GlobalSettings } from "../profile/types.js";
 import {
   normalizeProvider,
@@ -28,6 +27,7 @@ import {
 import { isSessionListScope, type SessionListScope } from "../services/session-service.js";
 import { normalizeSessionsTabScope } from "../session-history-state.js";
 import { normalizeCheckinStatesByAccount } from "../checkin/types.js";
+import { atomicWriteJson, recoverAtomicWrite } from "../atomic-file.js";
 
 interface RawState {
   selected_provider: string;
@@ -57,6 +57,7 @@ export class LocalStateStore {
   }
 
   async load(): Promise<LocalState> {
+    await recoverAtomicWrite(this.filePath);
     try {
       await fs.access(this.filePath);
     } catch {
@@ -94,7 +95,10 @@ export class LocalStateStore {
         normalized.checkin_states_by_account,
       ),
       checkin_next_scheduled_at: normalized.checkin_next_scheduled_at,
-      global_settings: normalizeGlobalSettings(normalized.global_settings),
+      global_settings: {
+        ...normalizeGlobalSettings(normalized.global_settings),
+        proxy: "",
+      },
       parameter_settings: normalizeParameterSettings(normalized.parameter_settings),
       sessions_tab_scope_by_provider: {},
       sessions_tab_restore_profile_key_by_provider: {},
@@ -125,7 +129,10 @@ export class LocalStateStore {
       const [prov] = splitKey(key);
       const nKey = normalizeKeyWithFallback(key, prov);
       if (nKey) {
-        payload.runtime_by_profile[nKey] = normalizeRuntimeSettings(runtime, prov);
+        payload.runtime_by_profile[nKey] = {
+          ...normalizeRuntimeSettings(runtime, prov),
+          extra_env: {},
+        };
       }
     }
 
@@ -154,9 +161,7 @@ export class LocalStateStore {
       }
     }
 
-    const dir = path.dirname(this.filePath);
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(this.filePath, JSON.stringify(payload, null, 2), "utf-8");
+    await atomicWriteJson(this.filePath, payload);
   }
 }
 

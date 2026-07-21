@@ -479,6 +479,37 @@ describe("ModelMappingConfigService", () => {
     expect(rulesContent).toContain('decision = "forbidden"');
   });
 
+  it("should write and clear the managed Codex worker agent", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+    const options = {
+      profileId: "codex::demo",
+      providerId: buildCodexSiteProviderId("codex::demo"),
+      providerName: "Current Site",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      targetModel: "gpt-5.6",
+    };
+
+    await service.writeCodexProfile({
+      ...options,
+      workerAgentContent: [
+        "# Managed by CodeDeck. Do not edit by hand.",
+        'name = "worker"',
+        'description = "Execution-focused subagent."',
+        'model = "gpt-5.6-terra"',
+        'developer_instructions = "Execute the assigned task."',
+        "",
+      ].join("\n"),
+    });
+
+    const workerPath = path.join(service.getCodexRuntimeHome(), "agents", "codedeck-worker.toml");
+    expect(await readFile(workerPath, "utf8")).toContain('model = "gpt-5.6-terra"');
+
+    await service.writeCodexProfile(options);
+    await expect(readFile(workerPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("should avoid backup churn when Codex config content is unchanged", async () => {
     const root = await makeTempDir();
     const service = createService(root);

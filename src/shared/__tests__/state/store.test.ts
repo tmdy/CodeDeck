@@ -47,6 +47,31 @@ describe("LocalStateStore", () => {
     expect(loaded.global_settings.theme_mode).toBe("dark");
   });
 
+  it("should remove protected environment values and proxy credentials from plaintext state", async () => {
+    const store = await makeStore();
+    const state = defaultLocalState();
+    state.global_settings.proxy = "http://user:pass@127.0.0.1:7890";
+    state.runtime_by_profile["claude::Official"] = {
+      cwd: "C:/repo",
+      command_base: "claude",
+      model: "",
+      settings_file: "",
+      launch_mode: "new",
+      extra_args: "",
+      extra_env: { PRIVATE_TOKEN: "secret" },
+      exclude_user_settings: true,
+    };
+
+    await store.save(state);
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    const persisted = JSON.parse(await readFile(rawPath, "utf8"));
+
+    expect(persisted.global_settings.proxy).toBe("");
+    expect(persisted.runtime_by_profile["claude::Official"].extra_env).toEqual({});
+    expect(JSON.stringify(persisted)).not.toContain("PRIVATE_TOKEN");
+    expect(JSON.stringify(persisted)).not.toContain("user:pass");
+  });
+
   it("should persist non-sensitive automatic check-in state", async () => {
     const store = await makeStore();
     const state = defaultLocalState();

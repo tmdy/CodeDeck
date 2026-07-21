@@ -120,7 +120,7 @@ function createProviderRaceFixture() {
   });
 
   const manager: MockProfileManager = {
-    checkEncryptedConfig: vi.fn(async () => false),
+    checkEncryptedConfig: vi.fn(async () => true),
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
@@ -260,7 +260,7 @@ function createFavoritesFixture() {
   (state as unknown as { session_favorites: FavoriteSessionSummaryForTest[] }).session_favorites = [claudeFavorite];
 
   const manager: MockProfileManager = {
-    checkEncryptedConfig: vi.fn(async () => false),
+    checkEncryptedConfig: vi.fn(async () => true),
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),
@@ -370,7 +370,7 @@ function createPrefetchFixture(options: {
     return sessions.slice(offset, offset + limit);
   });
   const manager: MockProfileManager = {
-    checkEncryptedConfig: vi.fn(async () => false),
+    checkEncryptedConfig: vi.fn(async () => true),
     unlock: vi.fn(async () => ({ success: true })),
     initializeEncryption: vi.fn(async () => ({ success: true })),
     changePassphrase: vi.fn(async () => ({ success: true })),

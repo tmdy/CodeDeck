@@ -41,7 +41,7 @@ describe("ProfileEditForm rendering", () => {
         subagentTarget: "",
       },
       codex: {
-        commandLineModelOverride: "",
+        subagentTarget: "",
       },
     };
   }

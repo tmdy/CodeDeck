@@ -85,6 +85,22 @@ describe("SettingsStateService", () => {
     });
   });
 
+  it("should commit proxy changes to protected storage before updating local state", async () => {
+    const protectedStore = {
+      updateGlobalProxy: vi.fn(async () => undefined),
+    };
+    const protectedService = new SettingsStateService(accessor, protectedStore);
+
+    await protectedService.updateGlobalSettings({
+      proxy: "http://user:pass@127.0.0.1:7890",
+    });
+
+    expect(protectedStore.updateGlobalProxy).toHaveBeenCalledWith(
+      "http://user:pass@127.0.0.1:7890",
+    );
+    expect(accessor.get().global_settings.proxy).toBe("http://user:pass@127.0.0.1:7890");
+  });
+
   it("should normalize invalid global theme mode to system", async () => {
     await service.updateGlobalSettings({
       theme_mode: "invalid" as never,

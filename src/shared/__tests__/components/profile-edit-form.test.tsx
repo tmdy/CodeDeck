@@ -25,7 +25,7 @@ describe("ProfileEditForm", () => {
         subagentTarget: "",
       },
       codex: {
-        commandLineModelOverride: "",
+        subagentTarget: "",
       },
     };
   }
@@ -493,9 +493,58 @@ describe("ProfileEditForm", () => {
 
     expect(html).not.toContain("Claude 模型兼容设置");
     expect(html).not.toContain("DeepSeek 推理强度");
-    expect(html).toContain("Codex 命令行模型覆盖");
-    expect(html.indexOf("<h3>高级选项</h3>")).toBeGreaterThan(html.indexOf("<h3>权限</h3>"));
-    expect(html.indexOf("<h3>高级选项</h3>")).toBeLessThan(html.indexOf("<h3>模型配置</h3>"));
+    expect(html).toContain("Codex 子代理模型映射");
+    expect(html).toContain("启用子代理模型映射");
+    expect(html).toContain("子代理模型");
+    expect(html).not.toContain("Codex 命令行模型覆盖");
+    expect(html.indexOf("<h3>Codex 子代理模型映射</h3>")).toBeGreaterThan(html.indexOf("<h3>权限</h3>"));
+    expect(html.indexOf("<h3>Codex 子代理模型映射</h3>")).toBeLessThan(html.indexOf("<h3>模型配置</h3>"));
+  });
+
+  it("should enable the Codex subagent model mapping", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onAdvancedModelMappingChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "Codex", url: "https://api.openai.com/v1", key: "sk", selectedModelId: "gpt-5.6", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "codex",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="codex"
+          modelOptions={[]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={onAdvancedModelMappingChange}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const mappingLabel = Array.from(container.querySelectorAll("label")).find(
+      (label) => label.textContent?.includes("启用子代理模型映射"),
+    );
+    const checkbox = mappingLabel?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    await act(async () => {
+      checkbox?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onAdvancedModelMappingChange).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   });
 
   it("should offer a recommended compatibility action for third-party Claude models", async () => {

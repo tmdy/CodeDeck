@@ -1,6 +1,6 @@
 import type { Profile, ProfileKey } from "../profile/types.js";
-import { normalizeProfile } from "../profile/types.js";
-import { itemKey } from "../profile/keys-internal.js";
+import { normalizeProfile, normalizeRuntimeEnv } from "../profile/types.js";
+import { itemKey, normalizeKeyWithFallback, splitKey } from "../profile/keys-internal.js";
 import type { BalanceCheckState } from "./types.js";
 
 const BASE_URL_SUFFIXES = [
@@ -41,6 +41,9 @@ export type SiteBalanceSessionsByBaseUrl = Record<string, SiteBalanceSession[]>;
 export interface EncryptedProfileConfig {
   profiles: Profile[];
   site_balance_sessions_by_base_url: SiteBalanceSessionsByBaseUrl;
+  runtime_env_by_profile?: Record<ProfileKey, Record<string, string>>;
+  global_proxy?: string;
+  protected_settings_version?: 1;
 }
 
 export type ResolvedBalanceAuth =
@@ -91,6 +94,9 @@ export function emptyEncryptedProfileConfig(): EncryptedProfileConfig {
   return {
     profiles: [],
     site_balance_sessions_by_base_url: {},
+    runtime_env_by_profile: {},
+    global_proxy: "",
+    protected_settings_version: 1,
   };
 }
 
@@ -110,6 +116,8 @@ export function normalizeEncryptedProfileConfig(value: unknown): EncryptedProfil
     return {
       profiles: value.map((profile) => normalizeProfile(profile as Profile)),
       site_balance_sessions_by_base_url: {},
+      runtime_env_by_profile: {},
+      global_proxy: "",
     };
   }
 
@@ -120,6 +128,9 @@ export function normalizeEncryptedProfileConfig(value: unknown): EncryptedProfil
   const record = value as {
     profiles?: unknown;
     site_balance_sessions_by_base_url?: unknown;
+    runtime_env_by_profile?: unknown;
+    global_proxy?: unknown;
+    protected_settings_version?: unknown;
   };
 
   return {
@@ -129,7 +140,34 @@ export function normalizeEncryptedProfileConfig(value: unknown): EncryptedProfil
     site_balance_sessions_by_base_url: normalizeSiteBalanceSessionsByBaseUrl(
       record.site_balance_sessions_by_base_url,
     ),
+    runtime_env_by_profile: normalizeRuntimeEnvByProfile(record.runtime_env_by_profile),
+    global_proxy: typeof record.global_proxy === "string" ? record.global_proxy.trim() : "",
+    protected_settings_version: record.protected_settings_version === 1 ? 1 : undefined,
   };
+}
+
+export function normalizeRuntimeEnvByProfile(
+  value: unknown,
+): Record<ProfileKey, Record<string, string>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const result: Record<ProfileKey, Record<string, string>> = {};
+  for (const [rawKey, rawEnv] of Object.entries(value as Record<string, unknown>)) {
+    const [provider] = splitKey(rawKey);
+    const profileKey = normalizeKeyWithFallback(rawKey, provider);
+    if (!profileKey || !rawEnv || typeof rawEnv !== "object" || Array.isArray(rawEnv)) {
+      continue;
+    }
+    const env = normalizeRuntimeEnv(Object.fromEntries(
+      Object.entries(rawEnv as Record<string, unknown>)
+        .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ));
+    if (Object.keys(env).length > 0) {
+      result[profileKey] = env;
+    }
+  }
+  return result;
 }
 
 export function normalizeSiteBalanceSessionsByBaseUrl(value: unknown): SiteBalanceSessionsByBaseUrl {

@@ -173,4 +173,92 @@ describe("GlobalSettingsPanel", () => {
     });
     container.remove();
   });
+
+  it("should show a confirmation error without submitting mismatched passwords", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChangePassphrase = vi.fn();
+    await act(async () => {
+      root.render(
+        <GlobalSettingsPanel
+          settings={defaultGlobalSettings()}
+          onChange={vi.fn()}
+          onChangePassphrase={onChangePassphrase}
+        />,
+      );
+    });
+    const form = container.querySelector(".password-change-form") as HTMLFormElement;
+    (form.elements.namedItem("currentPassword") as HTMLInputElement).value = "old";
+    (form.elements.namedItem("nextPassword") as HTMLInputElement).value = "next";
+    (form.elements.namedItem("confirmPassword") as HTMLInputElement).value = "different";
+
+    await act(async () => {
+      form.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(onChangePassphrase).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("两次输入的新配置口令不一致");
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("should enable a user passphrase from automatic mode", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onEnablePassphrase = vi.fn(async () => true);
+    await act(async () => {
+      root.render(
+        <GlobalSettingsPanel
+          settings={defaultGlobalSettings()}
+          onChange={vi.fn()}
+          passphraseMode="automatic"
+          onEnablePassphrase={onEnablePassphrase}
+        />,
+      );
+    });
+    const form = container.querySelector(".password-change-form") as HTMLFormElement;
+    (form.elements.namedItem("nextPassword") as HTMLInputElement).value = "new-password";
+    (form.elements.namedItem("confirmPassword") as HTMLInputElement).value = "new-password";
+
+    await act(async () => {
+      form.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(form.elements.namedItem("currentPassword")).toBeNull();
+    expect(onEnablePassphrase).toHaveBeenCalledWith("new-password");
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("should switch password mode to automatic after current-password verification", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onDisablePassphrase = vi.fn(async () => true);
+    await act(async () => {
+      root.render(
+        <GlobalSettingsPanel
+          settings={defaultGlobalSettings()}
+          onChange={vi.fn()}
+          onChangePassphrase={vi.fn()}
+          onDisablePassphrase={onDisablePassphrase}
+        />,
+      );
+    });
+    const form = container.querySelector(".password-change-form") as HTMLFormElement;
+    (form.elements.namedItem("currentPassword") as HTMLInputElement).value = "current-password";
+    const disableButton = Array.from(form.querySelectorAll("button")).find(
+      (button) => button.textContent === "改为免口令",
+    );
+
+    await act(async () => {
+      disableButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onDisablePassphrase).toHaveBeenCalledWith("current-password");
+    await act(async () => root.unmount());
+    container.remove();
+  });
 });

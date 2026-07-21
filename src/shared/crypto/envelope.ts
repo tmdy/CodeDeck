@@ -46,6 +46,11 @@ export async function encryptProfileConfig(
     site_balance_sessions_by_base_url: cloneSiteBalanceSessionsByBaseUrl(
       normalized.site_balance_sessions_by_base_url,
     ),
+    runtime_env_by_profile: normalized.runtime_env_by_profile ?? {},
+    global_proxy: normalized.global_proxy ?? "",
+    ...(normalized.protected_settings_version === 1
+      ? { protected_settings_version: 1 }
+      : {}),
   }, passphrase);
 }
 

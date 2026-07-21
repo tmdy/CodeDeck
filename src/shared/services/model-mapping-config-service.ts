@@ -26,7 +26,10 @@ export interface WriteCodexProfileOptions {
   content?: string;
   rulesContent?: string;
   globalConfigContent?: string;
+  workerAgentContent?: string;
 }
+
+const MANAGED_CODEX_WORKER_AGENT_FILE = "codedeck-worker.toml";
 
 export function sanitizeCodexProfileId(profileId: string): string {
   return buildLegacyCodexProfileDirectoryName(profileId);
@@ -139,6 +142,15 @@ export class ModelMappingConfigService {
         path.join(runtimeHome, "rules", "managed-permissions.rules"),
         normalizeTomlContent(options.rulesContent),
       );
+    }
+    const workerAgentPath = path.join(runtimeHome, "agents", MANAGED_CODEX_WORKER_AGENT_FILE);
+    if (options.workerAgentContent?.trim()) {
+      await writeTextWithBackupIfChanged(
+        workerAgentPath,
+        normalizeTomlContent(options.workerAgentContent),
+      );
+    } else {
+      await fs.rm(workerAgentPath, { force: true });
     }
     await writeTextWithBackupIfChanged(profileConfigPath, profileContent);
     return profileConfigPath;

@@ -5,6 +5,7 @@ import {
   dialog,
   ipcMain,
   nativeTheme,
+  safeStorage,
   session as electronSession,
   shell,
 } from "electron";
@@ -34,6 +35,7 @@ import { CODEDECK_SKILLS_IPC_CHANNELS } from "../src/shared/code-deck-ipc.js";
 
 // ---- Profile 相关导入 ----
 import { EncryptedConfigStore } from "../src/shared/crypto/store.js";
+import { AutoUnlockKeyStore } from "../src/shared/crypto/auto-unlock-key.js";
 import { LocalStateStore } from "../src/shared/state/store.js";
 import { ProfileService } from "../src/shared/services/profile-service.js";
 import { LaunchService } from "../src/shared/services/launch-service.js";
@@ -58,6 +60,8 @@ import {
   type SiteBalanceSessionDraft,
   type SiteBalanceSession,
   type SiteBalanceSessionsByBaseUrl,
+  type EncryptedProfileConfig,
+  normalizeEncryptedProfileConfig,
 } from "../src/shared/balance/site-balance-sessions.js";
 import {
   buildCheckinAccountKey,
@@ -73,6 +77,7 @@ import { pickDirectoryPath } from "../src/shared/electron/dialog-helpers.js";
 import { createAppLogger, createIpcHandlerLogger } from "../src/shared/electron/debug-log.js";
 import { SessionCatalog } from "../src/shared/electron/session-catalog.js";
 import { createSessionListCache } from "../src/shared/electron/session-list-cache.js";
+import type { EncryptionSetupStatus } from "../src/shared/encryption-status.js";
 import {
   buildWindowsPtyLaunchSpec,
   executeLaunchPlan,
@@ -145,6 +150,7 @@ const __dirname = path.dirname(__filename);
 const ENCRYPTED_DATA_FILE = "claude_profiles.encrypted.json";
 const LEGACY_DATA_FILE = "profiles.json";
 const LOCAL_STATE_FILE = "local_state.json";
+const AUTO_UNLOCK_KEY_FILE = "profile-auto-unlock-key.json";
 const CONFIG_PASSWORD_ENV = "CLAUDE_PROFILE_LAUNCHER_PASSPHRASE";
 
 const appRoot = process.cwd();
@@ -164,10 +170,12 @@ let checkinScheduler: CheckinScheduler | null = null;
 let checkinVerificationService: CheckinVerificationService | null = null;
 let modelMappingsStateCache: ModelMappingsState | null = null;
 let encryptedStore: EncryptedConfigStore | null = null;
+let autoUnlockKeyStore: AutoUnlockKeyStore | null = null;
 let localStateStore: LocalStateStore | null = null;
 let sessionCatalog: SessionCatalog | null = null;
 let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
+const legacyCleanupWarnings = new Set<string>();
 let mainWindow: BrowserWindow | null = null;
 let skillsInitPromise: Promise<void> | null = null;
 let profileStoresInitPromise: Promise<void> | null = null;
@@ -286,6 +294,7 @@ function getLocalStatePath(): string {
 function profileStoresReady(): boolean {
   return Boolean(
     encryptedStore
+    && autoUnlockKeyStore
     && localStateStore
     && modelMappingConfigService
     && capabilityOverlayService
@@ -319,25 +328,31 @@ function warmProfileStoresInBackground(): void {
     });
 }
 
-async function fileExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function writeManagedLaunchTextFile(targetPath: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await fs.writeFile(targetPath, content, "utf8");
 }
 
-async function hasEncryptedConfigFile(): Promise<boolean> {
-  if (encryptedStore) {
-    return encryptedStore.exists();
+async function getEncryptionSetupStatus(): Promise<EncryptionSetupStatus> {
+  await ensureProfileStoresReady();
+  const status = await encryptedStore!.getStatus();
+  if (
+    status.mode === "unlock"
+    && status.source === "canonical"
+    && await autoUnlockKeyStore!.exists()
+  ) {
+    return { mode: "auto-unlock", source: "canonical" };
   }
-  return fileExists(path.join(projectRoot, "app-data", ENCRYPTED_DATA_FILE));
+  return status;
+}
+
+function takeLegacyCleanupWarnings(): string[] | undefined {
+  if (legacyCleanupWarnings.size === 0) {
+    return undefined;
+  }
+  const warnings = [...legacyCleanupWarnings];
+  legacyCleanupWarnings.clear();
+  return warnings;
 }
 
 function resolveWindowBackgroundColor(): string {
@@ -1121,11 +1136,23 @@ async function initProfileServices(): Promise<void> {
 
   // 加密配置存储
   const encryptedPath = path.join(appDataDir, ENCRYPTED_DATA_FILE);
-  const legacyPaths = [
-    path.join(projectRoot, LEGACY_DATA_FILE),
-    path.join(projectRoot, ENCRYPTED_DATA_FILE),
-  ];
-  encryptedStore = new EncryptedConfigStore(encryptedPath, legacyPaths);
+  encryptedStore = new EncryptedConfigStore(encryptedPath, {
+    legacyEncryptedPaths: [path.join(projectRoot, ENCRYPTED_DATA_FILE)],
+    legacyPlaintextPaths: [path.join(projectRoot, LEGACY_DATA_FILE)],
+    onLegacyCleanupError: (legacyPath, error) => {
+      legacyCleanupWarnings.add(
+        `迁移后的旧配置文件未能删除：${legacyPath}。请退出应用后手动删除，避免敏感数据残留。`,
+      );
+      appLogger.warn("auth", "legacy_config_cleanup_failed", "Failed to remove migrated legacy config", {
+        context: { legacyPath },
+        error,
+      });
+    },
+  });
+  autoUnlockKeyStore = new AutoUnlockKeyStore(
+    path.join(appDataDir, AUTO_UNLOCK_KEY_FILE),
+    safeStorage,
+  );
 
   // 本地状态存储
   const statePath = path.join(appDataDir, LOCAL_STATE_FILE);
@@ -1149,6 +1176,7 @@ async function initProfileServices(): Promise<void> {
 async function loadProfilesAndState(
   passphrase: string,
 ): Promise<{
+  config: EncryptedProfileConfig;
   profiles: Profile[];
   state: LocalState;
   siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
@@ -1157,15 +1185,77 @@ async function loadProfilesAndState(
     throw new Error("存储未初始化");
   }
 
-  const config = await encryptedStore.load(passphrase);
+  let config = await encryptedStore.load(passphrase);
   const state = await localStateStore.load();
+  const plaintextSecrets = collectProtectedSettings(state);
+  if (config.protected_settings_version !== 1) {
+    config = normalizeEncryptedProfileConfig({
+      ...config,
+      runtime_env_by_profile: {
+        ...plaintextSecrets.runtime_env_by_profile,
+        ...(config.runtime_env_by_profile ?? {}),
+      },
+      global_proxy: config.global_proxy || plaintextSecrets.global_proxy,
+      protected_settings_version: 1,
+    });
+    await encryptedStore.save(config, passphrase);
+  }
+  applyProtectedSettings(state, config);
+  if (hasProtectedSettings(plaintextSecrets)) {
+    await localStateStore.save(state);
+  }
   applyNativeThemeMode(state.global_settings.theme_mode);
 
   return {
+    config,
     profiles: config.profiles,
     state,
     siteBalanceSessionsByBaseUrl: config.site_balance_sessions_by_base_url,
   };
+}
+
+async function initializeProfilesAndState(passphrase: string): Promise<{
+  config: EncryptedProfileConfig;
+  state: LocalState;
+}> {
+  if (!encryptedStore || !localStateStore) {
+    throw new Error("存储未初始化");
+  }
+  const state = await localStateStore.load();
+  const plaintextSecrets = collectProtectedSettings(state);
+  const config = await encryptedStore.initialize(passphrase, plaintextSecrets);
+  applyProtectedSettings(state, config);
+  if (hasProtectedSettings(plaintextSecrets)) {
+    await localStateStore.save(state);
+  }
+  applyNativeThemeMode(state.global_settings.theme_mode);
+  return { config, state };
+}
+
+async function activateProfileServices(
+  passphrase: string,
+  config: EncryptedProfileConfig,
+  state: LocalState,
+): Promise<BootstrapResult> {
+  currentPassphrase = passphrase;
+  const stateAccessor = new StateAccessor(localStateStore!, state);
+  profileStateAccessor = stateAccessor;
+  const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase(), config);
+  profileService = new ProfileService(
+    config.profiles,
+    stateAccessor,
+    syncStore,
+    config.site_balance_sessions_by_base_url,
+  );
+  launchService = new LaunchService(profileService, {
+    getModelMappingsState: () => currentModelMappingsState(),
+    codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
+    codexRuntimeHome: getModelMappingConfigService().getCodexRuntimeHome(),
+  });
+  settingsStateService = new SettingsStateService(stateAccessor, syncStore);
+  startCheckinScheduler();
+  await checkinStateWriteQueue;
+  return buildProfileBootstrapPayload();
 }
 
 function buildProfileBootstrapPayload(): BootstrapResult {
@@ -1417,6 +1507,52 @@ function getCheckinSnapshot(): CheckinSnapshot {
   return {
     states_by_account: { ...state.checkin_states_by_account },
     next_scheduled_at: state.checkin_next_scheduled_at,
+  };
+}
+
+function collectProtectedSettings(
+  state: LocalState,
+): Pick<EncryptedProfileConfig, "runtime_env_by_profile" | "global_proxy"> {
+  return {
+    runtime_env_by_profile: Object.fromEntries(
+      Object.entries(state.runtime_by_profile)
+        .filter(([, runtime]) => Object.keys(runtime.extra_env ?? {}).length > 0)
+        .map(([key, runtime]) => [key, { ...runtime.extra_env }]),
+    ),
+    global_proxy: state.global_settings.proxy,
+  };
+}
+
+function hasProtectedSettings(
+  settings: Pick<EncryptedProfileConfig, "runtime_env_by_profile" | "global_proxy">,
+): boolean {
+  return Boolean(
+    settings.global_proxy
+    || Object.keys(settings.runtime_env_by_profile ?? {}).length > 0,
+  );
+}
+
+function applyProtectedSettings(state: LocalState, config: EncryptedProfileConfig): void {
+  const encryptedRuntimeEnv = config.runtime_env_by_profile ?? {};
+  for (const [key, runtime] of Object.entries(state.runtime_by_profile)) {
+    state.runtime_by_profile[key] = {
+      ...runtime,
+      extra_env: { ...(encryptedRuntimeEnv[key] ?? {}) },
+    };
+  }
+  for (const profile of config.profiles) {
+    const key = itemKey(profile);
+    if (state.runtime_by_profile[key] || !encryptedRuntimeEnv[key]) {
+      continue;
+    }
+    state.runtime_by_profile[key] = {
+      ...defaultRuntimeSettings(profile.provider),
+      extra_env: { ...encryptedRuntimeEnv[key] },
+    };
+  }
+  state.global_settings = {
+    ...state.global_settings,
+    proxy: config.global_proxy ?? "",
   };
 }
 
@@ -1771,8 +1907,8 @@ class StateAccessor {
   }
 
   async save(state: LocalState): Promise<void> {
-    this.currentState = state;
     await this.store.save(state);
+    this.currentState = state;
     // 通知渲染进程
     for (const win of getCodeDeckWindows()) {
       win.webContents.send("profile:state-changed", state);
@@ -1781,19 +1917,44 @@ class StateAccessor {
 }
 
 class SyncStoreAdapter {
+  private saveQueue: Promise<void> = Promise.resolve();
+
   constructor(
     private store: EncryptedConfigStore,
     private getPassphrase: () => string,
+    private currentConfig: EncryptedProfileConfig,
   ) {}
 
-  async saveConfig(config: {
-    profiles: Profile[];
-    site_balance_sessions_by_base_url: SiteBalanceSessionsByBaseUrl;
-  }): Promise<void> {
-    const pw = this.getPassphrase();
-    if (pw && this.store) {
-      await this.store.save(config, pw);
-    }
+  saveConfig(config: EncryptedProfileConfig): Promise<void> {
+    return this.enqueueConfigUpdate(config);
+  }
+
+  updateGlobalProxy(proxy: string): Promise<void> {
+    return this.enqueueConfigUpdate({
+      global_proxy: proxy,
+      protected_settings_version: 1,
+    });
+  }
+
+  private enqueueConfigUpdate(config: Partial<EncryptedProfileConfig>): Promise<void> {
+    const nextSave = this.saveQueue.catch(() => undefined).then(async () => {
+      const pw = this.getPassphrase();
+      if (!pw) {
+        return;
+      }
+      const nextConfig = normalizeEncryptedProfileConfig({
+        ...this.currentConfig,
+        ...config,
+        runtime_env_by_profile: config.runtime_env_by_profile
+          ?? this.currentConfig.runtime_env_by_profile,
+        global_proxy: config.global_proxy ?? this.currentConfig.global_proxy,
+        protected_settings_version: 1,
+      });
+      await this.store.save(nextConfig, pw);
+      this.currentConfig = nextConfig;
+    });
+    this.saveQueue = nextSave;
+    return nextSave;
   }
 }
 
@@ -2284,8 +2445,12 @@ function registerAllIpcHandlers(): void {
 
   // ============ Profile IPC ============
 
+  handleIpc("profile:get-encryption-status", async () => {
+    return getEncryptionSetupStatus();
+  }, { level: "debug" });
   handleIpc("profile:check-encrypted-config", async () => {
-    return hasEncryptedConfigFile();
+    const mode = (await getEncryptionSetupStatus()).mode;
+    return mode === "unlock" || mode === "auto-unlock";
   }, { level: "debug" });
 
   handleIpc(
@@ -2299,37 +2464,24 @@ function registerAllIpcHandlers(): void {
       try {
         await checkinVerificationService?.cancelAll();
         await ensureProfileStoresReady();
+        const setupStatus = await getEncryptionSetupStatus();
         appLogger.info("auth", "unlock_profile_services_ready", "Profile storage services ready during unlock");
-        const { profiles, state, siteBalanceSessionsByBaseUrl } = await loadProfilesAndState(passphrase);
+        const { config, state } = await loadProfilesAndState(passphrase);
+        if (setupStatus.mode === "auto-unlock") {
+          await autoUnlockKeyStore!.remove();
+        }
         appLogger.info("auth", "unlock_profiles_loaded", "Profiles loaded during unlock", {
           context: {
-            profileCount: profiles.length,
+            profileCount: config.profiles.length,
           },
         });
-        currentPassphrase = passphrase;
-
-        const stateAccessor = new StateAccessor(localStateStore!, state);
-        profileStateAccessor = stateAccessor;
-        const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase());
-        profileService = new ProfileService(
-          profiles,
-          stateAccessor,
-          syncStore,
-          siteBalanceSessionsByBaseUrl,
-        );
-        launchService = new LaunchService(profileService, {
-          getModelMappingsState: () => currentModelMappingsState(),
-          codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
-          codexRuntimeHome: getModelMappingConfigService().getCodexRuntimeHome(),
-        });
-        settingsStateService = new SettingsStateService(stateAccessor);
-        startCheckinScheduler();
-        await checkinStateWriteQueue;
+        const bootstrap = await activateProfileServices(passphrase, config, state);
 
         appLogger.info("auth", "unlock_success", "Profile unlock succeeded");
         return {
           success: true,
-          bootstrap: buildProfileBootstrapPayload(),
+          bootstrap,
+          warnings: takeLegacyCleanupWarnings(),
         };
       } catch (err: any) {
         appLogger.error("auth", "unlock_error", "Profile unlock failed", { error: err });
@@ -2343,25 +2495,40 @@ function registerAllIpcHandlers(): void {
   );
 
   handleIpc(
+    "profile:unlock-without-passphrase",
+    async () => {
+      await checkinVerificationService?.cancelAll();
+      await ensureProfileStoresReady();
+      const passphrase = await autoUnlockKeyStore!.loadRequired();
+      const { config, state } = await loadProfilesAndState(passphrase);
+      return {
+        success: true,
+        bootstrap: await activateProfileServices(passphrase, config, state),
+        warnings: takeLegacyCleanupWarnings(),
+      };
+    },
+    { includeArgs: false },
+  );
+
+  handleIpc(
     "profile:initialize-encryption",
     async (_event, passphrase: string) => {
       await checkinVerificationService?.cancelAll();
       await ensureProfileStoresReady();
-      currentPassphrase = passphrase;
-      const state = await localStateStore!.load();
-      const stateAccessor = new StateAccessor(localStateStore!, state);
-      profileStateAccessor = stateAccessor;
-      const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase());
-      profileService = new ProfileService([], stateAccessor, syncStore, {});
-      launchService = new LaunchService(profileService, {
-        getModelMappingsState: () => currentModelMappingsState(),
-        codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
-        codexRuntimeHome: getModelMappingConfigService().getCodexRuntimeHome(),
-      });
-      settingsStateService = new SettingsStateService(stateAccessor);
-      startCheckinScheduler();
-      await checkinStateWriteQueue;
-      return { success: true };
+      if (!passphrase) {
+        throw new Error("配置口令不能为空");
+      }
+      const setupStatus = await encryptedStore!.getStatus();
+      if (setupStatus.mode === "unlock") {
+        throw new Error("加密配置已存在，请使用解锁流程。");
+      }
+      await autoUnlockKeyStore!.remove();
+      const { config, state } = await initializeProfilesAndState(passphrase);
+      return {
+        success: true,
+        bootstrap: await activateProfileServices(passphrase, config, state),
+        warnings: takeLegacyCleanupWarnings(),
+      };
     },
     { includeArgs: false },
   );
@@ -2382,6 +2549,64 @@ function registerAllIpcHandlers(): void {
 
       await encryptedStore!.changePassphrase(currentPassword, nextPassword);
       currentPassphrase = nextPassword;
+      return { success: true };
+    },
+    { includeArgs: false },
+  );
+
+  handleIpc(
+    "profile:initialize-without-passphrase",
+    async () => {
+      await checkinVerificationService?.cancelAll();
+      await ensureProfileStoresReady();
+      const passphrase = await autoUnlockKeyStore!.createOrLoad();
+      const { config, state } = await initializeProfilesAndState(passphrase);
+      return {
+        success: true,
+        bootstrap: await activateProfileServices(passphrase, config, state),
+        warnings: takeLegacyCleanupWarnings(),
+      };
+    },
+    { includeArgs: false },
+  );
+
+  handleIpc(
+    "profile:enable-passphrase",
+    async (_event, nextPassword: string) => {
+      await ensureProfileStoresReady();
+      if (!nextPassword) {
+        throw new Error("新密码不能为空");
+      }
+      const automaticPassphrase = await autoUnlockKeyStore!.loadRequired();
+      await encryptedStore!.changePassphrase(automaticPassphrase, nextPassword);
+      try {
+        await autoUnlockKeyStore!.remove();
+      } catch (error) {
+        await encryptedStore!.changePassphrase(nextPassword, automaticPassphrase).catch(() => undefined);
+        throw error;
+      }
+      currentPassphrase = nextPassword;
+      return { success: true };
+    },
+    { includeArgs: false },
+  );
+
+  handleIpc(
+    "profile:disable-passphrase",
+    async (_event, currentPassword: string) => {
+      await ensureProfileStoresReady();
+      if (!currentPassword) {
+        throw new Error("当前密码不能为空");
+      }
+      await encryptedStore!.load(currentPassword);
+      const automaticPassphrase = await autoUnlockKeyStore!.createOrLoad();
+      try {
+        await encryptedStore!.changePassphrase(currentPassword, automaticPassphrase);
+      } catch (error) {
+        await autoUnlockKeyStore!.remove().catch(() => undefined);
+        throw error;
+      }
+      currentPassphrase = automaticPassphrase;
       return { success: true };
     },
     { includeArgs: false },
@@ -2473,6 +2698,7 @@ function registerAllIpcHandlers(): void {
       await getProfileService().deleteSiteBalanceSession(baseUrl, sessionId);
     },
   );
+
   handleIpc("profile:pick-working-directory", async () => {
     const browserWindow = BrowserWindow.getFocusedWindow();
     return browserWindow
@@ -2573,6 +2799,7 @@ function registerAllIpcHandlers(): void {
         targetModel: plan.codexConfig.targetModel,
         content: plan.codexConfig.content,
         rulesContent: plan.codexConfig.rulesContent,
+        workerAgentContent: plan.codexConfig.workerAgentContent,
       });
       appLogger.info("launcher", "codex_config_written", "Codex profile config written", {
         context: {

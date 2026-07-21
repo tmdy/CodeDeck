@@ -11,6 +11,7 @@ import {
   type ProfileEditorDraft,
 } from "../profile-editor-state.js";
 import {
+  normalizeProfile,
   shouldRecommendClaudeSingleModelCompatibility,
   type Profile,
 } from "../profile/types.js";
@@ -41,7 +42,7 @@ function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDr
         subagentTarget: "",
       },
       codex: {
-        commandLineModelOverride: "",
+        subagentTarget: "",
       },
     },
     balanceSessionSelection: "sess-a",
@@ -101,7 +102,7 @@ describe("profile-editor-state", () => {
           subagentTarget: "",
         },
         codex: {
-          commandLineModelOverride: "",
+          subagentTarget: "",
           reasoningEffort: "",
         },
       },
@@ -215,7 +216,7 @@ describe("profile-editor-state", () => {
           subagentTarget: "",
         },
         codex: {
-          commandLineModelOverride: "",
+          subagentTarget: "",
         },
       },
     });
@@ -270,6 +271,26 @@ describe("profile-editor-state", () => {
       }),
       baseline,
     )).toBe(true);
+  });
+
+  it("should migrate the legacy Codex command-line override to a subagent target", () => {
+    const normalized = normalizeProfile({
+      provider: "codex",
+      name: "Legacy",
+      url: "https://api.example.com/v1",
+      key: "sk",
+      advancedModelMapping: {
+        enabled: true,
+        codex: {
+          commandLineModelOverride: "  legacy-worker-model  ",
+        },
+      },
+    } as unknown as Profile);
+
+    expect(normalized.advancedModelMapping?.codex).toEqual({
+      subagentTarget: "legacy-worker-model",
+    });
+    expect(normalized.advancedModelMapping?.codex).not.toHaveProperty("commandLineModelOverride");
   });
 
   it("should compare permissions by field values while preserving root order semantics", () => {

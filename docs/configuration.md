@@ -38,8 +38,9 @@ C:\Projects\CodeDeckWorkspace
 
 | 路径 | 内容 |
 | --- | --- |
-| `app-data/claude_profiles.encrypted.json` | 加密后的 Profile 和站点会话 |
-| `app-data/local_state.json` | 界面设置、收藏和全局参数 |
+| `app-data/claude_profiles.encrypted.json` | 加密后的 Profile、站点会话、运行时环境变量和代理 |
+| `app-data/profile-auto-unlock-key.json` | 免口令模式下由 Windows 账户保护的随机解锁密钥 |
+| `app-data/local_state.json` | 未加密的界面设置、路径、收藏和会话摘要 |
 | `app-data/manifest.json` | Skills 扫描缓存和最近操作信息 |
 | `app-data/operations/` | Skills 批处理记录 |
 | `app-data/backups/` | 需要回滚时使用的备份 |
@@ -48,6 +49,10 @@ C:\Projects\CodeDeckWorkspace
 | `library/codex/`、`library/claude/` | 当前未启用的托管 Skills |
 
 `.gitignore` 默认排除这些运行数据和构建产物，只保留仓库已有的公开翻译、标签文件。
+
+加密配置、本地状态和免口令密钥使用同目录临时文件与备份替换，启动时会恢复被中断的写入。旧根目录加密文件或 `profiles.json` 会在成功迁移并验证后清理。免口令模式仍会加密配置，但同一 Windows 账户可自动解锁；复制 workspace 时不能把它视为可跨账户恢复的密钥备份。日志、会话历史、工作目录和 Skills 内容不受配置口令保护，备份或分享 workspace 前仍需单独检查。
+
+发布安装包只携带受版本控制的公开翻译文件，不携带构建机器上的 `library/`。用户导入的 Skills 仅保存在自己的 workspace。
 
 ## 外部请求
 

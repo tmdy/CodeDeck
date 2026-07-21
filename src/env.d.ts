@@ -20,6 +20,7 @@ import type { BalanceCheckState } from "./shared/balance/types.js";
 import type { ModelMappingsState } from "./shared/model-mapping/config-types.js";
 import type { ParameterSettings } from "./shared/parameter/types.js";
 import type { BootstrapResult, FavoriteSessionSummary, LocalState } from "./shared/state/local-state.js";
+import type { EncryptionSetupStatus } from "./shared/encryption-status.js";
 import type {
   GetSessionDetailRequest,
   ListSessionsRequest,
@@ -77,11 +78,32 @@ declare global {
 
     profileManager?: {
       // Auth
-      checkEncryptedConfig: () => Promise<boolean>;
-      unlock: (passphrase: string) => Promise<{ success: boolean; bootstrap?: BootstrapResult }>;
+      getEncryptionStatus?: () => Promise<EncryptionSetupStatus>;
+      checkEncryptedConfig?: () => Promise<boolean>;
+      unlock: (passphrase: string) => Promise<{
+        success: boolean;
+        bootstrap?: BootstrapResult;
+        warnings?: string[];
+      }>;
+      unlockWithoutPassphrase?: () => Promise<{
+        success: boolean;
+        bootstrap?: BootstrapResult;
+        warnings?: string[];
+      }>;
       bootstrap: () => Promise<BootstrapResult>;
-      initializeEncryption: (passphrase: string) => Promise<{ success: boolean }>;
+      initializeEncryption: (passphrase: string) => Promise<{
+        success: boolean;
+        bootstrap?: BootstrapResult;
+        warnings?: string[];
+      }>;
+      initializeWithoutPassphrase?: () => Promise<{
+        success: boolean;
+        bootstrap?: BootstrapResult;
+        warnings?: string[];
+      }>;
       changePassphrase: (currentPassphrase: string, nextPassphrase: string) => Promise<{ success: boolean }>;
+      enablePassphrase?: (nextPassphrase: string) => Promise<{ success: boolean }>;
+      disablePassphrase?: (currentPassphrase: string) => Promise<{ success: boolean }>;
 
       // Profile CRUD
       listProfiles: () => Promise<{

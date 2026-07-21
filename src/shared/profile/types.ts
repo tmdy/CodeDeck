@@ -44,7 +44,7 @@ export interface ClaudeAdvancedModelMapping {
 }
 
 export interface CodexAdvancedModelMapping {
-  commandLineModelOverride?: string;
+  subagentTarget?: string;
   reasoningEffort?: CodexReasoningEffort | "";
 }
 
@@ -162,7 +162,7 @@ export function normalizeRuntimeTerminalMode(value: unknown): RuntimeTerminalMod
   return value === "direct" || value === "monitored" ? value : undefined;
 }
 
-function normalizeRuntimeEnv(env?: Record<string, string>): Record<string, string> {
+export function normalizeRuntimeEnv(env?: Record<string, string>): Record<string, string> {
   if (!env) {
     return {};
   }
@@ -210,8 +210,11 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
     haikuTarget: value.claude.haikuTarget?.trim() || undefined,
     subagentTarget: value.claude.subagentTarget?.trim() || undefined,
   } : undefined;
+  const legacyCodex = value.codex as (CodexAdvancedModelMapping & { commandLineModelOverride?: string }) | undefined;
   const codex = value.codex ? {
-    commandLineModelOverride: value.codex.commandLineModelOverride?.trim() || undefined,
+    subagentTarget: value.codex.subagentTarget?.trim()
+      || legacyCodex?.commandLineModelOverride?.trim()
+      || undefined,
     ...(codexReasoningEffort ? { reasoningEffort: codexReasoningEffort } : {}),
   } : undefined;
 

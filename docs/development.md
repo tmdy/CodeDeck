@@ -45,7 +45,7 @@ CodeDeck 是 Electron、React、TypeScript 和 Vite 项目，使用 npm 与 `pac
 
 `electron-builder` 配置位于 `package.json`。当前目标只有 Windows x64，且所有打包脚本都带有 `--publish never`。
 
-`prepare:package` 会重建 `build/workspace-seed`，并从 `src/assets/hero.png` 生成安装器图标。运行该命令前不要在 `build/workspace-seed` 放手工维护的文件。
+`prepare:package` 会删除旧的 `build/workspace-seed`，并从 `src/assets/hero.png` 生成安装器图标。`electron-builder` 只把受版本控制的 `app-data/translations.json` 逐文件放入 workspace seed；本机 `library/` 不会进入安装包。
 
 ## 提交前检查
 
