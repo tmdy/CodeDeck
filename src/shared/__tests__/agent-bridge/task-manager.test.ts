@@ -26,7 +26,10 @@ function makeSnapshot(sessionId: string): TerminalSessionSnapshot {
       remaining: 1,
       lastMatchedKeyword: null,
       paused: false,
+      keywords: [],
       intervalMs: 0,
+      intervalMode: "fixed",
+      intervalStdDevMs: 0,
     },
   };
 }

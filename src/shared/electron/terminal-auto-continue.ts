@@ -1,9 +1,13 @@
+export type TerminalAutoContinueIntervalMode = "fixed" | "normal";
+
 export interface TerminalAutoContinueConfig {
   enabled: boolean;
   limit: number;
   prompt: string;
   keywords: string[];
   intervalMs?: number;
+  intervalMode?: TerminalAutoContinueIntervalMode;
+  intervalStdDevMs?: number;
 }
 
 export type TerminalAutoContinueConfigPatch = Partial<TerminalAutoContinueConfig> & {
@@ -15,6 +19,7 @@ export interface TerminalAutoContinueAction {
   keyword: string;
   matchCount: number;
   prompt: string;
+  delayMs: number;
 }
 
 export type TerminalAutoContinueInputSource = "user" | "auto";
@@ -27,8 +32,7 @@ export interface TerminalAutoContinueDiagnostic {
     | "active_failure_region"
     | "limit_reached"
     | "retry_progress"
-    | "paused"
-    | "interval_wait";
+    | "paused";
   keyword: string;
   matchCount: number;
   remaining: number;
@@ -40,6 +44,7 @@ export interface TerminalAutoContinueDiagnostic {
 export interface TerminalAutoContinueControllerOptions {
   onDiagnostic?: (diagnostic: TerminalAutoContinueDiagnostic) => void;
   now?: () => number;
+  random?: () => number;
 }
 
 export interface TerminalAutoContinueSnapshot {
@@ -49,7 +54,10 @@ export interface TerminalAutoContinueSnapshot {
   remaining: number;
   lastMatchedKeyword: string | null;
   paused: boolean;
+  keywords: string[];
   intervalMs: number;
+  intervalMode: TerminalAutoContinueIntervalMode;
+  intervalStdDevMs: number;
 }
 
 interface KeywordMatchContext {
@@ -65,8 +73,8 @@ const RECONNECT_PROGRESS_PATTERN = /\breconnecting\.\.\.\s*\d+\s*\/\s*\d+\b/i;
 const RUN_PROGRESS_PATTERN = /\b(?:working|reconnecting\.\.\.\s*\d+\s*\/\s*\d+)\b/i;
 const MAX_RECENT_INPUTS = 8;
 const MATCH_EXCERPT_RADIUS = 120;
-const AUTO_CONTINUE_SAFETY_INTERVAL_MS = 5_000;
 const STABLE_RUN_PROGRESS_MS = 3_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 function stripTerminalControlText(value: string): string {
   return value
@@ -133,7 +141,11 @@ function normalizeKeywords(value: string[] | undefined): string[] {
 }
 
 function normalizeIntervalMs(value: number | undefined): number {
-  return Math.max(0, Math.floor(Number(value) || 0));
+  return Math.min(MAX_TIMER_DELAY_MS, Math.max(0, Math.floor(Number(value) || 0)));
+}
+
+function normalizeIntervalMode(value: TerminalAutoContinueIntervalMode | undefined): TerminalAutoContinueIntervalMode {
+  return value === "normal" ? "normal" : "fixed";
 }
 
 export class TerminalAutoContinueController {
@@ -144,6 +156,7 @@ export class TerminalAutoContinueController {
   private maxKeywordLength: number;
   private readonly onDiagnostic?: (diagnostic: TerminalAutoContinueDiagnostic) => void;
   private readonly now: () => number;
+  private readonly random: () => number;
   private pendingTail = "";
   private pendingVisibleTail = "";
   private matchCount = 0;
@@ -151,13 +164,13 @@ export class TerminalAutoContinueController {
   private lastMatchedKeyword: string | null = null;
   private paused = false;
   private intervalMs = 0;
-  private lastAutoContinueAt: number | null = null;
+  private intervalMode: TerminalAutoContinueIntervalMode = "fixed";
+  private intervalStdDevMs = 0;
   private currentInputLine = "";
   private recentSubmittedInputs: string[] = [];
   private waitingForAutoRunProgress = false;
   private runProgressStartedAt: number | null = null;
   private failureEpisodeId = 0;
-  private userSubmissionSinceAutoContinue = false;
   private lastFailureObservedAt: number | null = null;
 
   constructor(
@@ -166,11 +179,14 @@ export class TerminalAutoContinueController {
   ) {
     this.onDiagnostic = options.onDiagnostic;
     this.now = options.now ?? (() => Date.now());
+    this.random = options.random ?? Math.random;
     this.enabled = Boolean(config.enabled);
     this.limit = normalizeLimit(config.limit);
     this.prompt = normalizePrompt(config.prompt);
     this.keywords = normalizeKeywords(config.keywords);
     this.intervalMs = normalizeIntervalMs(config.intervalMs);
+    this.intervalMode = normalizeIntervalMode(config.intervalMode);
+    this.intervalStdDevMs = normalizeIntervalMs(config.intervalStdDevMs);
     this.maxKeywordLength = this.computeMaxKeywordLength();
   }
 
@@ -263,23 +279,17 @@ export class TerminalAutoContinueController {
         return null;
       }
 
-      if (!this.isIntervalReady()) {
-        this.emitDiagnostic("skipped", "interval_wait", matchedKeyword, visibleExcerpt);
-        continue;
-      }
-
       this.activeKeyword = matchedKeyword;
       this.failureEpisodeId += 1;
-      this.userSubmissionSinceAutoContinue = false;
       this.matchCount += 1;
       this.lastMatchedKeyword = matchedKeyword;
-      this.lastAutoContinueAt = this.now();
       this.emitDiagnostic("matched", "keyword_match", matchedKeyword, visibleExcerpt);
       return {
         input: `${this.prompt}\r`,
         keyword: matchedKeyword,
         matchCount: this.matchCount,
         prompt: this.prompt,
+        delayMs: this.sampleDelayMs(),
       };
     }
 
@@ -299,13 +309,11 @@ export class TerminalAutoContinueController {
           this.activeKeyword = null;
           this.waitingForAutoRunProgress = false;
           this.runProgressStartedAt = null;
-          this.userSubmissionSinceAutoContinue = true;
           this.lastFailureObservedAt = null;
         }
         if (source === "auto" && submittedInput.trim()) {
           this.waitingForAutoRunProgress = true;
           this.runProgressStartedAt = null;
-          this.userSubmissionSinceAutoContinue = false;
         }
         this.currentInputLine = "";
         continue;
@@ -347,6 +355,12 @@ export class TerminalAutoContinueController {
     if (patch.intervalMs !== undefined) {
       this.intervalMs = normalizeIntervalMs(patch.intervalMs);
     }
+    if (patch.intervalMode !== undefined) {
+      this.intervalMode = normalizeIntervalMode(patch.intervalMode);
+    }
+    if (patch.intervalStdDevMs !== undefined) {
+      this.intervalStdDevMs = normalizeIntervalMs(patch.intervalStdDevMs);
+    }
     if (patch.paused !== undefined) {
       this.setPaused(patch.paused);
     }
@@ -364,7 +378,10 @@ export class TerminalAutoContinueController {
       remaining: this.limit === -1 ? -1 : Math.max(0, this.limit - this.matchCount),
       lastMatchedKeyword: this.lastMatchedKeyword,
       paused: this.paused,
+      keywords: [...this.keywords],
       intervalMs: this.intervalMs,
+      intervalMode: this.intervalMode,
+      intervalStdDevMs: this.intervalStdDevMs,
     };
   }
 
@@ -375,14 +392,20 @@ export class TerminalAutoContinueController {
     );
   }
 
-  private isIntervalReady(): boolean {
-    if (this.lastAutoContinueAt === null) {
-      return true;
+  private sampleDelayMs(): number {
+    if (this.intervalMode !== "normal" || this.intervalStdDevMs === 0) {
+      return this.intervalMs;
     }
-    const minimumInterval = this.userSubmissionSinceAutoContinue
-      ? this.intervalMs
-      : Math.max(this.intervalMs, AUTO_CONTINUE_SAFETY_INTERVAL_MS);
-    return this.now() - this.lastAutoContinueAt >= minimumInterval;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const first = Math.min(1 - Number.EPSILON, Math.max(Number.MIN_VALUE, this.random()));
+      const second = Math.min(1 - Number.EPSILON, Math.max(0, this.random()));
+      const standardNormal = Math.sqrt(-2 * Math.log(first)) * Math.cos(2 * Math.PI * second);
+      const sample = this.intervalMs + standardNormal * this.intervalStdDevMs;
+      if (sample >= 0) {
+        return normalizeIntervalMs(Math.round(sample));
+      }
+    }
+    return this.intervalMs;
   }
 
   private consumeEchoedInputMatch(candidate: string, matchedKeyword: string): boolean {
@@ -443,8 +466,7 @@ export class TerminalAutoContinueController {
       && this.runProgressStartedAt !== null
       && this.now() - this.runProgressStartedAt >= STABLE_RUN_PROGRESS_MS
       && previousFailureObservedAt !== null
-      && this.now() - previousFailureObservedAt >= STABLE_RUN_PROGRESS_MS
-      && this.isIntervalReady();
+      && this.now() - previousFailureObservedAt >= STABLE_RUN_PROGRESS_MS;
   }
 
   private isReconnectProgressMatch(normalizedText: string, matchIndex: number): boolean {

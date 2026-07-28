@@ -2190,6 +2190,36 @@ button.profile-group-heading:hover:not(:disabled),
   gap: 10px;
 }
 
+.auto-continue-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.auto-continue-settings-row > label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.auto-continue-compact-field {
+  flex: 0 1 140px;
+}
+
+.auto-continue-prompt-field {
+  flex: 0 1 160px;
+}
+
+.auto-continue-keywords-field {
+  flex: 1 1 360px;
+}
+
+.auto-continue-settings-row input,
+.auto-continue-settings-row select {
+  width: 100%;
+}
+
 .parameter-profile-blacklist {
   display: grid;
   gap: 6px;
@@ -2724,7 +2754,7 @@ button.skills-inline-status:hover:not(:disabled) {
   align-items: flex-end;
   gap: 6px;
   min-width: 0;
-  max-width: min(100%, 430px);
+  max-width: min(68vw, 900px);
 }
 
 .terminal-control-field {
@@ -2735,7 +2765,8 @@ button.skills-inline-status:hover:not(:disabled) {
   font-size: 0.75rem;
 }
 
-.terminal-control-field input {
+.terminal-control-field input,
+.terminal-control-field select {
   width: 82px;
   min-height: 30px;
   border: 1px solid rgba(220, 230, 242, 0.18);
@@ -2743,6 +2774,15 @@ button.skills-inline-status:hover:not(:disabled) {
   background: rgba(16, 22, 31, 0.92);
   color: #dce6f2;
   padding: 3px 7px;
+}
+
+.terminal-control-keywords {
+  flex: 1 1 250px;
+}
+
+.terminal-control-keywords input {
+  width: 100%;
+  min-width: 220px;
 }
 
 .terminal-controls button {
@@ -2762,6 +2802,17 @@ button.skills-inline-status:hover:not(:disabled) {
 }
 
 @media (max-width: 720px) {
+  .terminal-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .terminal-controls {
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 1100px) {
   .terminal-header {
     grid-template-columns: minmax(0, 1fr);
   }

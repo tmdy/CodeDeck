@@ -273,6 +273,7 @@ function logTerminalAutoContinueEvent(event: TerminalSessionAutoContinueEvent): 
     matchCount: event.matchCount,
     remaining: event.remaining,
     prompt: event.prompt,
+    delayMs: event.delayMs,
     subscriberCount: event.subscriberCount,
     visibleExcerpt: event.visibleExcerpt,
     failureEpisodeId: event.failureEpisodeId,
@@ -1103,6 +1104,8 @@ async function launchMonitoredTerminalSession(
       prompt: "继续",
       keywords: [],
       intervalMs: 0,
+      intervalMode: "fixed",
+      intervalStdDevMs: 1_000,
     },
   });
   if (options.showWindow !== false) {

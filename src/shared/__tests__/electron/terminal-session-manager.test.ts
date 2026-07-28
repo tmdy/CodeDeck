@@ -217,6 +217,146 @@ describe("TerminalSessionManager", () => {
     expect(manager.getSnapshot(session.sessionId)?.autoContinue.matchCount).toBe(1);
   });
 
+  it("waits for the sampled delay before writing auto continue input", async () => {
+    vi.useFakeTimers();
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: true,
+        limit: 1,
+        prompt: "继续",
+        keywords: ["high demand"],
+        intervalMs: 2_000,
+      },
+    });
+    manager.attachSession(session.sessionId, {
+      onOutput: vi.fn(),
+      onStatus: vi.fn(),
+    });
+
+    fakePty.emitData("service is in high demand");
+    expect(fakePty.writes).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(fakePty.writes).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fakePty.writes).toEqual(["继续\r"]);
+  });
+
+  it.each(["paused", "disabled"] as const)(
+    "cancels a delayed auto continue when the session is %s",
+    async (change) => {
+      vi.useFakeTimers();
+      const manager = new TerminalSessionManager({
+        createPtyProcess: vi.fn(() => fakePty),
+      });
+      const session = await manager.createSession({
+        provider: "codex",
+        cwd: "C:/workspace/current-project",
+        commandExecutable: "codex",
+        commandArgs: [],
+        env: {},
+        autoContinue: {
+          enabled: true,
+          limit: -1,
+          prompt: "继续",
+          keywords: ["high demand"],
+          intervalMs: 2_000,
+        },
+      });
+      manager.attachSession(session.sessionId, {
+        onOutput: vi.fn(),
+        onStatus: vi.fn(),
+      });
+      fakePty.emitData("service is in high demand");
+
+      manager.updateAutoContinueConfig(
+        session.sessionId,
+        change === "paused" ? { paused: true } : { enabled: false },
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(fakePty.writes).toEqual([]);
+      expect(manager.getSnapshot(session.sessionId)?.autoContinue.matchCount).toBe(1);
+    },
+  );
+
+  it("cancels a delayed auto continue when the user types", async () => {
+    vi.useFakeTimers();
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: true,
+        limit: -1,
+        prompt: "继续",
+        keywords: ["high demand"],
+        intervalMs: 2_000,
+      },
+    });
+    manager.attachSession(session.sessionId, {
+      onOutput: vi.fn(),
+      onStatus: vi.fn(),
+    });
+    fakePty.emitData("service is in high demand");
+
+    manager.sendInput(session.sessionId, "手动处理\r");
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(fakePty.writes).toEqual(["手动处理\r"]);
+  });
+
+  it.each(["exit", "close"] as const)(
+    "cancels a delayed auto continue when the session reaches %s",
+    async (endState) => {
+      vi.useFakeTimers();
+      const manager = new TerminalSessionManager({
+        createPtyProcess: vi.fn(() => fakePty),
+      });
+      const session = await manager.createSession({
+        provider: "codex",
+        cwd: "C:/workspace/current-project",
+        commandExecutable: "codex",
+        commandArgs: [],
+        env: {},
+        autoContinue: {
+          enabled: true,
+          limit: 1,
+          prompt: "继续",
+          keywords: ["high demand"],
+          intervalMs: 2_000,
+        },
+      });
+      manager.attachSession(session.sessionId, {
+        onOutput: vi.fn(),
+        onStatus: vi.fn(),
+      });
+      fakePty.emitData("service is in high demand");
+
+      if (endState === "exit") {
+        fakePty.emitExit({ exitCode: 0 });
+      } else {
+        await manager.closeSession(session.sessionId, "test");
+      }
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(fakePty.writes).toEqual([]);
+    },
+  );
+
   it("emits diagnostics before queueing and flushing auto continue input", async () => {
     const events: string[] = [];
     const manager = new TerminalSessionManager({

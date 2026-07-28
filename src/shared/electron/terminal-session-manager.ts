@@ -85,6 +85,7 @@ export interface TerminalSessionAutoContinueEvent {
   failureEpisodeId?: number;
   failureState?: TerminalAutoContinueDiagnostic["failureState"];
   prompt?: string;
+  delayMs?: number;
   subscriberCount?: number;
 }
 
@@ -110,6 +111,7 @@ interface ManagedSession {
   outputChunks: string[];
   subscribers: Set<TerminalSessionSubscriber>;
   pendingAutoContinueInput?: string;
+  pendingAutoContinueTimer?: ReturnType<typeof setTimeout>;
   disposeData?: () => void;
   disposeExit?: () => void;
 }
@@ -120,7 +122,10 @@ function cloneSnapshot(snapshot: TerminalSessionSnapshot): TerminalSessionSnapsh
   return {
     ...snapshot,
     commandArgs: [...snapshot.commandArgs],
-    autoContinue: { ...snapshot.autoContinue },
+    autoContinue: {
+      ...snapshot.autoContinue,
+      keywords: [...snapshot.autoContinue.keywords],
+    },
   };
 }
 
@@ -183,11 +188,12 @@ export class TerminalSessionManager {
       session.snapshot.autoContinue = session.controller.snapshot();
       this.notifyOutput(session, chunk);
       if (action) {
-        this.enqueueAutoContinue(session, action.input);
+        this.enqueueAutoContinue(session, action.input, action.delayMs);
       }
       this.notifyStatus(session);
     }));
     session.disposeExit = normalizeDisposer(pty.onExit((event) => {
+      this.cancelPendingAutoContinue(session);
       this.applyActivity(session, "idle", "process_exit");
       session.snapshot.status = "exited";
       session.snapshot.exitCode = event.exitCode;
@@ -217,6 +223,9 @@ export class TerminalSessionManager {
     if (session.snapshot.status !== "running") {
       return;
     }
+    if (data && (session.pendingAutoContinueInput || session.pendingAutoContinueTimer)) {
+      this.cancelPendingAutoContinue(session);
+    }
     session.controller.recordInput(data);
     this.observeActivity(session, session.activityDetector.recordInput(data));
     session.pty.write(data);
@@ -233,6 +242,7 @@ export class TerminalSessionManager {
       if (!isPtyAlreadyExitedError(error)) {
         throw error;
       }
+      this.cancelPendingAutoContinue(session);
       session.snapshot.status = "exited";
       session.snapshot.autoContinue = session.controller.snapshot();
       this.notifyStatus(session);
@@ -242,6 +252,7 @@ export class TerminalSessionManager {
   async closeSession(sessionId: string, reason = "closed"): Promise<void> {
     const session = this.requireSession(sessionId);
     if (session.snapshot.status !== "closed") {
+      this.cancelPendingAutoContinue(session);
       this.applyActivity(session, "idle", "session_closed");
       session.snapshot.status = "closed";
       session.snapshot.closeReason = reason;
@@ -267,6 +278,9 @@ export class TerminalSessionManager {
   updateAutoContinueConfig(sessionId: string, patch: TerminalAutoContinueConfigPatch): void {
     const session = this.requireSession(sessionId);
     session.controller.updateConfig(patch);
+    if (patch.enabled === false || patch.paused === true) {
+      this.cancelPendingAutoContinue(session);
+    }
     session.snapshot.autoContinue = session.controller.snapshot();
     this.notifyStatus(session);
   }
@@ -358,7 +372,7 @@ export class TerminalSessionManager {
     this.notifyStatus(session);
   }
 
-  private enqueueAutoContinue(session: ManagedSession, input: string): void {
+  private enqueueAutoContinue(session: ManagedSession, input: string, delayMs: number): void {
     if (session.snapshot.status !== "running") {
       this.emitAutoContinueEvent({
         sessionId: session.snapshot.sessionId,
@@ -368,7 +382,7 @@ export class TerminalSessionManager {
       });
       return;
     }
-    if (session.pendingAutoContinueInput) {
+    if (session.pendingAutoContinueInput || session.pendingAutoContinueTimer) {
       this.emitAutoContinueEvent({
         sessionId: session.snapshot.sessionId,
         phase: "skipped",
@@ -377,14 +391,38 @@ export class TerminalSessionManager {
       });
       return;
     }
-    session.pendingAutoContinueInput = input;
     this.emitAutoContinueEvent({
       sessionId: session.snapshot.sessionId,
       phase: "queued",
       prompt: input.replace(/\r$/, ""),
+      delayMs,
       subscriberCount: session.subscribers.size,
     });
-    this.flushPendingAutoContinue(session);
+    if (delayMs <= 0) {
+      session.pendingAutoContinueInput = input;
+      this.flushPendingAutoContinue(session);
+      return;
+    }
+    session.pendingAutoContinueTimer = setTimeout(() => {
+      session.pendingAutoContinueTimer = undefined;
+      if (session.snapshot.status !== "running") {
+        return;
+      }
+      const autoContinue = session.controller.snapshot();
+      if (!autoContinue.enabled || autoContinue.paused) {
+        return;
+      }
+      session.pendingAutoContinueInput = input;
+      this.flushPendingAutoContinue(session);
+    }, delayMs);
+  }
+
+  private cancelPendingAutoContinue(session: ManagedSession): void {
+    if (session.pendingAutoContinueTimer) {
+      clearTimeout(session.pendingAutoContinueTimer);
+      session.pendingAutoContinueTimer = undefined;
+    }
+    session.pendingAutoContinueInput = undefined;
   }
 
   private flushPendingAutoContinue(session: ManagedSession): void {

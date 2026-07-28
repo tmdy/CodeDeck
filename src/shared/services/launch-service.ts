@@ -36,7 +36,7 @@ import {
   buildCodexSiteProfileName,
   buildCodexSiteProviderId,
 } from "./model-mapping-config-service.js";
-import type { CodexTerminalMode } from "../parameter/types.js";
+import type { AutoContinueIntervalMode, CodexTerminalMode } from "../parameter/types.js";
 
 export interface CodexConfigWritePlan {
   profilePath: string;
@@ -88,6 +88,8 @@ export interface CodexAutoContinuePlan {
   prompt: string;
   keywords: string[];
   intervalMs?: number;
+  intervalMode?: AutoContinueIntervalMode;
+  intervalStdDevMs?: number;
 }
 
 export interface LaunchServiceOptions {
@@ -612,6 +614,8 @@ export class LaunchService {
       prompt: terminalSettings.auto_continue_prompt,
       keywords: terminalSettings.auto_continue_keywords,
       intervalMs: terminalSettings.auto_continue_interval_ms,
+      intervalMode: terminalSettings.auto_continue_interval_mode,
+      intervalStdDevMs: terminalSettings.auto_continue_interval_stddev_ms,
     };
   }
 

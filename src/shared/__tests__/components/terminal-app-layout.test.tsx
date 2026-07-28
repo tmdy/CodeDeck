@@ -64,7 +64,10 @@ function createSnapshot(overrides: Partial<TerminalSessionSnapshot> = {}): Termi
       remaining: -1,
       lastMatchedKeyword: null,
       paused: false,
+      keywords: ["high demand"],
       intervalMs: 0,
+      intervalMode: "fixed",
+      intervalStdDevMs: 1_000,
     },
     ...overrides,
   };
@@ -75,6 +78,84 @@ describe("TerminalApp layout", () => {
     vi.clearAllMocks();
     delete window.terminalManager;
     window.history.replaceState(null, "", "/");
+  });
+
+  it("applies runtime keywords and truncated-normal interval settings", async () => {
+    window.history.replaceState(null, "", "/?sessionId=session-1");
+    const updateAutoContinueConfig = vi.fn().mockResolvedValue(undefined);
+    window.terminalManager = {
+      attachSession: vi.fn().mockResolvedValue(createSnapshot()),
+      sendInput: vi.fn().mockResolvedValue(undefined),
+      resizeSession: vi.fn().mockResolvedValue(undefined),
+      updateAutoContinueConfig,
+      closeSession: vi.fn().mockResolvedValue(undefined),
+      readClipboardText: vi.fn().mockResolvedValue(""),
+      writeClipboardText: vi.fn().mockResolvedValue(undefined),
+      onOutput: vi.fn(() => vi.fn()),
+      onStatus: vi.fn(() => vi.fn()),
+    };
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    const { default: TerminalApp } = await import("../../../TerminalApp.js");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<TerminalApp />);
+      await Promise.resolve();
+    });
+
+    const findLabel = (prefix: string): HTMLLabelElement => {
+      const label = Array.from(container.querySelectorAll("label"))
+        .find((candidate) => candidate.textContent?.startsWith(prefix));
+      if (!label) {
+        throw new Error(`missing label: ${prefix}`);
+      }
+      return label;
+    };
+    const setInput = async (prefix: string, value: string) => {
+      const input = findLabel(prefix).querySelector<HTMLInputElement>("input");
+      if (!input) {
+        throw new Error(`missing input: ${prefix}`);
+      }
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+
+    const mode = findLabel("间隔模式").querySelector<HTMLSelectElement>("select");
+    expect(mode).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(mode, "normal");
+      mode!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await setInput("次数", "5");
+    await setInput("均值(s)", "2.5");
+    await setInput("标准差(s)", "0.75");
+    await setInput("关键词", "high demand, rate limit，high demand");
+
+    await act(async () => {
+      container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(updateAutoContinueConfig).toHaveBeenLastCalledWith("session-1", {
+      limit: 5,
+      keywords: ["high demand", "rate limit"],
+      intervalMode: "normal",
+      intervalMs: 2_500,
+      intervalStdDevMs: 750,
+    });
+
+    await act(async () => root.unmount());
+    container.remove();
   });
 
   it("keeps the monitored terminal header compact and bounds the terminal pane", () => {

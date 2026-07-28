@@ -1,10 +1,20 @@
 // @vitest-environment jsdom
 
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ParameterSettingsPanel } from "../../../components/settings/ParameterSettingsPanel.jsx";
 import { defaultParameterSettings } from "../../parameter/types.js";
 import type { Profile } from "../../profile/types.js";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
 
 describe("ParameterSettingsPanel", () => {
   it("should not render obsolete launch timeout, Claude permission mode, or terminal mode inputs", () => {
@@ -20,7 +30,11 @@ describe("ParameterSettingsPanel", () => {
     expect(html).toContain("余额检测超时");
     expect(html).toContain("Setting Sources");
     expect(html).toContain("终端与监控设置");
-    expect(html).toContain("自动继续间隔");
+    expect(html).toContain("间隔模式");
+    expect(html).toContain("固定间隔");
+    expect(html).toContain("随机间隔");
+    expect(html).toContain("自动继续关键词（英文逗号分隔）");
+    expect(html).not.toContain("<textarea");
     expect(html).toContain("Wire API");
     expect(html).toContain("跳过 Git 仓库检查");
     expect(html).not.toContain("终端模式");
@@ -64,5 +78,38 @@ describe("ParameterSettingsPanel", () => {
     expect(html).toContain("禁止调用 Delegated (codex)");
     expect(html).not.toContain("secret");
     expect(html).not.toContain("https://example.com");
+  });
+
+  it("parses the single-line keyword field with comma compatibility and deduplication", async () => {
+    const onChange = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ParameterSettingsPanel
+          settings={defaultParameterSettings()}
+          onChange={onChange}
+        />,
+      );
+    });
+
+    const keywordInput = container.querySelector<HTMLInputElement>(
+      'input[placeholder^="high demand"]',
+    );
+    expect(keywordInput).not.toBeNull();
+    await act(async () => {
+      setInputValue(keywordInput!, "high demand, rate limit，high demand, temporary errors");
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      terminal: expect.objectContaining({
+        auto_continue_keywords: ["high demand", "rate limit", "temporary errors"],
+      }),
+    });
+
+    await act(async () => root.unmount());
+    container.remove();
   });
 });

@@ -3,7 +3,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import type { TerminalSessionSnapshot } from "./shared/electron/terminal-session-manager.js";
-import type { TerminalAutoContinueConfigPatch } from "./shared/electron/terminal-auto-continue.js";
+import type {
+  TerminalAutoContinueConfigPatch,
+  TerminalAutoContinueIntervalMode,
+} from "./shared/electron/terminal-auto-continue.js";
 import {
   shouldHandleTerminalTextPasteData,
   shouldCopyTerminalSelection,
@@ -32,6 +35,15 @@ function parseIntervalMs(value: string): number {
   return Math.max(0, Math.round((Number(value) || 0) * 1000));
 }
 
+function parseKeywords(value: string): string[] {
+  return Array.from(new Set(
+    value
+      .split(/[,，\r\n]+/)
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ));
+}
+
 function describeStatus(snapshot: TerminalSessionSnapshot | null): string {
   if (!snapshot) {
     return "正在连接终端...";
@@ -42,9 +54,11 @@ function describeStatus(snapshot: TerminalSessionSnapshot | null): string {
   if (snapshot.status === "closed") {
     return "终端会话已关闭";
   }
-  const intervalSuffix = snapshot.autoContinue.intervalMs > 0
-    ? `，间隔 ${formatIntervalSeconds(snapshot.autoContinue.intervalMs)} 秒`
-    : "";
+  const intervalSuffix = snapshot.autoContinue.intervalMode === "normal"
+    ? `，随机等待 μ ${formatIntervalSeconds(snapshot.autoContinue.intervalMs)} 秒 / σ ${formatIntervalSeconds(snapshot.autoContinue.intervalStdDevMs)} 秒`
+    : snapshot.autoContinue.intervalMs > 0
+      ? `，等待 ${formatIntervalSeconds(snapshot.autoContinue.intervalMs)} 秒`
+      : "";
   const autoContinue = snapshot.autoContinue.enabled
     ? snapshot.autoContinue.remaining === -1
       ? `自动继续${snapshot.autoContinue.paused ? "已暂停" : "已启用"}，已触发 ${snapshot.autoContinue.matchCount} 次${intervalSuffix}`
@@ -66,7 +80,10 @@ export default function TerminalApp() {
   const [draftSessionId, setDraftSessionId] = useState("");
   const [draftDirty, setDraftDirty] = useState(false);
   const [draftLimit, setDraftLimit] = useState("1");
+  const [draftKeywords, setDraftKeywords] = useState("");
+  const [draftIntervalMode, setDraftIntervalMode] = useState<TerminalAutoContinueIntervalMode>("fixed");
   const [draftIntervalSeconds, setDraftIntervalSeconds] = useState("0");
+  const [draftIntervalStdDevSeconds, setDraftIntervalStdDevSeconds] = useState("1");
 
   useEffect(() => {
     if (!sessionId) {
@@ -209,7 +226,10 @@ export default function TerminalApp() {
     }
     setDraftSessionId(snapshot.sessionId);
     setDraftLimit(String(snapshot.autoContinue.limit));
+    setDraftKeywords(snapshot.autoContinue.keywords.join(", "));
+    setDraftIntervalMode(snapshot.autoContinue.intervalMode);
     setDraftIntervalSeconds(formatIntervalSeconds(snapshot.autoContinue.intervalMs));
+    setDraftIntervalStdDevSeconds(formatIntervalSeconds(snapshot.autoContinue.intervalStdDevMs));
     setDraftDirty(false);
   }, [snapshot, draftDirty, draftSessionId]);
 
@@ -228,7 +248,10 @@ export default function TerminalApp() {
   const applyAutoContinueSettings = async () => {
     await updateAutoContinueConfig({
       limit: parseAutoContinueLimit(draftLimit),
+      keywords: parseKeywords(draftKeywords),
+      intervalMode: draftIntervalMode,
       intervalMs: parseIntervalMs(draftIntervalSeconds),
+      intervalStdDevMs: parseIntervalMs(draftIntervalStdDevSeconds),
     });
     setDraftDirty(false);
   };
@@ -303,7 +326,21 @@ export default function TerminalApp() {
             />
           </label>
           <label className="terminal-control-field">
-            <span>间隔(s)</span>
+            <span>间隔模式</span>
+            <select
+              value={draftIntervalMode}
+              onChange={(event) => {
+                setDraftIntervalMode(event.target.value === "normal" ? "normal" : "fixed");
+                setDraftDirty(true);
+              }}
+              disabled={controlsDisabled}
+            >
+              <option value="fixed">固定间隔</option>
+              <option value="normal">随机间隔</option>
+            </select>
+          </label>
+          <label className="terminal-control-field">
+            <span>{draftIntervalMode === "normal" ? "均值(s)" : "等待(s)"}</span>
             <input
               type="number"
               min={0}
@@ -311,6 +348,33 @@ export default function TerminalApp() {
               value={draftIntervalSeconds}
               onChange={(event) => {
                 setDraftIntervalSeconds(event.target.value);
+                setDraftDirty(true);
+              }}
+              disabled={controlsDisabled}
+            />
+          </label>
+          {draftIntervalMode === "normal" && (
+            <label className="terminal-control-field">
+              <span>标准差(s)</span>
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={draftIntervalStdDevSeconds}
+                onChange={(event) => {
+                  setDraftIntervalStdDevSeconds(event.target.value);
+                  setDraftDirty(true);
+                }}
+                disabled={controlsDisabled}
+              />
+            </label>
+          )}
+          <label className="terminal-control-field terminal-control-keywords">
+            <span>关键词（英文逗号分隔）</span>
+            <input
+              value={draftKeywords}
+              onChange={(event) => {
+                setDraftKeywords(event.target.value);
                 setDraftDirty(true);
               }}
               disabled={controlsDisabled}

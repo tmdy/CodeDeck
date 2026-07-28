@@ -13,6 +13,7 @@ export interface ClaudeCLISettings {
 }
 
 export type CodexTerminalMode = "direct" | "monitored";
+export type AutoContinueIntervalMode = "fixed" | "normal";
 
 export interface CodexCLISettings {
   wire_api: string;
@@ -27,6 +28,8 @@ export interface TerminalSettings {
   auto_continue_prompt: string;
   auto_continue_keywords: string[];
   auto_continue_interval_ms: number;
+  auto_continue_interval_mode: AutoContinueIntervalMode;
+  auto_continue_interval_stddev_ms: number;
 }
 
 export interface CLISpecificSettings {
@@ -47,6 +50,8 @@ export const DEFAULT_CODEX_AUTO_CONTINUE_KEYWORDS = [
   "rate limit",
   "overloaded",
 ];
+
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export interface ParameterSettings {
   /** 启动时继承全局 MCP 和 Skills，但不继承普通全局设置 */
@@ -158,9 +163,13 @@ export function normalizeParameterSettings(settings?: Partial<ParameterSettings>
   normalized.terminal.auto_continue_limit = rawAutoContinueLimit === -1
     ? -1
     : Math.max(1, rawAutoContinueLimit);
-  normalized.terminal.auto_continue_interval_ms = Math.max(
-    0,
-    Math.floor(Number(normalized.terminal.auto_continue_interval_ms) || 0),
+  normalized.terminal.auto_continue_interval_ms = normalizeAutoContinueTimeMs(
+    normalized.terminal.auto_continue_interval_ms,
+  );
+  normalized.terminal.auto_continue_interval_mode =
+    normalized.terminal.auto_continue_interval_mode === "normal" ? "normal" : "fixed";
+  normalized.terminal.auto_continue_interval_stddev_ms = normalizeAutoContinueTimeMs(
+    normalized.terminal.auto_continue_interval_stddev_ms,
   );
   normalized.terminal.auto_continue_prompt =
     normalized.terminal.auto_continue_prompt?.trim() || "继续";
@@ -178,6 +187,14 @@ function normalizeAutoContinueKeywords(value?: string[]): string[] {
       .filter(Boolean),
   ));
   return keywords.length > 0 ? keywords : [...DEFAULT_CODEX_AUTO_CONTINUE_KEYWORDS];
+}
+
+function normalizeAutoContinueTimeMs(value: unknown): number {
+  const milliseconds = Number(value);
+  if (!Number.isFinite(milliseconds)) {
+    return 0;
+  }
+  return Math.min(MAX_TIMER_DELAY_MS, Math.max(0, Math.floor(milliseconds)));
 }
 
 function normalizeCodexTerminalMode(value: string | undefined): CodexTerminalMode {
@@ -204,6 +221,8 @@ export function defaultParameterSettings(): ParameterSettings {
       auto_continue_prompt: "继续",
       auto_continue_keywords: [...DEFAULT_CODEX_AUTO_CONTINUE_KEYWORDS],
       auto_continue_interval_ms: 0,
+      auto_continue_interval_mode: "fixed",
+      auto_continue_interval_stddev_ms: 1_000,
     },
     cli_settings: {
       claude: {

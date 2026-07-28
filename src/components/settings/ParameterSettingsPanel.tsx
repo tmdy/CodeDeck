@@ -1,5 +1,6 @@
 // ParameterSettingsPanel 参数设置面板
 
+import { useEffect, useState } from "react";
 import { GlassCard } from "../common/GlassCard.jsx";
 import type { ParameterSettings } from "../../shared/parameter/types.js";
 import type { Profile } from "../../shared/profile/types.js";
@@ -10,6 +11,47 @@ interface ParameterSettingsPanelProps {
   onChange: (settings: Partial<ParameterSettings>) => void;
   profiles?: Profile[];
   disabled?: boolean;
+}
+
+function parseAutoContinueKeywords(value: string): string[] {
+  return Array.from(new Set(
+    value
+      .split(/[,，\r\n]+/)
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ));
+}
+
+function AutoContinueKeywordsInput({
+  keywords,
+  onChange,
+  disabled,
+}: {
+  keywords: string[];
+  onChange: (keywords: string[]) => void;
+  disabled?: boolean;
+}) {
+  const [value, setValue] = useState(() => keywords.join(", "));
+
+  useEffect(() => {
+    const incoming = keywords.join(", ");
+    if (parseAutoContinueKeywords(value).join(", ") !== incoming) {
+      setValue(incoming);
+    }
+  }, [keywords, value]);
+
+  return (
+    <input
+      value={value}
+      onChange={(event) => {
+        setValue(event.target.value);
+        onChange(parseAutoContinueKeywords(event.target.value));
+      }}
+      onBlur={() => setValue(parseAutoContinueKeywords(value).join(", "))}
+      placeholder="high demand, temporary errors, rate limit"
+      disabled={disabled}
+    />
+  );
 }
 
 export function ParameterSettingsPanel({
@@ -113,74 +155,111 @@ export function ParameterSettingsPanel({
           />
           高峰失败时自动输入继续
         </label>
-        <label>
-          自动继续次数
-          <input
-            type="number"
-            min={-1}
-            value={settings.terminal?.auto_continue_limit ?? 1}
-            onChange={(e) =>
-              onChange({
-                terminal: {
-                  ...settings.terminal,
-                  auto_continue_limit: parseInt(e.target.value, 10) || 1,
-                },
-              })
-            }
-            disabled={disabled}
-          />
-        </label>
-        <label>
-          自动继续间隔 (秒)
-          <input
-            type="number"
-            min={0}
-            step={0.1}
-            value={(settings.terminal?.auto_continue_interval_ms ?? 0) / 1000}
-            onChange={(e) =>
-              onChange({
-                terminal: {
-                  ...settings.terminal,
-                  auto_continue_interval_ms: Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 1000)),
-                },
-              })
-            }
-            disabled={disabled}
-          />
-        </label>
-        <label>
-          自动继续关键词
-          <textarea
-            value={(settings.terminal?.auto_continue_keywords ?? []).join("\n")}
-            onChange={(e) =>
-              onChange({
-                terminal: {
-                  ...settings.terminal,
-                  auto_continue_keywords: e.target.value
-                    .split(/\r?\n/)
-                    .map((item) => item.trim())
-                    .filter(Boolean),
-                },
-              })
-            }
-            disabled={disabled}
-          />
-        </label>
-        <label>
-          自动继续输入文本
-          <input
-            value={settings.terminal?.auto_continue_prompt ?? "继续"}
-            onChange={(e) =>
-              onChange({
-                terminal: {
-                  ...settings.terminal,
-                  auto_continue_prompt: e.target.value,
-                },
-              })
-            }
-            disabled={disabled}
-          />
-        </label>
+        <div className="auto-continue-settings-row">
+          <label className="auto-continue-compact-field">
+            自动继续次数
+            <input
+              type="number"
+              min={-1}
+              value={settings.terminal?.auto_continue_limit ?? 1}
+              onChange={(e) =>
+                onChange({
+                  terminal: {
+                    ...settings.terminal,
+                    auto_continue_limit: parseInt(e.target.value, 10) || 1,
+                  },
+                })
+              }
+              disabled={disabled}
+            />
+          </label>
+          <label className="auto-continue-compact-field">
+            间隔模式
+            <select
+              value={settings.terminal?.auto_continue_interval_mode ?? "fixed"}
+              onChange={(e) =>
+                onChange({
+                  terminal: {
+                    ...settings.terminal,
+                    auto_continue_interval_mode: e.target.value === "normal" ? "normal" : "fixed",
+                  },
+                })
+              }
+              disabled={disabled}
+            >
+              <option value="fixed">固定间隔</option>
+              <option value="normal">随机间隔</option>
+            </select>
+          </label>
+          <label className="auto-continue-compact-field">
+            {settings.terminal?.auto_continue_interval_mode === "normal" ? "均值 (秒)" : "固定间隔 (秒)"}
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              value={(settings.terminal?.auto_continue_interval_ms ?? 0) / 1000}
+              onChange={(e) =>
+                onChange({
+                  terminal: {
+                    ...settings.terminal,
+                    auto_continue_interval_ms: Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 1000)),
+                  },
+                })
+              }
+              disabled={disabled}
+            />
+          </label>
+          {settings.terminal?.auto_continue_interval_mode === "normal" && (
+            <label className="auto-continue-compact-field">
+              标准差 (秒)
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={(settings.terminal?.auto_continue_interval_stddev_ms ?? 1_000) / 1000}
+                onChange={(e) =>
+                  onChange({
+                    terminal: {
+                      ...settings.terminal,
+                      auto_continue_interval_stddev_ms: Math.max(0, Math.round((parseFloat(e.target.value) || 0) * 1000)),
+                    },
+                  })
+                }
+                disabled={disabled}
+              />
+            </label>
+          )}
+          <label className="auto-continue-prompt-field">
+            自动继续输入文本
+            <input
+              value={settings.terminal?.auto_continue_prompt ?? "继续"}
+              onChange={(e) =>
+                onChange({
+                  terminal: {
+                    ...settings.terminal,
+                    auto_continue_prompt: e.target.value,
+                  },
+                })
+              }
+              disabled={disabled}
+            />
+          </label>
+          <label className="auto-continue-keywords-field">
+            自动继续关键词（英文逗号分隔）
+            <AutoContinueKeywordsInput
+              keywords={settings.terminal?.auto_continue_keywords ?? []}
+              onChange={(keywords) =>
+                onChange({
+                  terminal: {
+                    ...settings.terminal,
+                    auto_continue_keywords: keywords,
+                  },
+                })
+              }
+              disabled={disabled}
+            />
+          </label>
+        </div>
       </GlassCard>
 
       <GlassCard title="本地 AI 委托接口">

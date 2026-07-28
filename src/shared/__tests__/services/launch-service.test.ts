@@ -958,6 +958,8 @@ describe("LaunchService", () => {
         "overloaded",
       ],
       intervalMs: 0,
+      intervalMode: "fixed",
+      intervalStdDevMs: 1_000,
     });
     expect(plan.terminalMode).toBe("monitored");
     expect(preview.terminalSummary).toBe("Codex 终端：受监控独立窗口（自动继续已启用，最多 1 次）");
@@ -979,6 +981,8 @@ describe("LaunchService", () => {
           auto_continue_limit: -1,
           auto_continue_keywords: ["high demand", "排队中", "服务繁忙"],
           auto_continue_interval_ms: 2_500,
+          auto_continue_interval_mode: "normal",
+          auto_continue_interval_stddev_ms: 750,
         },
       },
     }));
@@ -1000,6 +1004,8 @@ describe("LaunchService", () => {
       prompt: "继续",
       keywords: ["high demand", "排队中", "服务繁忙"],
       intervalMs: 2_500,
+      intervalMode: "normal",
+      intervalStdDevMs: 750,
     });
     expect(preview.terminalSummary).toBe("Codex 终端：受监控独立窗口（自动继续已启用，不限次数）");
   });

@@ -17,6 +17,7 @@ describe("TerminalAutoContinueController", () => {
       keyword: "high demand",
       matchCount: 1,
       prompt: "继续",
+      delayMs: 0,
     });
   });
 
@@ -46,6 +47,7 @@ describe("TerminalAutoContinueController", () => {
       keyword: "high demand",
       matchCount: 1,
       prompt: "继续",
+      delayMs: 0,
     });
     expect(controller.processChunk("high demand")).toBeNull();
   });
@@ -91,6 +93,7 @@ describe("TerminalAutoContinueController", () => {
       keyword: "high demand",
       matchCount: 1,
       prompt: "继续",
+      delayMs: 0,
     });
 
     controller.recordInput("继续\r", { source: "auto" });
@@ -108,6 +111,7 @@ describe("TerminalAutoContinueController", () => {
       keyword: "high demand",
       matchCount: 2,
       prompt: "继续",
+      delayMs: 0,
     });
   });
 
@@ -155,6 +159,7 @@ describe("TerminalAutoContinueController", () => {
       keyword: "high demand",
       matchCount: 2,
       prompt: "继续",
+      delayMs: 0,
     });
   });
 
@@ -242,6 +247,7 @@ describe("TerminalAutoContinueController", () => {
       keyword: "high demand",
       matchCount: 2,
       prompt: "继续",
+      delayMs: 0,
     });
   });
 
@@ -268,8 +274,24 @@ describe("TerminalAutoContinueController", () => {
     expect(controller.snapshot().remaining).toBe(1);
   });
 
-  it("enforces the configured minimum interval between auto-submitted prompts", () => {
-    let now = 1_000;
+  it("uses updated keywords for later matches in a running session", () => {
+    const controller = new TerminalAutoContinueController({
+      enabled: true,
+      limit: -1,
+      prompt: "继续",
+      keywords: ["high demand"],
+    });
+
+    controller.updateConfig({ keywords: ["overloaded", "OVERLOADED"] });
+    expect(controller.snapshot().keywords).toEqual(["overloaded"]);
+    expect(controller.processChunk("service is in high demand")).toBeNull();
+    expect(controller.processChunk("service is overloaded")).toMatchObject({
+      keyword: "overloaded",
+      matchCount: 1,
+    });
+  });
+
+  it("uses the configured interval as a delay after each match", () => {
     const controller = new TerminalAutoContinueController(
       {
         enabled: true,
@@ -278,31 +300,68 @@ describe("TerminalAutoContinueController", () => {
         keywords: ["high demand"],
         intervalMs: 5_000,
       },
-      {
-        now: () => now,
-      },
     );
 
-    expect(controller.processChunk("service is in high demand")).not.toBeNull();
+    expect(controller.processChunk("service is in high demand")).toMatchObject({
+      delayMs: 5_000,
+    });
     expect(controller.snapshot()).toMatchObject({
       matchCount: 1,
       remaining: -1,
       intervalMs: 5_000,
     });
 
-    now = 2_000;
     controller.recordInput("下一轮请求\r");
-    expect(controller.processChunk("service is in high demand")).toBeNull();
-    expect(controller.snapshot().matchCount).toBe(1);
-
-    now = 6_000;
-    controller.recordInput("再试一次\r");
     expect(controller.processChunk("service is in high demand")).toEqual({
       input: "继续\r",
       keyword: "high demand",
       matchCount: 2,
       prompt: "继续",
+      delayMs: 5_000,
     });
+  });
+
+  it("samples a zero-left-truncated normal delay and resamples negative values", () => {
+    const randomValues = [
+      Math.exp(-0.5), 0.5,
+      Math.exp(-0.5), 0,
+    ];
+    const controller = new TerminalAutoContinueController(
+      {
+        enabled: true,
+        limit: 1,
+        prompt: "继续",
+        keywords: ["high demand"],
+        intervalMode: "normal",
+        intervalMs: 500,
+        intervalStdDevMs: 1_000,
+      },
+      { random: () => randomValues.shift() ?? 0.5 },
+    );
+
+    expect(controller.processChunk("high demand")).toMatchObject({
+      delayMs: 1_500,
+    });
+    expect(controller.snapshot()).toMatchObject({
+      intervalMode: "normal",
+      intervalMs: 500,
+      intervalStdDevMs: 1_000,
+      keywords: ["high demand"],
+    });
+  });
+
+  it("treats a zero normal standard deviation as a fixed delay", () => {
+    const controller = new TerminalAutoContinueController({
+      enabled: true,
+      limit: 1,
+      prompt: "继续",
+      keywords: ["high demand"],
+      intervalMode: "normal",
+      intervalMs: 1_250,
+      intervalStdDevMs: 0,
+    });
+
+    expect(controller.processChunk("high demand")).toMatchObject({ delayMs: 1_250 });
   });
 
   it("supports unlimited mode across user submissions", () => {
@@ -360,6 +419,7 @@ describe("TerminalAutoContinueController", () => {
       keyword: "high demand",
       matchCount: 1,
       prompt: "继续",
+      delayMs: 0,
     });
   });
 });
