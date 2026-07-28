@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildWindowsExternalTerminalLaunchSpec,
+  buildWindowsPtyLaunchSpec,
   executeLaunchPlan,
 } from "../../electron/launch-runtime.js";
 import type { LaunchExecutionPlan } from "../../services/launch-service.js";
@@ -177,6 +178,24 @@ describe("launch-runtime", () => {
     expect(innerScript).toContain("& 'codex' @commandArgs");
     expect(innerScript).not.toContain("[System.Diagnostics.ProcessStartInfo]::new()");
     expect(innerScript).not.toContain("$process.StandardInput.WriteLine($autoContinuePrompt)");
+  });
+
+  it("passes an agent prompt through a temporary environment variable instead of the TUI", () => {
+    const envKey = "CODEDECK_AGENT_INITIAL_PROMPT_BASE64";
+    const spec = buildWindowsPtyLaunchSpec(createPlan({
+      provider: "codex",
+      commandExecutable: "codex",
+      commandArgs: ["--model", "gpt-test"],
+      agentInitialPromptEnvKey: envKey,
+    }));
+    const encodedCommandIndex = spec.args.indexOf("-EncodedCommand") + 1;
+    const script = Buffer.from(spec.args[encodedCommandIndex], "base64").toString("utf16le");
+
+    expect(spec.filePath).toBe("powershell.exe");
+    expect(script).toContain(`GetEnvironmentVariable('${envKey}', 'Process')`);
+    expect(script).toContain(`SetEnvironmentVariable('${envKey}', $null, 'Process')`);
+    expect(script).toContain("[Text.Encoding]::UTF8.GetString");
+    expect(script).toContain("& 'codex' @commandArgs $initialPrompt");
   });
 
   it("executes the Codex direct launch path in Windows PowerShell without redirected-stdin failures", () => {

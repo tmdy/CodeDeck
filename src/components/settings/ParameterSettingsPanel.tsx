@@ -2,16 +2,20 @@
 
 import { GlassCard } from "../common/GlassCard.jsx";
 import type { ParameterSettings } from "../../shared/parameter/types.js";
+import type { Profile } from "../../shared/profile/types.js";
+import { itemKey } from "../../shared/profile/keys-internal.js";
 
 interface ParameterSettingsPanelProps {
   settings: ParameterSettings;
   onChange: (settings: Partial<ParameterSettings>) => void;
+  profiles?: Profile[];
   disabled?: boolean;
 }
 
 export function ParameterSettingsPanel({
   settings,
   onChange,
+  profiles = [],
   disabled,
 }: ParameterSettingsPanelProps) {
   return (
@@ -177,6 +181,78 @@ export function ParameterSettingsPanel({
             disabled={disabled}
           />
         </label>
+      </GlassCard>
+
+      <GlassCard title="本地 AI 委托接口">
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={settings.agent_bridge?.enabled ?? false}
+            onChange={(e) =>
+              onChange({
+                agent_bridge: {
+                  ...settings.agent_bridge,
+                  enabled: e.target.checked,
+                },
+              })
+            }
+            disabled={disabled}
+          />
+          允许本机 AI 调用 Profile
+        </label>
+        <label>
+          最大并发任务
+          <input
+            type="number"
+            min={1}
+            max={32}
+            value={settings.agent_bridge?.max_concurrent_tasks ?? 4}
+            onChange={(e) =>
+              onChange({
+                agent_bridge: {
+                  ...settings.agent_bridge,
+                  max_concurrent_tasks: Math.max(
+                    1,
+                    Math.min(32, parseInt(e.target.value, 10) || 4),
+                  ),
+                },
+              })
+            }
+            disabled={disabled}
+          />
+        </label>
+        {profiles.length > 0 && (
+          <div className="parameter-profile-blacklist">
+            {profiles.map((profile) => {
+              const profileKey = itemKey(profile);
+              const blocked = settings.agent_bridge?.blocked_profile_keys?.includes(profileKey) ?? false;
+              return (
+                <label className="checkbox-label" key={profileKey}>
+                  <input
+                    type="checkbox"
+                    checked={blocked}
+                    onChange={(e) => {
+                      const current = new Set(settings.agent_bridge?.blocked_profile_keys ?? []);
+                      if (e.target.checked) {
+                        current.add(profileKey);
+                      } else {
+                        current.delete(profileKey);
+                      }
+                      onChange({
+                        agent_bridge: {
+                          ...settings.agent_bridge,
+                          blocked_profile_keys: [...current],
+                        },
+                      });
+                    }}
+                    disabled={disabled}
+                  />
+                  禁止调用 {profile.name} ({profile.provider})
+                </label>
+              );
+            })}
+          </div>
+        )}
       </GlassCard>
 
       <GlassCard title="Claude CLI 特定设置">

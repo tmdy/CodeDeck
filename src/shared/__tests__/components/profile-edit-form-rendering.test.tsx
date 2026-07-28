@@ -116,4 +116,30 @@ describe("ProfileEditForm rendering", () => {
     });
     container.remove();
   });
+
+  it("hides managed provider and model controls for native CLI startup", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          {...stableProps}
+          draft={{ ...stableProps.draft, name: "官方 Claude", url: "", key: "", selectedModelId: "" }}
+          runtime={{ ...stableProps.runtime, startup_mode: "native" }}
+        />,
+      );
+    });
+
+    expect(renderCounts.permissionSettingsCard).toBe(0);
+    expect(renderCounts.glassCardByTitle.get("模型配置")).toBeUndefined();
+    expect(container.querySelector('input[placeholder="https://api.example.com"]')).toBeNull();
+    expect((container.querySelector('input[placeholder="输入 Profile 名称"]') as HTMLInputElement).value).toBe("官方 Claude");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });

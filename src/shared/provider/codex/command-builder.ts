@@ -14,7 +14,9 @@ export interface CodexCommandOptions {
 }
 
 export function buildCodexArgs(options: CodexCommandOptions): string[] {
-  normalizeCodexUrl(options.baseUrl);
+  if (options.baseUrl.trim()) {
+    normalizeCodexUrl(options.baseUrl);
+  }
   const parts: string[] = [];
 
   switch (options.launchMode.trim()) {

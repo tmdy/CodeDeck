@@ -35,12 +35,14 @@ npm run dev
 ## 创建第一个 Profile
 
 1. 打开 Profiles 页面，选择 Claude Code 或 Codex。
-2. 新建 Profile，填写名称、Base URL、凭据和模型。
+2. 新建站点 Profile，填写 Base URL、凭据和模型；也可以直接选择 Profile 列顶部的官方 CLI Profile。
 3. 选择工作目录与启动模式。
 4. 检查命令预览和环境变量摘要。
 5. 选择系统直连或受监控终端，再启动 CLI。
 
 凭据错误、站点不可用或 CLI 不在 `PATH` 时，启动或后续请求会失败。CodeDeck 不会伪造可用状态。
+
+官方 CLI Profile 直接调用 `claude` 或 `codex`，使用用户全局的 `~/.claude` 或 `~/.codex`。工作目录仍按 Profile 选择，会话恢复会按相同工作目录筛选全局项目会话。
 
 ## 本地验证
 

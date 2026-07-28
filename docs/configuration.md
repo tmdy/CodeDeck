@@ -31,8 +31,25 @@ C:\Projects\CodeDeckWorkspace
 | `CLAUDE_CONFIG_DIR` | 覆盖 Claude 会话扫描使用的配置目录 |
 | `VITE_DEV_SERVER_URL` | 开发脚本传给 Electron 的 Renderer 地址 |
 | `CODEDECK_AI_RESEARCH_LIST` | `tag:ai-research` 辅助脚本的输入文件，仅用于维护标签 |
+| `CODEDECK_AGENT_CONNECTION_FILE` | 仅供 `codedeck-agent` 调试时覆盖本地连接信息文件 |
+| `CODEDECK_AGENT_CLI` | Skill 包装器在自定义安装目录中定位 `codedeck-agent.cmd` |
 
 不要把口令、Token 或 Cookie 写进受版本控制的脚本。
+
+## 本地 AI 委托接口
+
+在“设置 → 参数设置”中开启接口并按需勾选 Profile 黑名单。CodeDeck 必须保持运行且已经解锁；接口不会接受口令，也不会在后台自行解锁。
+
+安装版在 CodeDeck 可执行文件旁提供 `codedeck-agent.cmd`。源码开发时先运行 `npm run build:electron`，再用 `npm run agent --` 调用：
+
+```powershell
+npm run agent -- profiles
+"检查当前项目" | npm run agent -- run --profile "codex::示例" --cwd "D:\project"
+npm run agent -- wait --session "<session-id>"
+"不同意" | npm run agent -- continue --session "<session-id>"
+```
+
+`skills/delegate-with-codedeck/` 是 Hermes 与 Codex 共用的 Agent Skill，源码仓库和安装目录中都会提供。将同一目录安装到对应宿主的 Skills 目录即可，不需要维护两套协议。
 
 ## 主要数据
 
@@ -47,6 +64,8 @@ C:\Projects\CodeDeckWorkspace
 | `app-data/codex-runtime/home/` | CodeDeck 管理的 Codex runtime home |
 | `app-data/runtime-overlays/` | 从全局配置接入的 MCP、Skills 和插件能力 |
 | `library/codex/`、`library/claude/` | 当前未启用的托管 Skills |
+
+官方 CLI Profile 使用 runtime 的 `startup_mode = native`，不设置 `CODEX_HOME`、provider 凭据、模型映射、managed 权限或能力 overlay，直接使用用户 CLI 的全局配置。官方 Codex 会话不会导入到 `app-data/codex-runtime`。
 
 `.gitignore` 默认排除这些运行数据和构建产物，只保留仓库已有的公开翻译、标签文件。
 

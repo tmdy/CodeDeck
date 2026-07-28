@@ -69,6 +69,53 @@ describe("SessionPicker", () => {
     expect(html).not.toContain("当前工作目录未找到会话。");
   });
 
+  it("renders a blocking message without offering the unloaded hint", () => {
+    const html = renderToStaticMarkup(
+      <SessionPicker
+        sessions={[]}
+        selectedId=""
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+        isUninitialized
+        blockedMessage="请先保存或取消修改"
+      />,
+    );
+
+    expect(html).toContain("请先保存或取消修改");
+    expect(html).not.toContain("点击“加载会话”");
+    expect(html).not.toContain("当前工作目录未找到会话。");
+  });
+
+  it("replaces the refresh label with a disabled loading spinner while loading", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <SessionPicker
+          sessions={[longSession]}
+          selectedId=""
+          onSelect={vi.fn()}
+          onRefresh={vi.fn()}
+          isLoading
+        />,
+      );
+    });
+
+    const refreshButton = container.querySelector<HTMLButtonElement>(".session-refresh-button");
+    expect(refreshButton?.disabled).toBe(true);
+    expect(refreshButton?.getAttribute("aria-busy")).toBe("true");
+    expect(refreshButton?.getAttribute("aria-label")).toBe("正在加载会话");
+    expect(refreshButton?.textContent).toBe("");
+    expect(refreshButton?.querySelector(".session-refresh-spinner")).toBeInstanceOf(HTMLElement);
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("replaces the refresh label with a disabled spinner while refreshing", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

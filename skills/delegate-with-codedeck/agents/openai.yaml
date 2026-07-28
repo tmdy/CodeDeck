@@ -1,0 +1,4 @@
+interface:
+  display_name: "Delegate with CodeDeck"
+  short_description: "Delegate tasks to managed Codex or Claude profiles"
+  default_prompt: "Use $delegate-with-codedeck to delegate this task through a CodeDeck profile."

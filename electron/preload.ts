@@ -19,6 +19,10 @@ import {
   STARTUP_THEME_GLOBAL_NAME,
 } from "../src/shared/branding.js";
 import { CODEDECK_SKILLS_IPC_CHANNELS } from "../src/shared/code-deck-ipc.js";
+import {
+  APP_REACTIVATED_CHANNEL,
+  type AppReactivationEvent,
+} from "../src/shared/app-reactivation.js";
 
 function getStartupThemeArgumentValue(): string | undefined {
   const currentArg = process.argv.find((arg) => arg.startsWith(STARTUP_THEME_ARG_PREFIX));
@@ -131,6 +135,8 @@ const profileApi = {
     ipcRenderer.invoke("profile:select", provider, key),
   reorderProfiles: (provider: string, orderedKeys: string[]): Promise<void> =>
     ipcRenderer.invoke("profile:reorder", provider, orderedKeys),
+  updateProfileOrganization: (provider: string, organization: unknown): Promise<void> =>
+    ipcRenderer.invoke("profile:update-organization", provider, organization),
   activateProvider: (provider: string): Promise<void> =>
     ipcRenderer.invoke("profile:activate-provider", provider),
   updateProfileRuntimeSettings: (profileKey: string, patch: unknown): Promise<unknown> =>
@@ -224,6 +230,13 @@ const profileApi = {
     ipcRenderer.invoke("dialog:launch-unsaved-profile"),
 
   // 事件监听
+  onAppReactivated: (callback: (event: AppReactivationEvent) => void): (() => void) => {
+    const handler = (_event: unknown, event: AppReactivationEvent) => callback(event);
+    ipcRenderer.on(APP_REACTIVATED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(APP_REACTIVATED_CHANNEL, handler);
+    };
+  },
   onStateChanged: (callback: (state: unknown) => void): (() => void) => {
     const handler = (_event: unknown, state: unknown) => callback(state);
     ipcRenderer.on("profile:state-changed", handler);

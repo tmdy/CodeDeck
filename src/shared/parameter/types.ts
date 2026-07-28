@@ -34,6 +34,12 @@ export interface CLISpecificSettings {
   codex: CodexCLISettings;
 }
 
+export interface AgentBridgeSettings {
+  enabled: boolean;
+  blocked_profile_keys: string[];
+  max_concurrent_tasks: number;
+}
+
 export const DEFAULT_CODEX_AUTO_CONTINUE_KEYWORDS = [
   "high demand",
   "temporary errors",
@@ -57,6 +63,37 @@ export interface ParameterSettings {
   terminal: TerminalSettings;
   /** CLI 特定设置 */
   cli_settings: CLISpecificSettings;
+  /** 允许本机 AI 通过受监控终端委托 Codex/Claude Code */
+  agent_bridge: AgentBridgeSettings;
+}
+
+function normalizeAgentBridgeSettings(
+  value: unknown,
+  defaults: AgentBridgeSettings,
+): AgentBridgeSettings {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Partial<AgentBridgeSettings>
+    : {};
+  const rawBlockedKeys = Array.isArray(record.blocked_profile_keys)
+    ? record.blocked_profile_keys
+    : defaults.blocked_profile_keys;
+  return {
+    enabled: record.enabled === true,
+    blocked_profile_keys: Array.from(new Set(
+      rawBlockedKeys
+        .filter((key): key is string => typeof key === "string")
+        .map((key) => key.trim())
+        .filter(Boolean),
+    )),
+    max_concurrent_tasks: Math.max(
+      1,
+      Math.min(
+        32,
+        Math.floor(Number(record.max_concurrent_tasks ?? defaults.max_concurrent_tasks))
+          || defaults.max_concurrent_tasks,
+      ),
+    ),
+  };
 }
 
 function stripWrappingSingleQuotes(value: string): string {
@@ -105,6 +142,7 @@ export function normalizeParameterSettings(settings?: Partial<ParameterSettings>
         ...(rawCodex ?? {}),
       },
     },
+    agent_bridge: normalizeAgentBridgeSettings(settings?.agent_bridge, defaults.agent_bridge),
   };
 
   normalized.cli_settings.claude.setting_sources = stripWrappingSingleQuotes(
@@ -175,6 +213,11 @@ export function defaultParameterSettings(): ParameterSettings {
         wire_api: "responses",
         skip_git_repo_check: false,
       },
+    },
+    agent_bridge: {
+      enabled: false,
+      blocked_profile_keys: [],
+      max_concurrent_tasks: 4,
     },
   };
 }

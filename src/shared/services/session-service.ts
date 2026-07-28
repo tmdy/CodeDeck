@@ -401,6 +401,66 @@ function collectConversationExcerpts(records: unknown[]): SessionConversationExc
   return excerpts;
 }
 
+function extractFullAssistantText(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map(extractFullAssistantText)
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return "";
+  }
+  const type = firstString(record.type).toLowerCase();
+  if (type === "tool_use" || type === "tool_result" || type === "reasoning") {
+    return "";
+  }
+  return firstString(
+    extractFullAssistantText(record.text),
+    extractFullAssistantText(record.output_text),
+    extractFullAssistantText(record.content),
+    extractFullAssistantText(record.message),
+    extractFullAssistantText(record.parts),
+    extractFullAssistantText(record.payload),
+  );
+}
+
+export async function readLastAssistantTextFromSessionFile(filePath: string): Promise<string> {
+  const fs = await import("node:fs/promises");
+  const lines = (await fs.readFile(filePath, "utf8")).split(/\r?\n/);
+  let lastAssistantText = "";
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    let record: Record<string, unknown> | null = null;
+    try {
+      record = asRecord(JSON.parse(trimmed));
+    } catch {
+      continue;
+    }
+    if (!record || getSessionRecordRole(record) !== "assistant") {
+      continue;
+    }
+    const payload = asRecord(record.payload);
+    const text = firstString(
+      extractFullAssistantText(record.message),
+      extractFullAssistantText(record.content),
+      extractFullAssistantText(payload),
+    );
+    if (text && !isSessionScaffoldPrompt(text)) {
+      lastAssistantText = text;
+    }
+  }
+  return lastAssistantText;
+}
+
 async function safeReadJsonl(filePath: string): Promise<unknown[]> {
   const fs = await import("node:fs/promises");
   const content = await fs.readFile(filePath, "utf-8");
@@ -1371,6 +1431,52 @@ function previewFromMonitoredSession(session?: SessionSummary): string {
   return session?.preview.trim() ?? "";
 }
 
+const MONITORED_CODEX_SESSION_LOOKBACK_MS = 2_000;
+const MONITORED_CODEX_SESSION_CANDIDATE_LIMIT = 32;
+
+async function listRecentCodexSessionsForMonitor(
+  codexRoot: string,
+  cwd: string,
+  startedAtMs: number,
+): Promise<SessionSummary[]> {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  let filePaths: string[];
+  try {
+    filePaths = await walkJsonlFiles(path.join(codexRoot, "sessions"));
+  } catch {
+    return [];
+  }
+
+  const recentFiles = (await mapWithConcurrency(filePaths, 16, async (filePath) => {
+    try {
+      const stat = await fs.stat(filePath);
+      return stat.mtimeMs >= startedAtMs - MONITORED_CODEX_SESSION_LOOKBACK_MS
+        ? { filePath, mtimeMs: stat.mtimeMs }
+        : null;
+    } catch {
+      return null;
+    }
+  }))
+    .filter((candidate): candidate is { filePath: string; mtimeMs: number } => candidate !== null)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, MONITORED_CODEX_SESSION_CANDIDATE_LIMIT);
+
+  const normalizedCwd = normalizeComparablePath(cwd);
+  const summaries = await mapWithConcurrency(recentFiles, 8, async (candidate) => {
+    try {
+      return sessionSummaryFromFileSummary(
+        await summarizeCodexSessionFileFast(candidate.filePath),
+      );
+    } catch {
+      return null;
+    }
+  });
+  return summaries.filter((summary): summary is SessionSummary =>
+    summary !== null && normalizeComparablePath(summary.cwd) === normalizedCwd
+  );
+}
+
 export async function findMonitoredTerminalSessionTitle(
   options: FindMonitoredTerminalSessionTitleOptions,
 ): Promise<MonitoredTerminalSessionTitleResult> {
@@ -1390,9 +1496,24 @@ export async function findMonitoredTerminalSessionTitle(
   if (provider === PROVIDER_CODEX) {
     invalidateCodexSessionCache(options.codexHome);
   }
-  const sessions = provider === PROVIDER_CODEX
+  let sessions = provider === PROVIDER_CODEX
     ? await listCodexSessions(request, options.codexHome)
     : await listClaudeSessions(request, options.claudeHome);
+  const startedAtMs = parseStartedAtMs(options.startedAt);
+  if (provider === PROVIDER_CODEX && !sessionId) {
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const codexRoot = options.codexHome || path.join(os.homedir(), ".codex");
+    const merged = new Map(sessions.map((session) => [session.session_id, session]));
+    for (const session of await listRecentCodexSessionsForMonitor(
+      codexRoot,
+      cwd,
+      startedAtMs,
+    )) {
+      merged.set(session.session_id, session);
+    }
+    sessions = Array.from(merged.values());
+  }
 
   if (sessionId) {
     const selectedTitle = previewFromMonitoredSession(
@@ -1409,7 +1530,6 @@ export async function findMonitoredTerminalSessionTitle(
     return { status: "pending", candidateCount: 0 };
   }
 
-  const startedAtMs = parseStartedAtMs(options.startedAt);
   const matchedSessions = sessions.filter((session) =>
     previewFromMonitoredSession(session)
     && parseSessionTimeMs(session.updated_at) >= startedAtMs

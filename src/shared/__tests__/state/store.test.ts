@@ -36,6 +36,53 @@ describe("LocalStateStore", () => {
     expect("connectivity_tests_by_profile" in persisted).toBe(false);
   });
 
+  it("persists profile groups and their collapsed state", async () => {
+    const store = await makeStore();
+    const state = defaultLocalState();
+    state.profile_order_by_provider.codex = ["codex::Loose", "codex::Standby"];
+    state.profile_organization_by_provider.codex = {
+      groups: [{
+        id: "standby",
+        name: "备用站点",
+        profile_keys: ["codex::Standby"],
+        collapsed: true,
+      }],
+      ungrouped_profile_keys: ["codex::Loose"],
+      ungrouped_collapsed: true,
+    };
+
+    await store.save(state);
+    const loaded = await store.load();
+
+    expect(loaded.profile_organization_by_provider.codex).toEqual(
+      state.profile_organization_by_provider.codex,
+    );
+  });
+
+  it("uses legacy profile order as the initial ungrouped order", async () => {
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    await writeFile(rawPath, JSON.stringify({
+      selected_provider: "codex",
+      selected_profile_key: "",
+      selected_profile_key_by_provider: {},
+      profile_order_by_provider: {
+        codex: ["codex::Second", "codex::First"],
+      },
+      runtime_by_profile: {},
+      balance_checks_by_profile: {},
+      global_settings: defaultLocalState().global_settings,
+    }), "utf-8");
+
+    const loaded = await store.load();
+
+    expect(loaded.profile_organization_by_provider.codex).toEqual({
+      groups: [],
+      ungrouped_profile_keys: ["codex::Second", "codex::First"],
+      ungrouped_collapsed: false,
+    });
+  });
+
   it("should persist global theme mode", async () => {
     const store = await makeStore();
     const state = defaultLocalState();
@@ -121,6 +168,11 @@ describe("LocalStateStore", () => {
     const loaded = await store.load();
 
     expect(loaded.parameter_settings.inherit_global_capabilities).toBe(true);
+    expect(loaded.parameter_settings.agent_bridge).toEqual({
+      enabled: false,
+      blocked_profile_keys: [],
+      max_concurrent_tasks: 4,
+    });
     expect("launch_timeout_ms" in loaded.parameter_settings).toBe(false);
   });
 

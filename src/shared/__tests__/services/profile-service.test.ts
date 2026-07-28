@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { ProfileService, type LocalStateAccessor } from "../../services/profile-service.js";
 import { defaultLocalState, type LocalState } from "../../state/local-state.js";
 import { cloneLocalState } from "../../state/store.js";
-import { normalizeProfile, type Profile, type RuntimeSettings } from "../../profile/types.js";
+import { createOfficialNativeProfile, normalizeProfile, type Profile, type RuntimeSettings } from "../../profile/types.js";
 import { itemKey } from "../../profile/keys-internal.js";
 import type { SiteBalanceSession } from "../../balance/site-balance-sessions.js";
 
@@ -77,6 +77,17 @@ describe("ProfileService", () => {
       const result = await service.saveProfile("", draft, makeRuntime());
       expect(result.name).toBe("NewProfile");
       expect(service.getProfiles().length).toBe(4);
+    });
+
+    it("should allow the official CLI profile without provider credentials", async () => {
+      const draft = createOfficialNativeProfile("codex");
+      const result = await service.saveProfile("", draft, {
+        ...makeRuntime(),
+        command_base: "codex",
+        startup_mode: "native",
+      });
+      expect(result).toEqual(draft);
+      expect(accessor.get().runtime_by_profile[itemKey(result)].startup_mode).toBe("native");
     });
 
     it("should update an existing profile", async () => {
@@ -293,6 +304,12 @@ describe("ProfileService", () => {
 
     it("should throw on non-existent profile", async () => {
       await expect(service.deleteProfile("claude::nonexistent")).rejects.toThrow("profile not found");
+    });
+
+    it("should keep official CLI profiles undeletable", async () => {
+      const official = createOfficialNativeProfile("claude");
+      const localService = new ProfileService([official], new MemoryStateAccessor());
+      await expect(localService.deleteProfile(itemKey(official))).rejects.toThrow("不可删除");
     });
 
     it("should clean up associated state", async () => {
@@ -513,6 +530,107 @@ describe("ProfileService", () => {
       const state = accessor.get();
       // 只有 claude 的排序被更新
       expect(state.profile_order_by_provider["claude"]).toEqual(reversed);
+    });
+  });
+
+  describe("profile organization", () => {
+    it("persists provider-local groups and synchronizes the compatibility order", async () => {
+      await service.updateProfileOrganization("claude", {
+        groups: [{
+          id: "standby",
+          name: "备用",
+          profile_keys: ["claude::Custom"],
+          collapsed: true,
+        }],
+        ungrouped_profile_keys: ["claude::Official"],
+        ungrouped_collapsed: false,
+      });
+
+      const state = accessor.get();
+      expect(state.profile_organization_by_provider.claude.groups[0]).toMatchObject({
+        id: "standby",
+        collapsed: true,
+        profile_keys: ["claude::Custom"],
+      });
+      expect(state.profile_order_by_provider.claude).toEqual([
+        "claude::Official",
+        "claude::Custom",
+      ]);
+    });
+
+    it("rejects layouts with missing or duplicate profile memberships", async () => {
+      await expect(service.updateProfileOrganization("claude", {
+        groups: [{
+          id: "duplicate",
+          name: "重复",
+          profile_keys: ["claude::Official", "claude::Official"],
+          collapsed: false,
+        }],
+        ungrouped_profile_keys: [],
+        ungrouped_collapsed: false,
+      })).rejects.toThrow("每个 Profile 必须且只能出现在一个分组位置");
+
+      await expect(service.updateProfileOrganization("claude", {
+        groups: [],
+        ungrouped_profile_keys: [
+          "claude::Official",
+          "claude::Custom",
+          "codex::OpenAI",
+        ],
+        ungrouped_collapsed: false,
+      })).rejects.toThrow("每个 Profile 必须且只能出现在一个分组位置");
+    });
+
+    it("keeps group membership when a profile is renamed", async () => {
+      await service.updateProfileOrganization("claude", {
+        groups: [{
+          id: "stable",
+          name: "稳定",
+          profile_keys: ["claude::Official"],
+          collapsed: false,
+        }],
+        ungrouped_profile_keys: ["claude::Custom"],
+        ungrouped_collapsed: false,
+      });
+
+      await service.saveProfile("claude::Official", {
+        ...makeProfiles()[0],
+        name: "Renamed",
+      }, makeRuntime());
+
+      expect(accessor.get().profile_organization_by_provider.claude.groups[0]
+        .profile_keys).toEqual(["claude::Renamed"]);
+    });
+
+    it("removes deleted profiles and appends new profiles to ungrouped", async () => {
+      await service.updateProfileOrganization("claude", {
+        groups: [{
+          id: "standby",
+          name: "备用",
+          profile_keys: ["claude::Custom"],
+          collapsed: false,
+        }],
+        ungrouped_profile_keys: ["claude::Official"],
+        ungrouped_collapsed: false,
+      });
+      await service.deleteProfile("claude::Custom");
+      await service.saveProfile("", {
+        provider: "claude",
+        name: "New",
+        url: "https://new.example.com",
+        key: "sk-new",
+      }, makeRuntime());
+
+      const organization = accessor.get().profile_organization_by_provider.claude;
+      expect(organization.groups[0].profile_keys).toEqual([]);
+      expect(organization.ungrouped_profile_keys).toEqual([
+        "claude::Official",
+        "claude::New",
+      ]);
+      expect(accessor.get().profile_order_by_provider.claude).toEqual([
+        "claude::Official",
+        "claude::New",
+      ]);
     });
   });
 

@@ -46,6 +46,64 @@ function makeMappings(): ModelMappingsState {
 }
 
 describe("LaunchService", () => {
+  it("should launch Claude natively without requiring provider configuration", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Local Claude",
+      url: "",
+      key: "",
+      selectedModelId: "",
+      advancedModelMapping: { enabled: true, claude: { aliasMode: "custom", defaultTarget: "ignored" } },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime({ command_base: "claude", startup_mode: "native" }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.command).toBe("claude");
+    expect(plan.commandArgs).toEqual([]);
+    expect(plan.env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+    expect(plan.env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(plan.claudeSettings).toBeUndefined();
+    expect(plan.permissionSummary).toBeUndefined();
+  });
+
+  it("should launch Codex natively with global CLI configuration and resume arguments", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "Local Codex",
+      url: "",
+      key: "",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex", startup_mode: "native", launch_mode: "resume_selected" }),
+      session_id: "session-global",
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.command).toBe('codex resume "session-global"');
+    expect(plan.commandArgs).toEqual(["resume", "session-global"]);
+    expect(plan.env).not.toHaveProperty("CODEX_HOME");
+    expect(plan.codexConfig).toBeUndefined();
+    expect(plan.permissionSummary).toBeUndefined();
+  });
+
   it("should launch Claude with the raw selectedModelId and custom model env vars by default", () => {
     const profile: Profile = {
       provider: "claude",

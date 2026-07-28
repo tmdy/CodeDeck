@@ -13,6 +13,7 @@ interface ProfilesLaunchPanelProps {
   sessionsLoading?: boolean;
   sessionsRefreshing?: boolean;
   sessionsUninitialized?: boolean;
+  sessionsBlockedMessage?: string | null;
   sessionsCatalogState?: SessionCatalogState;
   selectedSessionId?: string;
   favoriteSessionKeys?: ReadonlySet<string>;
@@ -37,6 +38,7 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
   sessionsLoading,
   sessionsRefreshing,
   sessionsUninitialized,
+  sessionsBlockedMessage,
   sessionsCatalogState,
   selectedSessionId,
   favoriteSessionKeys,
@@ -69,6 +71,7 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
         isLoading={sessionsLoading}
         isRefreshing={sessionsRefreshing}
         isUninitialized={sessionsUninitialized}
+        blockedMessage={sessionsBlockedMessage}
         catalogState={sessionsCatalogState}
         selectedId={selectedSessionId}
         favoriteSessionKeys={favoriteSessionKeys}

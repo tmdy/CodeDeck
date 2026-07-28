@@ -16,6 +16,7 @@ import {
   normalizeCodexReasoningEffort,
   resolveClaudeModelAliasMode,
   shouldRecommendClaudeSingleModelCompatibility,
+  isOfficialNativeProfile,
 } from "../../shared/profile/types.js";
 import { defaultProfilePermissions, normalizeProfilePermissions, type ProfilePermissions } from "../../shared/profile/permissions.js";
 import { GlassCard } from "../common/GlassCard.jsx";
@@ -39,6 +40,7 @@ interface ProfileEditFormProps {
     extra_env?: Record<string, string>;
     launch_mode: LaunchMode;
     exclude_user_settings: boolean;
+    startup_mode?: "managed" | "native";
   };
   provider: ProviderID;
   modelOptions: string[];
@@ -99,6 +101,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   const [showApiKey, setShowApiKey] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const advancedMapping = draft.advancedModelMapping;
+  const isNativeStartup = isOfficialNativeProfile({ provider, name: draft.name });
   const claudeAliasMode = resolveClaudeModelAliasMode(advancedMapping);
   const reasoningEffort = provider === "claude"
     ? normalizeClaudeReasoningEffort(advancedMapping.claude?.reasoningEffort)
@@ -379,10 +382,10 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 value={draft.name}
                 onChange={(e) => onChange("name", e.target.value)}
                 placeholder="输入 Profile 名称"
-                disabled={disabled}
+                disabled={disabled || isNativeStartup}
               />
             </label>
-            <label>
+            {!isNativeStartup && <label>
               Base URL
               <div className="path-field">
                 <input
@@ -400,8 +403,8 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                   打开
                 </button>
               </div>
-            </label>
-            <label>
+            </label>}
+            {!isNativeStartup && <label>
               API Key / Token
               <div className="secret-field">
                 <input
@@ -422,10 +425,10 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                   {showApiKey ? "◉" : "◎"}
                 </button>
               </div>
-            </label>
+            </label>}
           </GlassCard>
 
-          <PermissionSettingsCard
+          {!isNativeStartup && <PermissionSettingsCard
             title="权限"
             provider={provider}
             permissions={displayedPermissions}
@@ -434,11 +437,11 @@ export const ProfileEditForm = memo(function ProfileEditForm({
             onInheritChange={handlePermissionsInheritChange}
             onChange={handlePermissionsChange}
             disabled={disabled}
-          />
+          />}
 
-          {claudeCompatibilityCard}
+          {!isNativeStartup && claudeCompatibilityCard}
 
-          {provider === "codex" && (
+          {!isNativeStartup && provider === "codex" && (
             <GlassCard title="Codex 子代理模型映射" subtitle="默认关闭；启用后仅覆盖 Codex 内置 worker 子代理的模型">
               <label className="checkbox-label">
                 <input
@@ -463,7 +466,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
         </div>
 
         <div className="profile-edit-column profile-edit-column-secondary">
-          <GlassCard title="模型配置" className="model-config-card">
+          {!isNativeStartup && <GlassCard title="模型配置" className="model-config-card">
             <label>
               <span>当前模型 ID</span>
               <div className="model-picker">
@@ -474,7 +477,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                     setModelPickerOpen(true);
                   }}
                   onFocus={() => {
-                    if (!disabled && modelOptions.length > 0) {
+                    if (!disabled && !isNativeStartup && modelOptions.length > 0) {
                       setModelPickerOpen(true);
                     }
                   }}
@@ -487,7 +490,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                   aria-controls={modelPickerListId}
                   aria-autocomplete="list"
                   placeholder="可选：站点返回什么 model id，这里就填什么 model id"
-                  disabled={disabled}
+                  disabled={disabled || isNativeStartup}
                 />
                 {showModelPicker && (
                   <div
@@ -525,7 +528,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
               <select
                 value={reasoningEffort}
                 onChange={(e) => updateReasoningEffort(e.target.value)}
-                disabled={disabled}
+                disabled={disabled || isNativeStartup}
               >
                 <option value="">沿用默认</option>
                 {reasoningEffortOptions.map((item) => (
@@ -536,18 +539,18 @@ export const ProfileEditForm = memo(function ProfileEditForm({
               </select>
             </label>
             <div className="inline-actions" style={{flexWrap: "nowrap"}}>
-              <button type="button" className="secondary-button small" onClick={onFetchModels} disabled={disabled || modelFetchBusy}>
+              <button type="button" className="secondary-button small" onClick={onFetchModels} disabled={disabled || isNativeStartup || modelFetchBusy}>
                 {modelFetchBusy ? "获取中..." : "获取模型列表"}
               </button>
               {draft.selectedModelId && (
-                <button type="button" className="secondary-button small" onClick={handleClearSelectedModel} disabled={disabled}>
+                <button type="button" className="secondary-button small" onClick={handleClearSelectedModel} disabled={disabled || isNativeStartup}>
                   清除
                 </button>
               )}
               {modelFetchStatus && <span className="muted" style={{whiteSpace: "nowrap"}}>{modelFetchStatus}</span>}
             </div>
             {modelFetchError && <div className="banner error">{modelFetchError}</div>}
-          </GlassCard>
+          </GlassCard>}
 
           <GlassCard title="当前配置专属运行时设置" className="profile-runtime-card">
             <label>
@@ -604,7 +607,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 disabled={disabled}
               />
             </label>
-            {provider === "claude" && (
+            {provider === "claude" && !isNativeStartup && (
               <label>
                 自定义 Claude settings 文件
                 <input
@@ -670,7 +673,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 type="checkbox"
                 checked={runtime.exclude_user_settings}
                 onChange={(e) => onRuntimeChange("exclude_user_settings", e.target.checked)}
-                disabled={disabled}
+                disabled={disabled || isNativeStartup}
               />
               排除用户级设置
             </label>

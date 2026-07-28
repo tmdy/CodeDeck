@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ParameterSettingsPanel } from "../../../components/settings/ParameterSettingsPanel.jsx";
 import { defaultParameterSettings } from "../../parameter/types.js";
+import type { Profile } from "../../profile/types.js";
 
 describe("ParameterSettingsPanel", () => {
   it("should not render obsolete launch timeout, Claude permission mode, or terminal mode inputs", () => {
@@ -33,5 +34,35 @@ describe("ParameterSettingsPanel", () => {
       html.indexOf("环境变量注入"),
     );
     expect(codexSection).not.toContain("自动继续");
+  });
+
+  it("renders the local delegation switch and Profile blacklist", () => {
+    const profiles: Profile[] = [{
+      provider: "codex",
+      name: "Delegated",
+      url: "https://example.com/v1",
+      key: "secret",
+      selectedModelId: "gpt-test",
+    }];
+    const html = renderToStaticMarkup(
+      <ParameterSettingsPanel
+        settings={{
+          ...defaultParameterSettings(),
+          agent_bridge: {
+            enabled: true,
+            max_concurrent_tasks: 4,
+            blocked_profile_keys: ["codex::Delegated"],
+          },
+        }}
+        profiles={profiles}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("本地 AI 委托接口");
+    expect(html).toContain("允许本机 AI 调用 Profile");
+    expect(html).toContain("禁止调用 Delegated (codex)");
+    expect(html).not.toContain("secret");
+    expect(html).not.toContain("https://example.com");
   });
 });

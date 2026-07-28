@@ -26,6 +26,7 @@ export const ProfilesPage = memo(function ProfilesPage({
   launchPanelProps,
 }: ProfilesPageProps) {
   const { preview, ...profilesLaunchPanelProps } = launchPanelProps;
+  const isNativeProfile = profileEditProps.runtime.startup_mode === "native";
   const balanceState = balanceTestProps.state;
   const showBalanceMeta = !balanceState?.running && Boolean(
     balanceState?.endpoint
@@ -51,8 +52,8 @@ export const ProfilesPage = memo(function ProfilesPage({
       <div className="profiles-left">
         <ProviderSwitch {...providerSwitchProps} />
         <ProfileListPanel {...profileListProps} />
-        <BalanceTestButton {...balanceTestProps} />
-        <SiteBalanceSessionPanel {...siteBalanceSessionProps} balanceMeta={balanceMeta} />
+        {!isNativeProfile && <BalanceTestButton {...balanceTestProps} />}
+        {!isNativeProfile && <SiteBalanceSessionPanel {...siteBalanceSessionProps} balanceMeta={balanceMeta} />}
       </div>
 
       <div className="profiles-center">

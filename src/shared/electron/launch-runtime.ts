@@ -104,6 +104,30 @@ export function buildWindowsExternalTerminalLaunchSpec(plan: LaunchExecutionPlan
 }
 
 export function buildWindowsPtyLaunchSpec(plan: LaunchExecutionPlan): ExternalTerminalLaunchSpec {
+  const initialPromptEnvKey = plan.agentInitialPromptEnvKey?.trim();
+  if (initialPromptEnvKey) {
+    const commandArgsJson = JSON.stringify(plan.commandArgs);
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      `$commandArgs = @((ConvertFrom-Json ${toPowerShellLiteral(commandArgsJson)}))`,
+      `$initialPromptBase64 = [Environment]::GetEnvironmentVariable(${toPowerShellLiteral(initialPromptEnvKey)}, 'Process')`,
+      `[Environment]::SetEnvironmentVariable(${toPowerShellLiteral(initialPromptEnvKey)}, $null, 'Process')`,
+      "$initialPrompt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($initialPromptBase64))",
+      `& ${toPowerShellLiteral(plan.commandExecutable)} @commandArgs $initialPrompt`,
+    ].join("; ");
+    return {
+      filePath: "powershell.exe",
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ],
+      cwd: plan.cwd,
+    };
+  }
   const commandLine = [plan.commandExecutable, ...plan.commandArgs]
     .map(toCmdToken)
     .join(" ");

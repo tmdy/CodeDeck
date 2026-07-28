@@ -26,6 +26,7 @@
     "build:electron": "tsc -p tsconfig.node.json",
     "build:electron:watch": "tsc -p tsconfig.node.json --watch",
     "rebuild:native": "electron-rebuild -f -w node-pty",
+    "agent": "node ./dist-electron/electron/agent-cli.js",
     "merge:translations": "node ./scripts/merge-generated-translations.mjs",
     "tag:ai-research": "npm run build:electron && node ./scripts/apply-ai-research-user-tags.mjs",
     "prepare:package": "node ./scripts/prepare-package.mjs",
@@ -108,6 +109,14 @@
       }
     ],
     "extraFiles": [
+      {
+        "from": "scripts/codedeck-agent.cmd",
+        "to": "codedeck-agent.cmd"
+      },
+      {
+        "from": "skills/delegate-with-codedeck",
+        "to": "skills/delegate-with-codedeck"
+      },
       {
         "from": "CodeDeck.project-root.example.txt",
         "to": "CodeDeck.project-root.example.txt"

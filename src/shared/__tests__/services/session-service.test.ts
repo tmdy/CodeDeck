@@ -1032,6 +1032,54 @@ describe("session-service", () => {
     });
   });
 
+  it("finds a live Codex session before it appears in an existing session index", async () => {
+    const codexRoot = await createTempDir("codedeck-codex-monitor-live-fallback-");
+    tempDirs.push(codexRoot);
+    const cwd = "C:/workspace/current-project";
+    await writeFile(
+      path.join(codexRoot, "session_index.jsonl"),
+      JSON.stringify({
+        id: "old-indexed-session",
+        thread_name: "旧索引会话",
+        updated_at: "2026-05-04T09:00:00.000Z",
+        cwd,
+      }) + "\n",
+      "utf-8",
+    );
+    const liveFile = path.join(
+      codexRoot,
+      "sessions",
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-00-03-live-session.jsonl",
+    );
+    await writeJsonl(liveFile, [{
+      type: "session_meta",
+      payload: {
+        id: "live-session",
+        cwd,
+        updated_at: "2026-05-04T10:00:03.000Z",
+        thread_name: "实时会话标题",
+      },
+    }]);
+    await setFileTime(liveFile, "2026-05-04T10:00:03.000Z");
+
+    const title = await findMonitoredTerminalSessionTitle({
+      provider: "codex",
+      cwd,
+      startedAt: "2026-05-04T10:00:00.000Z",
+      codexHome: codexRoot,
+    });
+
+    expect(title).toEqual({
+      status: "resolved",
+      title: "实时会话标题",
+      sessionId: "live-session",
+      candidateCount: 1,
+    });
+  });
+
   it("prefers the selected Codex resume session id even when it is older than launch", async () => {
     const codexRoot = await createTempDir("codedeck-codex-monitor-resume-");
     tempDirs.push(codexRoot);

@@ -43,6 +43,8 @@ import type {
   CheckinSnapshot,
   CheckinVerificationResult,
 } from "./shared/checkin/types.js";
+import type { AppReactivationEvent } from "./shared/app-reactivation.js";
+import type { ProfileOrganization } from "./shared/profile/organization.js";
 
 declare global {
   interface CodeDeckStartupTheme {
@@ -117,6 +119,10 @@ declare global {
       cloneProfile: (sourceKey: ProfileKey, targetProvider: string) => Promise<Profile>;
       selectProfile: (provider: string, key: ProfileKey) => Promise<void>;
       reorderProfiles: (provider: string, orderedKeys: ProfileKey[]) => Promise<void>;
+      updateProfileOrganization?: (
+        provider: string,
+        organization: ProfileOrganization,
+      ) => Promise<void>;
       activateProvider: (provider: string) => Promise<void>;
       updateProfileRuntimeSettings?: (
         profileKey: ProfileKey,
@@ -186,6 +192,7 @@ declare global {
       promptLaunchWithUnsavedChanges: () => Promise<"save_and_launch" | "launch_saved" | "cancel">;
 
       // Events
+      onAppReactivated?: (callback: (event: AppReactivationEvent) => void) => () => void;
       onStateChanged: (callback: (state: LocalState) => void) => () => void;
       onBalanceProgress: (callback: (key: ProfileKey, state: BalanceCheckState) => void) => () => void;
       onCheckinProgress?: (

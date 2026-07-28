@@ -15,6 +15,7 @@ interface SessionPickerProps {
   isLoading?: boolean;
   isRefreshing?: boolean;
   isUninitialized?: boolean;
+  blockedMessage?: string | null;
   catalogState?: SessionCatalogState;
 }
 
@@ -49,6 +50,7 @@ export const SessionPicker = memo(function SessionPicker({
   isLoading,
   isRefreshing,
   isUninitialized,
+  blockedMessage,
   catalogState = "ready",
 }: SessionPickerProps) {
   const selectedSession = useMemo(
@@ -63,6 +65,8 @@ export const SessionPicker = memo(function SessionPicker({
     ? favoriteSessionKeys?.has(selectedFavoriteKey) ?? false
     : false;
   const listboxId = "profile-session-picker-listbox";
+  const isBusy = Boolean(isLoading || isRefreshing);
+  const busyLabel = isLoading ? "正在加载会话" : "正在刷新会话";
 
   return (
     <GlassCard title="恢复会话" className={`session-picker${selectedSession ? " has-selection" : ""}`}>
@@ -80,13 +84,11 @@ export const SessionPicker = memo(function SessionPicker({
           type="button"
           className="secondary-button small session-refresh-button"
           onClick={onRefresh}
-          disabled={disabled || isRefreshing}
-          aria-busy={isRefreshing}
-          aria-label={isRefreshing
-            ? isUninitialized ? "正在加载会话" : "正在刷新会话"
-            : undefined}
+          disabled={disabled || isBusy}
+          aria-busy={isBusy}
+          aria-label={isBusy ? busyLabel : undefined}
         >
-          {isRefreshing
+          {isBusy
             ? <span className="session-refresh-spinner" aria-hidden="true" />
             : isUninitialized ? "加载会话" : "刷新"}
         </button>
@@ -95,13 +97,15 @@ export const SessionPicker = memo(function SessionPicker({
       {sessions.length === 0 ? (
         <div className="session-picker-summary">
           <p className="empty-state">
-            {isLoading
+            {blockedMessage
+              ? blockedMessage
+              : isLoading
               ? "正在加载会话..."
               : isUninitialized
                 ? "尚未加载当前工作目录的会话。"
                 : "当前工作目录未找到会话。"}
           </p>
-          {isUninitialized && <p className="muted">点击“加载会话”后再选择恢复目标。</p>}
+          {isUninitialized && !blockedMessage && <p className="muted">点击“加载会话”后再选择恢复目标。</p>}
           <p className="muted">未选择会话</p>
         </div>
       ) : (

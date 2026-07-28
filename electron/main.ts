@@ -24,6 +24,7 @@ import {
   type WorkspaceLayout,
 } from "../src/shared/app-workspace.js";
 import { resolveElectronRuntimePaths } from "../src/shared/electron-runtime-paths.js";
+import { revealAndFocusMainWindow } from "../src/shared/electron/main-window-reactivation.js";
 import { createChromiumFetch } from "../src/shared/electron/chromium-fetch.js";
 import {
   resolveDefaultPaths,
@@ -32,6 +33,10 @@ import {
 } from "../src/shared/skills-service.js";
 import type { ProjectBatchAction, SkillHost } from "../src/shared/types.js";
 import { CODEDECK_SKILLS_IPC_CHANNELS } from "../src/shared/code-deck-ipc.js";
+import {
+  APP_REACTIVATED_CHANNEL,
+  type AppReactivationReason,
+} from "../src/shared/app-reactivation.js";
 
 // ---- Profile 相关导入 ----
 import { EncryptedConfigStore } from "../src/shared/crypto/store.js";
@@ -109,6 +114,7 @@ import {
   listCodexSessions,
   listCodexSessionsFromHomes,
   listSessionsForProvider,
+  readLastAssistantTextFromSessionFile,
   resolveMonitoredTerminalSessionFile,
   type CodexSessionHome,
   type GetSessionDetailRequest,
@@ -120,12 +126,14 @@ import {
 } from "../src/shared/state/local-state.js";
 import {
   defaultRuntimeSettings,
+  withOfficialNativeProfiles,
   type Profile,
   type ProfileKey,
   type RuntimeSettings,
   type GlobalSettings,
 } from "../src/shared/profile/types.js";
 import { itemKey } from "../src/shared/profile/keys-internal.js";
+import type { ProfileOrganization } from "../src/shared/profile/organization.js";
 import type { LaunchRequest, LaunchResult, CommandPreview } from "../src/shared/launcher/types.js";
 import {
   defaultBalanceCheckState,
@@ -142,6 +150,18 @@ import {
   CODEDECK_PROJECT_ROOT_ENV,
   STARTUP_THEME_ARG_PREFIX,
 } from "../src/shared/branding.js";
+import { AgentBridgeServer } from "../src/shared/agent-bridge/server.js";
+import {
+  AgentTaskManager,
+  type AgentTaskLaunchOptions,
+} from "../src/shared/agent-bridge/task-manager.js";
+import {
+  AGENT_BRIDGE_CONNECTION_FILE,
+  AgentBridgeRequestError,
+  type AgentBridgeRequest,
+  type AgentBridgeResponse,
+  type AgentProfileSummary,
+} from "../src/shared/agent-bridge/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -185,6 +205,8 @@ let nodePtyModule: NodePtyModule | null = null;
 let nodePtyLoadPromise: Promise<NodePtyModule> | null = null;
 let checkinStateWriteQueue: Promise<void> = Promise.resolve();
 const checkinRunsByAccount = new Map<string, Promise<CheckinResult>>();
+let agentBridgeServer: AgentBridgeServer | null = null;
+let agentTaskManager: AgentTaskManager | null = null;
 
 async function ensureNodePtyLoaded(): Promise<NodePtyModule> {
   if (nodePtyModule) {
@@ -609,6 +631,7 @@ function applyTerminalTaskbarActivity(
 }
 
 function handleTerminalActivityChange(event: TerminalSessionActivityEvent): void {
+  agentTaskManager?.handleActivityChange(event);
   applyTerminalTaskbarActivity(event.sessionId, event);
   appLogger.info("terminal", "activity_changed", "Monitored terminal activity changed", {
     context: {
@@ -912,6 +935,9 @@ async function importExternalCodexSessionIfNeeded(request: LaunchRequest): Promi
   if (request.provider.trim().toLowerCase() !== "codex") {
     return;
   }
+  if (request.runtime_settings.startup_mode === "native") {
+    return;
+  }
   if (request.session_source?.source_kind !== "global_codex") {
     return;
   }
@@ -1042,7 +1068,13 @@ async function validateLaunchPlan(plan: Parameters<typeof executeLaunchPlan>[0])
   }
 }
 
-async function launchMonitoredTerminalSession(plan: Parameters<typeof executeLaunchPlan>[0]): Promise<TerminalSessionSnapshot> {
+async function launchMonitoredTerminalSession(
+  plan: Parameters<typeof executeLaunchPlan>[0],
+  options: {
+    showWindow?: boolean;
+    additionalEnv?: Record<string, string>;
+  } = {},
+): Promise<TerminalSessionSnapshot> {
   await validateLaunchPlan(plan);
   await ensureNodePtyLoaded();
   const startedAt = new Date();
@@ -1051,6 +1083,7 @@ async function launchMonitoredTerminalSession(plan: Parameters<typeof executeLau
     Object.entries({
       ...process.env,
       ...plan.env,
+      ...options.additionalEnv,
     }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   if (mergedEnv.PATH && !mergedEnv.Path) {
@@ -1072,18 +1105,23 @@ async function launchMonitoredTerminalSession(plan: Parameters<typeof executeLau
       intervalMs: 0,
     },
   });
-  try {
-    await createTerminalWindow(snapshot);
-    scheduleTerminalTitleResolution(snapshot, plan, startedAt);
-  } catch (windowError) {
-    stopTerminalTitleResolution(snapshot.sessionId);
-    await terminalSessionManager.closeSession(snapshot.sessionId, "window_create_failed");
-    throw windowError;
+  if (options.showWindow !== false) {
+    try {
+      await createTerminalWindow(snapshot);
+    } catch (windowError) {
+      stopTerminalTitleResolution(snapshot.sessionId);
+      await terminalSessionManager.closeSession(snapshot.sessionId, "window_create_failed");
+      throw windowError;
+    }
   }
+  scheduleTerminalTitleResolution(snapshot, plan, startedAt);
   return snapshot;
 }
 
 async function prepareCapabilityOverlay(request: LaunchRequest): Promise<LaunchRequest["capability_overlay"]> {
+  if (request.runtime_settings.startup_mode === "native") {
+    return undefined;
+  }
   if (!getSettingsStateService().getParameterSettings().inherit_global_capabilities) {
     return undefined;
   }
@@ -1105,6 +1143,67 @@ async function prepareCapabilityOverlay(request: LaunchRequest): Promise<LaunchR
     };
   }
   return undefined;
+}
+
+async function prepareLaunchExecution(request: LaunchRequest): Promise<{
+  planRequest: LaunchRequest;
+  plan: ReturnType<LaunchService["buildExecutionPlan"]>;
+}> {
+  const capability_overlay = await prepareCapabilityOverlay(request);
+  const planRequest: LaunchRequest = {
+    ...request,
+    capability_overlay,
+  };
+  const plan = getLaunchService().buildExecutionPlan(planRequest);
+  appLogger.info("launcher", "launch_plan_created", "Launch plan created", {
+    context: {
+      provider: request.provider,
+      profileKey: request.profile_key,
+      launchMode: plan.launchMode,
+      terminalMode: plan.terminalMode,
+      cwd: plan.cwd,
+      valid: plan.valid,
+      commandExecutable: plan.commandExecutable,
+      hasCodexConfig: !!plan.codexConfig,
+    },
+  });
+  if (!plan.valid) {
+    throw new Error(plan.error || "无法生成启动命令");
+  }
+  await importExternalCodexSessionIfNeeded(request);
+  if (plan.claudeSettings) {
+    await writeManagedLaunchTextFile(plan.claudeSettings.settingsPath, plan.claudeSettings.content);
+    appLogger.info("launcher", "claude_permissions_written", "Claude managed permission settings written", {
+      context: {
+        provider: request.provider,
+        profileKey: request.profile_key,
+        settingsPath: plan.claudeSettings.settingsPath,
+      },
+    });
+  }
+  if (plan.codexConfig) {
+    await getModelMappingConfigService().writeCodexProfile({
+      profileId: request.profile_key,
+      profileName: plan.codexConfig.profileName,
+      providerId: plan.codexConfig.providerId,
+      providerName: plan.codexConfig.providerName,
+      baseUrl: plan.codexConfig.baseUrl,
+      apiKeyEnv: plan.codexConfig.apiKeyEnv,
+      targetModel: plan.codexConfig.targetModel,
+      content: plan.codexConfig.content,
+      rulesContent: plan.codexConfig.rulesContent,
+      workerAgentContent: plan.codexConfig.workerAgentContent,
+    });
+    appLogger.info("launcher", "codex_config_written", "Codex profile config written", {
+      context: {
+        provider: request.provider,
+        profileKey: request.profile_key,
+        providerId: plan.codexConfig.providerId,
+        baseUrlHost: safeUrlHost(plan.codexConfig.baseUrl),
+      },
+    });
+  }
+  return { planRequest, plan };
 }
 
 // ---- 初始化 Profile 服务 ----
@@ -1242,7 +1341,7 @@ async function activateProfileServices(
   profileStateAccessor = stateAccessor;
   const syncStore = new SyncStoreAdapter(encryptedStore!, () => getPassphrase(), config);
   profileService = new ProfileService(
-    config.profiles,
+    withOfficialNativeProfiles(config.profiles),
     stateAccessor,
     syncStore,
     config.site_balance_sessions_by_base_url,
@@ -1268,6 +1367,7 @@ function buildProfileBootstrapPayload(): BootstrapResult {
       selected_profile_key: state.selected_profile_key,
       selected_profile_key_by_provider: state.selected_profile_key_by_provider,
       profile_order_by_provider: state.profile_order_by_provider,
+      profile_organization_by_provider: state.profile_organization_by_provider,
       runtime_by_profile: state.runtime_by_profile,
       balance_checks_by_profile: state.balance_checks_by_profile,
       checkin_states_by_account: state.checkin_states_by_account,
@@ -1279,6 +1379,168 @@ function buildProfileBootstrapPayload(): BootstrapResult {
     siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
     defaultWorkingDirectory: getDefaultWorkingDirectory(),
   };
+}
+
+function getAgentBridgeConnectionFile(): string {
+  const userDataRoot = app.isPackaged
+    ? app.getPath("userData")
+    : path.join(os.homedir(), APP_DEV_USER_DATA_DIR);
+  return path.join(userDataRoot, AGENT_BRIDGE_CONNECTION_FILE);
+}
+
+function getAgentProfileSummaries(): AgentProfileSummary[] {
+  if (!profileService) {
+    return [];
+  }
+  const state = profileService.getState();
+  return profileService.getProfiles().map((profile) => {
+    const profileKey = itemKey(profile);
+    const runtime = state.runtime_by_profile[profileKey] ?? defaultRuntimeSettings(profile.provider);
+    return {
+      profile_key: profileKey,
+      provider: profile.provider,
+      name: profile.name,
+      model: profile.selectedModelId?.trim() || runtime.model.trim(),
+      available: Boolean(runtime.cwd.trim() && runtime.command_base.trim()),
+    };
+  });
+}
+
+function getAgentBridgeSettings() {
+  return settingsStateService?.getParameterSettings().agent_bridge;
+}
+
+async function launchAgentTask(
+  options: AgentTaskLaunchOptions,
+): Promise<{
+  terminalSessionId: string;
+  provider: "claude" | "codex";
+  initialPromptSubmitted?: boolean;
+}> {
+  const service = getProfileService();
+  const profile = service.getProfiles().find((candidate) => itemKey(candidate) === options.profileKey);
+  if (!profile) {
+    throw new AgentBridgeRequestError("profile_not_found", "Profile 不存在。");
+  }
+  const savedRuntime = service.getState().runtime_by_profile[options.profileKey]
+    ?? defaultRuntimeSettings(profile.provider);
+  const cwd = options.cwd?.trim() || savedRuntime.cwd.trim();
+  if (!cwd || !(await directoryExists(cwd))) {
+    throw new AgentBridgeRequestError("invalid_cwd", "工作目录不存在或未配置。");
+  }
+  const runtime: RuntimeSettings = {
+    ...savedRuntime,
+    cwd,
+    launch_mode: "new",
+    terminal_mode: "monitored",
+    extra_env: { ...savedRuntime.extra_env },
+  };
+  const request: LaunchRequest = {
+    profile_key: options.profileKey,
+    provider: profile.provider,
+    runtime_settings: runtime,
+    terminal_mode: "monitored",
+  };
+  const { plan } = await prepareLaunchExecution(request);
+  const initialPromptBase64 = Buffer.from(options.initialPrompt, "utf8").toString("base64");
+  const initialPromptEnvKey = "CODEDECK_AGENT_INITIAL_PROMPT_BASE64";
+  const submitInitialPromptAtLaunch = profile.provider === "codex"
+    && initialPromptBase64.length <= 24_000;
+  const launchPlan = submitInitialPromptAtLaunch
+    ? { ...plan, agentInitialPromptEnvKey: initialPromptEnvKey }
+    : plan;
+  const snapshot = await launchMonitoredTerminalSession(launchPlan, {
+    showWindow: options.showTerminal,
+    additionalEnv: {
+      CODEDECK_DELEGATED: "1",
+      ...(submitInitialPromptAtLaunch
+        ? { [initialPromptEnvKey]: initialPromptBase64 }
+        : {}),
+    },
+  });
+  invalidateSessionCaches(profile.provider);
+  return {
+    terminalSessionId: snapshot.sessionId,
+    provider: profile.provider,
+    ...(submitInitialPromptAtLaunch ? { initialPromptSubmitted: true } : {}),
+  };
+}
+
+function ensureAgentTaskManager(): AgentTaskManager {
+  agentTaskManager ??= new AgentTaskManager({
+    terminal: {
+      launch: launchAgentTask,
+      attach: (terminalSessionId, subscriber) =>
+        terminalSessionManager.attachSession(terminalSessionId, subscriber),
+      sendInput: (terminalSessionId, data) =>
+        terminalSessionManager.sendInput(terminalSessionId, data),
+      close: (terminalSessionId, reason) =>
+        terminalSessionManager.closeSession(terminalSessionId, reason),
+      getSnapshot: (terminalSessionId) =>
+        terminalSessionManager.getSnapshot(terminalSessionId),
+    },
+    listProfiles: getAgentProfileSummaries,
+    isProfileBlocked: (profileKey) =>
+      getAgentBridgeSettings()?.blocked_profile_keys.includes(profileKey) ?? true,
+    getConcurrencyLimit: () =>
+      getAgentBridgeSettings()?.max_concurrent_tasks ?? 4,
+    readLastAssistantText: readLastAssistantTextFromSessionFile,
+  });
+  return agentTaskManager;
+}
+
+async function handleAgentBridgeRequest(
+  request: AgentBridgeRequest,
+): Promise<AgentBridgeResponse> {
+  if (!profileService || !settingsStateService) {
+    throw new AgentBridgeRequestError(
+      "profiles_locked",
+      "CodeDeck Profile 尚未解锁。",
+      true,
+    );
+  }
+  const settings = getAgentBridgeSettings();
+  if (!settings?.enabled) {
+    throw new AgentBridgeRequestError(
+      "bridge_disabled",
+      "CodeDeck 本地 AI 委托接口尚未启用。",
+    );
+  }
+  const manager = ensureAgentTaskManager();
+  if (request.command === "profiles") {
+    const result = manager.listProfiles();
+    return { ok: true, profiles: result.profiles, capacity: result.capacity };
+  }
+  if (request.command === "run") {
+    return manager.run({
+      profileKey: request.profile_key,
+      prompt: request.prompt,
+      cwd: request.cwd,
+      waitMs: request.wait_ms,
+      showTerminal: request.show_terminal,
+    });
+  }
+  if (request.command === "continue") {
+    return manager.continue(request.session_id, request.prompt, request.wait_ms);
+  }
+  if (request.command === "status") {
+    return manager.status(request.session_id);
+  }
+  if (request.command === "wait") {
+    return manager.wait(request.session_id, request.wait_ms);
+  }
+  return manager.cancel(request.session_id);
+}
+
+async function startAgentBridgeServer(): Promise<void> {
+  agentBridgeServer ??= new AgentBridgeServer({
+    connectionFile: getAgentBridgeConnectionFile(),
+    handleRequest: handleAgentBridgeRequest,
+  });
+  await agentBridgeServer.start();
+  appLogger.info("agent_bridge", "server_started", "Local AI delegation bridge started", {
+    context: { connectionFile: getAgentBridgeConnectionFile() },
+  });
 }
 
 async function persistBalanceState(
@@ -2114,6 +2376,11 @@ function scheduleTerminalTitleResolution(
           claudeHome: plan.env.CLAUDE_CONFIG_DIR,
         });
         if (lifecycleFile) {
+          agentTaskManager?.associateProviderSession(
+            sessionId,
+            titleResult.sessionId,
+            lifecycleFile,
+          );
           startTerminalLifecycleWatcher(
             sessionId,
             currentSnapshot.provider,
@@ -2273,6 +2540,32 @@ async function createTerminalWindow(snapshot: TerminalSessionSnapshot): Promise<
   });
   await browserWindow.loadURL(buildRendererUrl({ view: "terminal", sessionId: snapshot.sessionId }));
   return browserWindow;
+}
+
+async function reactivateMainWindow(reason: AppReactivationReason): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (!app.isReady()) {
+      return;
+    }
+    await createMainWindow();
+  }
+
+  const browserWindow = mainWindow;
+  if (!browserWindow || browserWindow.isDestroyed()) {
+    return;
+  }
+  if (!revealAndFocusMainWindow(browserWindow)) {
+    return;
+  }
+
+  const event = {
+    reason,
+    reactivated_at: new Date().toISOString(),
+  } as const;
+  browserWindow.webContents.send(APP_REACTIVATED_CHANNEL, event);
+  appLogger.info("app", "app_reactivated", "Existing CodeDeck instance reactivated", {
+    context: event,
+  });
 }
 
 // ---- 注册所有 IPC 处理器 ----
@@ -2665,6 +2958,13 @@ function registerAllIpcHandlers(): void {
   );
 
   handleIpc(
+    "profile:update-organization",
+    async (_event, provider: string, organization: ProfileOrganization) => {
+      await getProfileService().updateProfileOrganization(provider, organization);
+    },
+  );
+
+  handleIpc(
     "profile:activate-provider",
     async (_event, provider: string) => {
       await getProfileService().activateProvider(provider);
@@ -2756,60 +3056,7 @@ function registerAllIpcHandlers(): void {
 
   handleIpc("launcher:launch", async (_event, request: LaunchRequest) => {
     const startedAt = Date.now();
-    const capability_overlay = await prepareCapabilityOverlay(request);
-    const planRequest = {
-      ...request,
-      capability_overlay,
-    };
-    const plan = getLaunchService().buildExecutionPlan(planRequest);
-    appLogger.info("launcher", "launch_plan_created", "Launch plan created", {
-      context: {
-        provider: request.provider,
-        profileKey: request.profile_key,
-        launchMode: plan.launchMode,
-        terminalMode: plan.terminalMode,
-        cwd: plan.cwd,
-        valid: plan.valid,
-        commandExecutable: plan.commandExecutable,
-        hasCodexConfig: !!plan.codexConfig,
-      },
-    });
-    if (!plan.valid) {
-      throw new Error(plan.error || "无法生成启动命令");
-    }
-    await importExternalCodexSessionIfNeeded(request);
-    if (plan.claudeSettings) {
-      await writeManagedLaunchTextFile(plan.claudeSettings.settingsPath, plan.claudeSettings.content);
-      appLogger.info("launcher", "claude_permissions_written", "Claude managed permission settings written", {
-        context: {
-          provider: request.provider,
-          profileKey: request.profile_key,
-          settingsPath: plan.claudeSettings.settingsPath,
-        },
-      });
-    }
-    if (plan.codexConfig) {
-      await getModelMappingConfigService().writeCodexProfile({
-        profileId: request.profile_key,
-        profileName: plan.codexConfig.profileName,
-        providerId: plan.codexConfig.providerId,
-        providerName: plan.codexConfig.providerName,
-        baseUrl: plan.codexConfig.baseUrl,
-        apiKeyEnv: plan.codexConfig.apiKeyEnv,
-        targetModel: plan.codexConfig.targetModel,
-        content: plan.codexConfig.content,
-        rulesContent: plan.codexConfig.rulesContent,
-        workerAgentContent: plan.codexConfig.workerAgentContent,
-      });
-      appLogger.info("launcher", "codex_config_written", "Codex profile config written", {
-        context: {
-          provider: request.provider,
-          profileKey: request.profile_key,
-          providerId: plan.codexConfig.providerId,
-          baseUrlHost: safeUrlHost(plan.codexConfig.baseUrl),
-        },
-      });
-    }
+    const { planRequest, plan } = await prepareLaunchExecution(request);
     try {
       if (plan.terminalMode === "monitored") {
         const snapshot = await launchMonitoredTerminalSession(plan);
@@ -3079,7 +3326,13 @@ function registerAllIpcHandlers(): void {
   handleIpc(
     "parameter:update",
     async (_event, settings: Partial<ParameterSettings>) => {
-      return getSettingsStateService().updateParameterSettings(settings);
+      const wasAgentBridgeEnabled = getAgentBridgeSettings()?.enabled === true;
+      const updated = await getSettingsStateService().updateParameterSettings(settings);
+      if (wasAgentBridgeEnabled && !updated.agent_bridge.enabled && agentTaskManager) {
+        await agentTaskManager.shutdown();
+        agentTaskManager = null;
+      }
+      return updated;
     },
   );
 
@@ -3160,14 +3413,9 @@ app.setAppUserModelId(APP_ID);
 
 if (gotSingleInstanceLock) {
   app.on("second-instance", () => {
-    const visibleWindow = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
-    if (!visibleWindow) {
-      return;
-    }
-    if (visibleWindow.isMinimized()) {
-      visibleWindow.restore();
-    }
-    visibleWindow.focus();
+    void reactivateMainWindow("second_instance").catch((error) => {
+      appLogger.error("app", "app_reactivation_failed", "Failed to reactivate main window", { error });
+    });
   });
 }
 
@@ -3181,13 +3429,18 @@ app.whenReady().then(async () => {
   registerAllIpcHandlers();
   appLogger.info("app", "ipc_handlers_registered", "IPC handlers registered");
   warmProfileStoresInBackground();
+  await startAgentBridgeServer().catch((error) => {
+    appLogger.error("agent_bridge", "server_start_failed", "Local AI delegation bridge failed to start", {
+      error,
+    });
+  });
 
   // 3. 创建主窗口
   await createMainWindow();
   appLogger.info("app", "main_window_created", "Main window created");
 
   app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       await createMainWindow();
     }
   });
@@ -3196,6 +3449,8 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
   checkinScheduler?.stop();
   void checkinVerificationService?.cancelAll();
+  void agentTaskManager?.shutdown();
+  void agentBridgeServer?.stop();
 });
 
 app.on("window-all-closed", () => {

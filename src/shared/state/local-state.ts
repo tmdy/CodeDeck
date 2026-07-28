@@ -14,6 +14,11 @@ import {
   normalizeCheckinStatesByAccount,
   type CheckinStatesByAccount,
 } from "../checkin/types.js";
+import {
+  defaultProfileOrganization,
+  normalizeProfileOrganization,
+  type ProfileOrganization,
+} from "../profile/organization.js";
 
 export interface FavoriteSessionSummary extends SessionSummary {
   favorite_key: string;
@@ -25,6 +30,7 @@ export interface LocalState {
   selected_profile_key: ProfileKey;
   selected_profile_key_by_provider: Record<string, ProfileKey>;
   profile_order_by_provider: Record<string, ProfileKey[]>;
+  profile_organization_by_provider: Record<string, ProfileOrganization>;
   runtime_by_profile: Record<ProfileKey, RuntimeSettings>;
   balance_checks_by_profile: Record<ProfileKey, BalanceCheckState>;
   checkin_states_by_account: CheckinStatesByAccount;
@@ -54,6 +60,7 @@ export type BootstrapLocalState = Pick<
   | "balance_checks_by_profile"
   | "global_settings"
 > & {
+  profile_organization_by_provider?: Record<string, ProfileOrganization>;
   checkin_states_by_account?: CheckinStatesByAccount;
   checkin_next_scheduled_at?: string;
   working_directory_favorites?: string[];
@@ -73,6 +80,7 @@ export function defaultLocalState(): LocalState {
     selected_profile_key: "",
     selected_profile_key_by_provider: {},
     profile_order_by_provider: {},
+    profile_organization_by_provider: {},
     runtime_by_profile: {},
     balance_checks_by_profile: {},
     checkin_states_by_account: {},
@@ -97,6 +105,10 @@ export function ensureInitialized(state: LocalState): LocalState {
 
   state.selected_profile_key_by_provider ??= {};
   state.profile_order_by_provider ??= {};
+  state.profile_organization_by_provider = normalizeProfileOrganizationsByProvider(
+    state.profile_organization_by_provider,
+    state.profile_order_by_provider,
+  );
   state.runtime_by_profile ??= {};
   state.balance_checks_by_profile ??= {};
   state.checkin_states_by_account = normalizeCheckinStatesByAccount(
@@ -125,6 +137,10 @@ export function mergeBootstrapState(state: BootstrapLocalState): LocalState {
     ...state,
     selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
     profile_order_by_provider: { ...state.profile_order_by_provider },
+    profile_organization_by_provider: normalizeProfileOrganizationsByProvider(
+      state.profile_organization_by_provider,
+      state.profile_order_by_provider,
+    ),
     runtime_by_profile: { ...state.runtime_by_profile },
     balance_checks_by_profile: { ...state.balance_checks_by_profile },
     checkin_states_by_account: normalizeCheckinStatesByAccount(state.checkin_states_by_account),
@@ -135,6 +151,27 @@ export function mergeBootstrapState(state: BootstrapLocalState): LocalState {
     ),
     session_favorites: normalizeSessionFavorites(state.session_favorites),
   });
+}
+
+export function normalizeProfileOrganizationsByProvider(
+  value: unknown,
+  profileOrderByProvider: Record<string, ProfileKey[]> = {},
+): Record<string, ProfileOrganization> {
+  const record = asRecord(value) ?? {};
+  const providerIDs = new Set([
+    ...Object.keys(record),
+    ...Object.keys(profileOrderByProvider),
+  ]);
+  const result: Record<string, ProfileOrganization> = {};
+  for (const rawProviderID of providerIDs) {
+    const provider = normalizeProvider(rawProviderID);
+    result[provider] = normalizeProfileOrganization(
+      record[rawProviderID] ?? defaultProfileOrganization(),
+      provider,
+      profileOrderByProvider[rawProviderID] ?? profileOrderByProvider[provider] ?? [],
+    );
+  }
+  return result;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

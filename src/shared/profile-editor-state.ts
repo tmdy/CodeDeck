@@ -2,6 +2,7 @@ import type {
   AdvancedModelMapping,
   Profile,
   RuntimeSettings,
+  RuntimeStartupMode,
 } from "./profile/types.js";
 import {
   defaultRuntimeSettings,
@@ -33,6 +34,7 @@ export interface ProfileEditorDraft {
   extra_args: string;
   extra_env: Record<string, string>;
   exclude_user_settings: boolean;
+  startup_mode?: RuntimeStartupMode;
 }
 
 export function buildSelectedProfileDraft(
@@ -74,6 +76,7 @@ export function buildSelectedProfileDraft(
     extra_args: baseRuntime.extra_args,
     extra_env: cloneEnvMap(baseRuntime.extra_env),
     exclude_user_settings: baseRuntime.exclude_user_settings,
+    ...(baseRuntime.startup_mode ? { startup_mode: baseRuntime.startup_mode } : {}),
   };
 }
 
@@ -108,6 +111,7 @@ export function buildNewProfileDraft(provider: string, initial?: { url?: string;
     extra_args: runtime.extra_args,
     extra_env: {},
     exclude_user_settings: runtime.exclude_user_settings,
+    ...(runtime.startup_mode ? { startup_mode: runtime.startup_mode } : {}),
   };
 }
 
@@ -121,6 +125,7 @@ export function buildRuntimeSettingsFromDraft(draft: ProfileEditorDraft): Runtim
     extra_args: draft.extra_args,
     extra_env: cloneEnvMap(draft.extra_env),
     exclude_user_settings: draft.exclude_user_settings,
+    ...(draft.startup_mode === "native" ? { startup_mode: "native" as const } : {}),
   };
 }
 
@@ -153,7 +158,8 @@ export function hasProfileDraftChanges(
       current.settings_file ||
       current.extra_args ||
       Object.keys(current.extra_env ?? {}).length > 0 ||
-      current.exclude_user_settings !== true,
+      current.exclude_user_settings !== true ||
+      current.startup_mode === "native",
     );
   }
 
@@ -171,7 +177,8 @@ export function hasProfileDraftChanges(
     current.settings_file !== baseline.settings_file ||
     current.extra_args !== baseline.extra_args ||
       !envMapsEqual(current.extra_env, baseline.extra_env) ||
-    current.exclude_user_settings !== baseline.exclude_user_settings
+    current.exclude_user_settings !== baseline.exclude_user_settings ||
+    (current.startup_mode ?? "managed") !== (baseline.startup_mode ?? "managed")
   );
 }
 

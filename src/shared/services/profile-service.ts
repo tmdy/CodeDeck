@@ -8,6 +8,8 @@ import {
   extractSyncedProfile,
   normalizeRuntimeSettings,
   defaultRuntimeSettings,
+  createOfficialNativeProfile,
+  isOfficialNativeProfile,
 } from "../profile/types.js";
 import {
   cloneSiteBalanceSessionsByBaseUrl,
@@ -28,6 +30,13 @@ import type { LocalState } from "../state/local-state.js";
 import { normalizeWorkingDirectoryFavorites } from "../state/local-state.js";
 import { cloneLocalState } from "../state/store.js";
 import { getAdapter } from "../provider/registry.js";
+import {
+  cloneProfileOrganization,
+  defaultProfileOrganization,
+  flattenProfileOrganization,
+  normalizeProfileOrganization,
+  type ProfileOrganization,
+} from "../profile/organization.js";
 
 // ---- 接口定义 ----
 
@@ -81,6 +90,21 @@ export class ProfileService {
   async reorderProfiles(providerID: string, orderedKeys: ProfileKey[]): Promise<void> {
     const st = this.getState();
     st.profile_order_by_provider[normalizeProvider(providerID)] = [...orderedKeys];
+    await this.stateAccessor.save(st);
+  }
+
+  async updateProfileOrganization(
+    providerID: string,
+    organization: ProfileOrganization,
+  ): Promise<void> {
+    const provider = normalizeProvider(providerID);
+    const eligibleKeys = this.profiles
+      .filter((profile) => profile.provider === provider && !isOfficialNativeProfile(profile))
+      .map(itemKey);
+    const normalized = validateProfileOrganization(organization, provider, eligibleKeys);
+    const st = this.getState();
+    st.profile_organization_by_provider[provider] = normalized;
+    st.profile_order_by_provider[provider] = flattenProfileOrganization(normalized);
     await this.stateAccessor.save(st);
   }
 
@@ -164,17 +188,32 @@ export class ProfileService {
     runtime: RuntimeSettings,
   ): Promise<Profile> {
     const nProv = normalizeProvider(draft.provider);
+    const isOfficialProfile = isOfficialNativeProfile(draft);
+    const nRuntime = normalizeRuntimeSettings({
+      ...runtime,
+      startup_mode: isOfficialProfile ? "native" : "managed",
+    }, nProv);
+    const isNativeStartup = isOfficialProfile;
     let nd = normalizeProfile({ ...draft, provider: nProv });
+    if (isOfficialProfile) {
+      nd = createOfficialNativeProfile(nProv);
+    }
 
     // 验证
     if (!nd.name) throw new Error("名称不能为空");
-    if (!nd.url) throw new Error("Base URL 不能为空");
-    if (!nd.key) throw new Error("Key / Token 不能为空");
-    if (!validateHttpUrl(nd.url)) throw new Error("Base URL 必须以 http:// 或 https:// 开头");
+    if (!isNativeStartup) {
+      if (!nd.url) throw new Error("Base URL 不能为空");
+      if (!nd.key) throw new Error("Key / Token 不能为空");
+      if (!validateHttpUrl(nd.url)) throw new Error("Base URL 必须以 http:// 或 https:// 开头");
+    } else if (nd.url && !validateHttpUrl(nd.url)) {
+      throw new Error("Base URL 必须以 http:// 或 https:// 开头");
+    }
 
     // Provider 特定的规范化
-    const adapter = getAdapter(nProv);
-    nd = adapter.normalizeProfile(nd);
+    if (!isNativeStartup) {
+      const adapter = getAdapter(nProv);
+      nd = adapter.normalizeProfile(nd);
+    }
 
     // 检查名称重复
     const nTargetKey = normalizeKeyWithFallback(targetKey, nProv);
@@ -213,7 +252,6 @@ export class ProfileService {
     }
 
     const st = this.getState();
-    const nRuntime = normalizeRuntimeSettings(runtime, nProv);
     const newKey = itemKey(nd);
 
     if (index >= 0 && previous) {
@@ -221,6 +259,18 @@ export class ProfileService {
       if (previousKey !== newKey) {
         migrateProfileStateKey(st, previousKey, newKey, nd);
         const [prevProv] = splitKey(previousKey);
+        if (!isOfficialNativeProfile(previous)) {
+          if (prevProv === nProv && !isOfficialProfile) {
+            replaceProfileOrganizationKey(st, nProv, previousKey, newKey);
+          } else {
+            removeProfileOrganizationKey(st, prevProv, previousKey);
+            if (!isOfficialProfile) {
+              appendUngroupedProfileKey(st, nProv, newKey);
+            }
+          }
+        } else if (!isOfficialProfile) {
+          appendUngroupedProfileKey(st, nProv, newKey);
+        }
         if (prevProv !== nProv) {
           st.profile_order_by_provider[prevProv] = removeProfileKey(
             st.profile_order_by_provider[prevProv] ?? [],
@@ -234,11 +284,18 @@ export class ProfileService {
         newKey,
       );
     } else {
+      if (!isOfficialProfile) {
+        appendUngroupedProfileKey(st, nProv, newKey);
+      }
       st.profile_order_by_provider[nProv] = appendMissingProfileKey(
         st.profile_order_by_provider[nProv] ?? [],
         newKey,
       );
     }
+    if (previous) {
+      syncProfileOrganizationOrder(st, previous.provider);
+    }
+    syncProfileOrganizationOrder(st, nProv);
 
     st.runtime_by_profile[newKey] = nRuntime;
     st.selected_provider = nProv;
@@ -260,6 +317,9 @@ export class ProfileService {
   ): Promise<Profile> {
     const source = this.findByKey(sourceKey);
     if (!source) throw new Error(`source profile not found: ${sourceKey}`);
+    if (isOfficialNativeProfile(source)) {
+      throw new Error("官方 CLI Profile 不可克隆");
+    }
 
     const targetProv = normalizeProvider(targetProviderID);
     const adapter = getAdapter(targetProv);
@@ -285,6 +345,8 @@ export class ProfileService {
       ...(st.profile_order_by_provider[targetProv] ?? []),
       clonedKey,
     ];
+    appendUngroupedProfileKey(st, targetProv, clonedKey);
+    syncProfileOrganizationOrder(st, targetProv);
 
     await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl, st);
     this.profiles = nextProfiles;
@@ -301,13 +363,16 @@ export class ProfileService {
 
     const index = this.profiles.findIndex((p) => itemKey(p) === nKey);
     if (index < 0) throw new Error(`profile not found: ${nKey}`);
+    if (isOfficialNativeProfile(this.profiles[index])) {
+      throw new Error("官方 CLI Profile 不可删除");
+    }
 
     const nextProfiles = [
       ...this.profiles.slice(0, index),
       ...this.profiles.slice(index + 1),
     ];
 
-    const st = cloneLocalState(this.stateAccessor.get());
+    const st = this.getState();
 
     delete st.runtime_by_profile[nKey];
     delete st.balance_checks_by_profile[nKey];
@@ -315,6 +380,8 @@ export class ProfileService {
       st.profile_order_by_provider[provID] ?? [],
       nKey,
     );
+    removeProfileOrganizationKey(st, provID, nKey);
+    syncProfileOrganizationOrder(st, provID);
 
     let selectedForProvider = normalizeKeyWithFallback(
       st.selected_profile_key_by_provider[provID] ?? "",
@@ -542,6 +609,124 @@ function replaceOrAppendProfileKey(
   return out;
 }
 
+function appendUngroupedProfileKey(
+  state: LocalState,
+  providerID: string,
+  profileKey: ProfileKey,
+): void {
+  const provider = normalizeProvider(providerID);
+  const organization = state.profile_organization_by_provider[provider]
+    ?? defaultProfileOrganization();
+  removeKeyFromOrganization(organization, profileKey);
+  organization.ungrouped_profile_keys.push(profileKey);
+  state.profile_organization_by_provider[provider] = organization;
+}
+
+function removeProfileOrganizationKey(
+  state: LocalState,
+  providerID: string,
+  profileKey: ProfileKey,
+): void {
+  const provider = normalizeProvider(providerID);
+  const organization = state.profile_organization_by_provider[provider];
+  if (!organization) {
+    return;
+  }
+  removeKeyFromOrganization(organization, profileKey);
+}
+
+function replaceProfileOrganizationKey(
+  state: LocalState,
+  providerID: string,
+  previousKey: ProfileKey,
+  nextKey: ProfileKey,
+): void {
+  const provider = normalizeProvider(providerID);
+  const organization = state.profile_organization_by_provider[provider]
+    ?? defaultProfileOrganization();
+  let replaced = false;
+  organization.ungrouped_profile_keys = organization.ungrouped_profile_keys.map((key) => {
+    if (!replaced && key === previousKey) {
+      replaced = true;
+      return nextKey;
+    }
+    return key;
+  });
+  organization.groups = organization.groups.map((group) => ({
+    ...group,
+    profile_keys: group.profile_keys.map((key) => {
+      if (!replaced && key === previousKey) {
+        replaced = true;
+        return nextKey;
+      }
+      return key;
+    }),
+  }));
+  if (!replaced) {
+    organization.ungrouped_profile_keys.push(nextKey);
+  }
+  state.profile_organization_by_provider[provider] = organization;
+}
+
+function removeKeyFromOrganization(
+  organization: ProfileOrganization,
+  profileKey: ProfileKey,
+): void {
+  organization.ungrouped_profile_keys = organization.ungrouped_profile_keys
+    .filter((key) => key !== profileKey);
+  organization.groups = organization.groups.map((group) => ({
+    ...group,
+    profile_keys: group.profile_keys.filter((key) => key !== profileKey),
+  }));
+}
+
+function syncProfileOrganizationOrder(state: LocalState, providerID: string): void {
+  const provider = normalizeProvider(providerID);
+  const organization = state.profile_organization_by_provider[provider];
+  if (organization) {
+    state.profile_order_by_provider[provider] = flattenProfileOrganization(organization);
+  }
+}
+
+function validateProfileOrganization(
+  organization: ProfileOrganization,
+  providerID: string,
+  eligibleKeys: ProfileKey[],
+): ProfileOrganization {
+  if (!organization || typeof organization !== "object" || !Array.isArray(organization.groups)) {
+    throw new Error("Profile 分组数据无效。");
+  }
+  if (!Array.isArray(organization.ungrouped_profile_keys)) {
+    throw new Error("未分组 Profile 数据无效。");
+  }
+  for (const group of organization.groups) {
+    if (!group || typeof group !== "object" || !Array.isArray(group.profile_keys)) {
+      throw new Error("Profile 分组数据无效。");
+    }
+  }
+
+  const normalized = normalizeProfileOrganization(organization, providerID);
+  if (normalized.groups.length !== organization.groups.length) {
+    throw new Error("组名称不能为空或重复。");
+  }
+  const expected = new Set(eligibleKeys);
+  const flattened = flattenProfileOrganization(normalized);
+  const rawMembershipCount = organization.ungrouped_profile_keys.length
+    + organization.groups.reduce((count, group) => count + group.profile_keys.length, 0);
+  if (
+    flattened.length !== eligibleKeys.length
+    || flattened.length !== rawMembershipCount
+  ) {
+    throw new Error("每个 Profile 必须且只能出现在一个分组位置。");
+  }
+  for (const key of flattened) {
+    if (!expected.has(key)) {
+      throw new Error("分组中包含无效或跨 Provider 的 Profile。");
+    }
+  }
+  return cloneProfileOrganization(normalized);
+}
+
 function selectProfileForProvider(
   profiles: Profile[],
   st: LocalState,
@@ -576,6 +761,75 @@ function resolveRememberedSelection(
 
 function sanitizeProviderSelectionState(profiles: Profile[], state: LocalState): LocalState {
   const next = cloneLocalState(state);
+
+  const providers = new Set([
+    "claude",
+    "codex",
+    ...profiles.map((profile) => normalizeProvider(profile.provider)),
+    ...Object.keys(next.profile_organization_by_provider),
+  ]);
+  for (const provider of providers) {
+    const profileKeys = profiles
+      .filter((profile) => profile.provider === provider && !isOfficialNativeProfile(profile))
+      .map(itemKey);
+    const eligible = new Set(profileKeys);
+    const orderedFallback = [
+      ...(next.profile_order_by_provider[provider] ?? []).filter((key) => eligible.has(key)),
+      ...profileKeys,
+    ];
+    const normalized = normalizeProfileOrganization(
+      next.profile_organization_by_provider[provider],
+      provider,
+      orderedFallback,
+    );
+    const assigned = new Set<ProfileKey>();
+    normalized.groups = normalized.groups.map((group) => ({
+      ...group,
+      profile_keys: group.profile_keys.filter((key) => {
+        if (!eligible.has(key) || assigned.has(key)) {
+          return false;
+        }
+        assigned.add(key);
+        return true;
+      }),
+    }));
+    normalized.ungrouped_profile_keys = normalized.ungrouped_profile_keys.filter((key) => {
+      if (!eligible.has(key) || assigned.has(key)) {
+        return false;
+      }
+      assigned.add(key);
+      return true;
+    });
+    for (const key of orderedFallback) {
+      if (eligible.has(key) && !assigned.has(key)) {
+        assigned.add(key);
+        normalized.ungrouped_profile_keys.push(key);
+      }
+    }
+    next.profile_organization_by_provider[provider] = normalized;
+    next.profile_order_by_provider[provider] = flattenProfileOrganization(normalized);
+  }
+
+  const officialKeys = new Set<string>();
+  for (const profile of profiles) {
+    const key = itemKey(profile);
+    if (isOfficialNativeProfile(profile)) {
+      officialKeys.add(key);
+      const currentRuntime = next.runtime_by_profile[key] ?? defaultRuntimeSettings(profile.provider);
+      next.runtime_by_profile[key] = normalizeRuntimeSettings({
+        ...currentRuntime,
+        startup_mode: "native",
+      }, profile.provider);
+    }
+  }
+  for (const [key, runtime] of Object.entries(next.runtime_by_profile)) {
+    if (runtime.startup_mode === "native" && !officialKeys.has(key)) {
+      next.runtime_by_profile[key] = normalizeRuntimeSettings({
+        ...runtime,
+        startup_mode: "managed",
+      }, key.split("::")[0]);
+    }
+  }
 
   for (const [providerID, rememberedKey] of Object.entries(next.selected_profile_key_by_provider)) {
     const resolved = resolveRememberedSelection(profiles, rememberedKey, providerID);

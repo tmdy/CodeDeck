@@ -19,6 +19,8 @@ export const PROVIDER_CODEX = "codex" as const;
 export const DEFAULT_PROVIDER = PROVIDER_CLAUDE;
 export const DEFAULT_CLAUDE_COMMAND = "claude";
 export const DEFAULT_CODEX_COMMAND = "codex";
+export const OFFICIAL_CLAUDE_PROFILE_NAME = "官方 Claude";
+export const OFFICIAL_CODEX_PROFILE_NAME = "官方 Codex";
 export const DEFAULT_LAUNCH_MODE = "new";
 export const DEFAULT_PERMISSION_PRESET = "全部允许（推荐）";
 export const KEY_SEPARATOR = "::";
@@ -26,6 +28,7 @@ export const KEY_SEPARATOR = "::";
 export type ProviderID = typeof PROVIDER_CLAUDE | typeof PROVIDER_CODEX;
 export type ProfileKey = string; // "provider::name"
 export type RuntimeTerminalMode = "direct" | "monitored";
+export type RuntimeStartupMode = "managed" | "native";
 
 export type ClaudeModelAliasMode = "none" | "single_model_compat" | "custom";
 export const CLAUDE_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -76,6 +79,7 @@ export interface RuntimeSettings {
   extra_args: string;
   extra_env: Record<string, string>;
   exclude_user_settings: boolean;
+  startup_mode?: RuntimeStartupMode;
 }
 
 export interface GlobalSettings {
@@ -145,6 +149,7 @@ export function defaultRuntimeSettings(providerID: string): RuntimeSettings {
 export function normalizeRuntimeSettings(settings: RuntimeSettings, providerID: string): RuntimeSettings {
   const defaults = defaultRuntimeSettings(providerID);
   const terminalMode = normalizeRuntimeTerminalMode(settings.terminal_mode);
+  const startupMode = normalizeRuntimeStartupMode(settings.startup_mode);
   return {
     cwd: settings.cwd.trim(),
     command_base: settings.command_base.trim() || defaults.command_base,
@@ -155,11 +160,45 @@ export function normalizeRuntimeSettings(settings: RuntimeSettings, providerID: 
     extra_args: settings.extra_args.trim(),
     extra_env: normalizeRuntimeEnv(settings.extra_env),
     exclude_user_settings: settings.exclude_user_settings ?? defaults.exclude_user_settings,
+    ...(startupMode === "native" ? { startup_mode: startupMode } : {}),
   };
+}
+
+export function officialNativeProfileName(providerID: string): string {
+  return normalizeProvider(providerID) === PROVIDER_CODEX
+    ? OFFICIAL_CODEX_PROFILE_NAME
+    : OFFICIAL_CLAUDE_PROFILE_NAME;
+}
+
+export function createOfficialNativeProfile(providerID: string): Profile {
+  const provider = normalizeProvider(providerID);
+  return {
+    provider,
+    name: officialNativeProfileName(provider),
+    url: "",
+    key: "",
+  };
+}
+
+export function isOfficialNativeProfile(profile: Pick<Profile, "provider" | "name">): boolean {
+  return profile.name.trim() === officialNativeProfileName(profile.provider);
+}
+
+export function withOfficialNativeProfiles(profiles: Profile[]): Profile[] {
+  const userProfiles = profiles.filter((profile) => !isOfficialNativeProfile(profile));
+  return [
+    createOfficialNativeProfile(PROVIDER_CLAUDE),
+    createOfficialNativeProfile(PROVIDER_CODEX),
+    ...userProfiles,
+  ];
 }
 
 export function normalizeRuntimeTerminalMode(value: unknown): RuntimeTerminalMode | undefined {
   return value === "direct" || value === "monitored" ? value : undefined;
+}
+
+export function normalizeRuntimeStartupMode(value: unknown): RuntimeStartupMode {
+  return value === "native" ? "native" : "managed";
 }
 
 export function normalizeRuntimeEnv(env?: Record<string, string>): Record<string, string> {

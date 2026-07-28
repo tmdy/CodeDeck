@@ -41,7 +41,7 @@
 
 ### Profile 与启动预览
 
-每个 Profile 可以保存 Base URL、API Key 或 Token、模型、工作目录、启动模式、额外参数和环境变量。启动前会生成命令预览，并隐藏敏感值。
+每个站点 Profile 可以保存 Base URL、API Key 或 Token、模型、工作目录、额外参数和环境变量。每个 Provider 的 Profile 列顶部还提供一个官方 CLI Profile，它不要求填写站点凭据或模型配置，Claude/Codex 会继续使用用户全局配置和会话目录。
 
 ### 分开的权限模型
 
@@ -54,6 +54,10 @@ Codex Profile 使用 CodeDeck 管理的 `CODEX_HOME`，不会直接改写用户�
 ### 受监控终端
 
 Claude Code 和 Codex 都可以在 PTY 终端中启动。终端支持复制、粘贴、窗口标题同步和运行状态跟踪；Codex 还可以按失败关键字自动发送继续，并在运行中调整次数、间隔或暂停状态。
+
+### 本地 AI 委托
+
+CodeDeck 可以通过仅限当前 Windows 用户的本地命名管道，把已解锁且未列入黑名单的 Profile 提供给 Hermes、Codex 等 Agent。调用方使用 `codedeck-agent` 提交任务、等待结果或继续会话；凭据、完整环境变量和启动命令不会通过接口返回。接口默认关闭，可在“设置 → 参数设置 → 本地 AI 委托接口”中开启。
 
 ### Skills 管理
 

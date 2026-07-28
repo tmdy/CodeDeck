@@ -76,6 +76,7 @@ export interface LaunchExecutionPlan {
   claudeSettings?: ClaudeSettingsWritePlan;
   codexConfig?: CodexConfigWritePlan;
   codexAutoContinue?: CodexAutoContinuePlan;
+  agentInitialPromptEnvKey?: string;
   permissionSummary?: string;
   capabilitySummary?: string;
   terminalSummary?: string;
@@ -103,7 +104,7 @@ interface ProviderLaunchArtifacts {
   requiredEnvKeys: string[];
   codexConfig?: CodexConfigWritePlan;
   claudeSettings?: ClaudeSettingsWritePlan;
-  permissionSummary: string;
+  permissionSummary?: string;
 }
 
 type LaunchCapabilityOverlay = NonNullable<LaunchRequest["capability_overlay"]>;
@@ -177,6 +178,7 @@ export class LaunchService {
     terminalModeOverride?: LaunchRequest["terminal_mode"],
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
+    const isNativeStartup = normalizedRuntime.startup_mode === "native";
     const normalizedSessionId = (sessionId ?? "").trim();
     const selectedModelId = resolveSelectedModelId(profile, normalizedRuntime);
     const basePlan = {
@@ -187,7 +189,7 @@ export class LaunchService {
       sessionId: normalizedSessionId || undefined,
     } satisfies Pick<LaunchExecutionPlan, "provider" | "launchMode" | "cwd" | "commandBase" | "sessionId">;
 
-    const providerErrors = this.validateProviderConfiguration(profile);
+    const providerErrors = this.validateProviderConfiguration(profile, isNativeStartup);
     if (providerErrors.length > 0) {
       return this.buildInvalidPlan({
         ...basePlan,
@@ -209,24 +211,29 @@ export class LaunchService {
       });
     }
 
-    const permissions = resolveEffectivePermissions({
-      provider: profile.provider,
-      globalPermissions: this.profileService.getState().global_settings.permissions,
-      profilePermissions: profile.permissions ? normalizeProfilePermissions(profile.permissions, profile.provider) : undefined,
-      temporaryPreset: permissionOverride,
-    });
-    const permissionSummary = summarizePermissions(profile.provider, permissions);
-    if (requiresFullAccessConfirmation(permissions)) {
-      return this.buildInvalidPlan({
-        ...basePlan,
-        error: "全权限模式需要二次确认后才能保存或启动。",
-        permissionSummary,
+    let artifacts: ProviderLaunchArtifacts;
+    if (isNativeStartup) {
+      artifacts = this.buildNativeArtifacts(profile, normalizedRuntime, normalizedSessionId);
+    } else {
+      const permissions = resolveEffectivePermissions({
+        provider: profile.provider,
+        globalPermissions: this.profileService.getState().global_settings.permissions,
+        profilePermissions: profile.permissions ? normalizeProfilePermissions(profile.permissions, profile.provider) : undefined,
+        temporaryPreset: permissionOverride,
       });
-    }
+      const permissionSummary = summarizePermissions(profile.provider, permissions);
+      if (requiresFullAccessConfirmation(permissions)) {
+        return this.buildInvalidPlan({
+          ...basePlan,
+          error: "全权限模式需要二次确认后才能保存或启动。",
+          permissionSummary,
+        });
+      }
 
-    const artifacts = profile.provider === PROVIDER_CLAUDE
-      ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.claude)
-      : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.codex);
+      artifacts = profile.provider === PROVIDER_CLAUDE
+        ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.claude)
+        : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.codex);
+    }
     const env = this.mergeInjectedEnv(artifacts.env, normalizedRuntime.extra_env);
     const terminalMode = profile.provider === PROVIDER_CLAUDE
       ? this.buildClaudeTerminalMode(terminalModeOverride ?? normalizedRuntime.terminal_mode)
@@ -251,8 +258,54 @@ export class LaunchService {
       codexConfig: artifacts.codexConfig,
       codexAutoContinue: profile.provider === PROVIDER_CLAUDE ? undefined : this.buildCodexAutoContinuePlan(),
       permissionSummary: artifacts.permissionSummary,
-      capabilitySummary: this.buildCapabilitySummary(capabilityOverlay),
+      capabilitySummary: isNativeStartup ? "原生 CLI 配置" : this.buildCapabilitySummary(capabilityOverlay),
       terminalSummary: this.buildTerminalSummary(profile.provider, terminalMode),
+    };
+  }
+
+  private buildNativeArtifacts(
+    profile: Profile,
+    runtime: RuntimeSettings,
+    sessionId: string,
+  ): ProviderLaunchArtifacts {
+    const commandBase = normalizeCommandExecutable(
+      runtime.command_base,
+      profile.provider === PROVIDER_CLAUDE ? DEFAULT_CLAUDE_COMMAND : DEFAULT_CODEX_COMMAND,
+    );
+    const extraArgs = this.getCombinedExtraArgs(runtime);
+    if (profile.provider === PROVIDER_CLAUDE) {
+      const launchMode = runtime.launch_mode === "resume_picker_all"
+        ? "resume_picker"
+        : runtime.launch_mode;
+      const options = {
+        commandBase: runtime.command_base,
+        launchMode,
+        extraArgs,
+        sessionId,
+        excludeUserSettings: false,
+      };
+      return {
+        commandExecutable: commandBase,
+        commandArgs: buildClaudeArgs(options),
+        command: buildClaudeCommand(options),
+        env: {},
+        requiredEnvKeys: [],
+      };
+    }
+
+    const options = {
+      commandBase: runtime.command_base,
+      launchMode: runtime.launch_mode,
+      extraArgs,
+      sessionId,
+      baseUrl: "",
+    };
+    return {
+      commandExecutable: commandBase,
+      commandArgs: buildCodexArgs(options),
+      command: buildCodexCommand(options),
+      env: {},
+      requiredEnvKeys: [],
     };
   }
 
@@ -456,15 +509,15 @@ export class LaunchService {
     };
   }
 
-  private validateProviderConfiguration(profile: Profile): string[] {
+  private validateProviderConfiguration(profile: Profile, isNativeStartup = false): string[] {
     const errors: string[] = [];
     if (!profile.name.trim()) {
       errors.push("Provider 配置缺少名称。");
     }
-    if (!profile.url.trim()) {
+    if (!isNativeStartup && !profile.url.trim()) {
       errors.push("Provider 配置缺少 Base URL。");
     }
-    if (!profile.key.trim()) {
+    if (!isNativeStartup && !profile.key.trim()) {
       errors.push("Provider 配置缺少 API Key / Token。");
     }
     return errors;

@@ -196,6 +196,7 @@ function createProfileSessionSwitchFixture(options: {
   delayBeta?: boolean;
   sameCwd?: boolean;
 } = {}) {
+  let appReactivatedCallback: ((event: { reason: "second_instance"; reactivated_at: string }) => void) | null = null;
   let alphaProfile: Profile = {
     provider: "claude",
     name: "Alpha",
@@ -368,6 +369,12 @@ function createProfileSessionSwitchFixture(options: {
     updateParameterSettings: vi.fn(async (patch) => ({ ...state.parameter_settings, ...patch })),
     promptUnsavedProfileAction: vi.fn(async () => "discard" as const),
     promptLaunchWithUnsavedChanges: vi.fn(async () => "save_and_launch" as const),
+    onAppReactivated: vi.fn((callback) => {
+      appReactivatedCallback = callback;
+      return () => {
+        appReactivatedCallback = null;
+      };
+    }),
     onStateChanged: vi.fn(() => () => undefined),
     onBalanceProgress: vi.fn(() => () => undefined),
     onUnlockError: vi.fn(() => () => undefined),
@@ -384,6 +391,21 @@ function createProfileSessionSwitchFixture(options: {
     betaSessions,
     getAlphaProfile: () => ({ ...alphaProfile }),
     getBetaProfile: () => ({ ...betaProfile }),
+    setAlphaCwd: (cwd: string) => {
+      state = {
+        ...state,
+        runtime_by_profile: {
+          ...state.runtime_by_profile,
+          [alphaKey]: { ...state.runtime_by_profile[alphaKey], cwd },
+        },
+      };
+    },
+    reactivate: () => {
+      appReactivatedCallback?.({
+        reason: "second_instance",
+        reactivated_at: "2026-07-28T09:00:00.000Z",
+      });
+    },
   };
 }
 
@@ -993,6 +1015,108 @@ describe("App command preview", () => {
 
     expect(container.textContent).toContain("Beta project session");
     expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("hides sessions from the previous cwd while reactivating a long-lived window", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture();
+    const reactivatedSessions = createDeferred<SessionSummary[]>();
+    const reactivatedCwd = "C:/workspace/reactivated";
+    const reactivatedSession = createSession(
+      fixture.alphaKey,
+      reactivatedCwd,
+      "Reactivated project session",
+    );
+    fixture.listSessions.mockImplementation((request) => (
+      request.cwd === reactivatedCwd
+        ? reactivatedSessions.promise
+        : Promise.resolve([fixture.alphaSession])
+    ));
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+    expect(container.textContent).toContain("Alpha project session");
+
+    fixture.setAlphaCwd(reactivatedCwd);
+    await act(async () => {
+      fixture.reactivate();
+      await flushAsyncWork(8);
+    });
+
+    expect(fixture.manager.listProfiles).toHaveBeenCalled();
+    expect(fixture.listSessions).toHaveBeenCalledWith(expect.objectContaining({ cwd: reactivatedCwd }));
+    expect(container.textContent).toContain("正在加载会话...");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      reactivatedSessions.resolve([reactivatedSession]);
+      await flushAsyncWork(8);
+    });
+
+    expect(container.textContent).toContain("Reactivated project session");
+    expect(container.textContent).not.toContain("Alpha project session");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("preserves an unsaved draft and blocks sessions until reactivation is resolved", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture();
+    const reactivatedCwd = "C:/workspace/reactivated";
+    const reactivatedSession = createSession(
+      fixture.alphaKey,
+      reactivatedCwd,
+      "Reactivated project session",
+    );
+    fixture.listSessions.mockImplementation(async (request) => (
+      request.cwd === reactivatedCwd ? [reactivatedSession] : [fixture.alphaSession]
+    ));
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+    const nameInput = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
+      (input) => input.placeholder === "输入 Profile 名称",
+    );
+    expect(nameInput).toBeInstanceOf(HTMLInputElement);
+    await setInputValue(nameInput as HTMLInputElement, "Unsaved Alpha");
+
+    fixture.setAlphaCwd(reactivatedCwd);
+    await act(async () => {
+      fixture.reactivate();
+      await flushAsyncWork(8);
+    });
+
+    expect((nameInput as HTMLInputElement).value).toBe("Unsaved Alpha");
+    expect(container.textContent).toContain("检测到未保存修改");
+    expect(container.textContent).not.toContain("Alpha project session");
+    expect(fixture.listSessions).toHaveBeenCalledTimes(1);
+    const launchButtons = Array.from(container.querySelectorAll<HTMLButtonElement>(".launch-controls button"));
+    expect(launchButtons.length).toBeGreaterThan(0);
+    expect(launchButtons.every((button) => button.disabled)).toBe(true);
+
+    const cancelButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "取消",
+    );
+    await act(async () => {
+      cancelButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork(8);
+    });
+
+    expect((nameInput as HTMLInputElement).value).toBe("Alpha");
+    expect(container.textContent).not.toContain("检测到未保存修改");
+    expect(container.textContent).toContain("Reactivated project session");
 
     await act(async () => {
       root.unmount();

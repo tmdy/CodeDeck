@@ -6,9 +6,14 @@ import type {
   GlobalSettings,
   LaunchMode,
   RuntimeSettings,
+  RuntimeStartupMode,
   RuntimeTerminalMode,
 } from "./shared/profile/types.js";
 import type { BootstrapResult, LocalState } from "./shared/state/local-state.js";
+import {
+  flattenProfileOrganization,
+  type ProfileOrganization,
+} from "./shared/profile/organization.js";
 import {
   getSessionFavoriteKey,
   mergeBootstrapState,
@@ -59,6 +64,10 @@ import {
 } from "./shared/profile-editor-state.js";
 import { APP_NAME } from "./shared/branding.js";
 import type { EncryptionSetupStatus } from "./shared/encryption-status.js";
+import {
+  shouldReconcileAfterHidden,
+  type AppReactivationEvent,
+} from "./shared/app-reactivation.js";
 
 // Components
 import {
@@ -423,15 +432,27 @@ function applyClaudeAliasRecommendationForNewDraft(options: {
   };
 }
 
+function normalizeSessionCwd(value?: string): string {
+  return value?.trim().replace(/\\/g, "/").replace(/\/$/, "").toLowerCase() ?? "";
+}
+
 function sameSessionRequest(left: ListSessionsRequest | null, right: ListSessionsRequest): boolean {
   return left?.provider === right.provider
     && left.scope === right.scope
-    && (left.cwd ?? "") === (right.cwd ?? "")
+    && normalizeSessionCwd(left.cwd) === normalizeSessionCwd(right.cwd)
     && (left.profile_key ?? "") === (right.profile_key ?? "")
     && (left.limit ?? 0) === (right.limit ?? 0)
     && (left.offset ?? 0) === (right.offset ?? 0)
     && (left.cursor ?? "") === (right.cursor ?? "")
     && (left.detail ?? "full") === (right.detail ?? "full");
+}
+
+function sessionMatchesRequest(session: SessionSummary, request: ListSessionsRequest): boolean {
+  return session.provider.trim().toLowerCase() === request.provider.trim().toLowerCase()
+    && (
+      request.scope !== "project"
+      || normalizeSessionCwd(session.cwd) === normalizeSessionCwd(request.cwd)
+    );
 }
 
 function normalizeSessionPageResult(result: SessionPageResult | unknown[]): SessionPageResult {
@@ -479,7 +500,7 @@ function profilesSessionsCacheKey(request: ListSessionsRequest): string {
   return JSON.stringify({
     provider: request.provider.trim().toLowerCase(),
     scope: request.scope,
-    cwd: request.cwd?.trim() ?? "",
+    cwd: normalizeSessionCwd(request.cwd),
     profile_key: request.profile_key?.trim() ?? "",
     limit: request.limit ?? 0,
     offset: request.offset ?? 0,
@@ -492,7 +513,7 @@ function reusableProfilesSessionsCacheKey(request: ListSessionsRequest): string 
   return JSON.stringify({
     provider: request.provider.trim().toLowerCase(),
     scope: request.scope,
-    cwd: request.cwd?.trim().replace(/\\/g, "/").replace(/\/$/, "").toLowerCase() ?? "",
+    cwd: normalizeSessionCwd(request.cwd),
     limit: request.limit ?? 0,
     offset: request.offset ?? 0,
     cursor: request.cursor ?? "",
@@ -545,6 +566,7 @@ function App() {
   const [draftSettingsFile, setDraftSettingsFile] = useState("");
   const [draftArgs, setDraftArgs] = useState("");
   const [draftExcludeUser, setDraftExcludeUser] = useState(true);
+  const [draftStartupMode, setDraftStartupMode] = useState<RuntimeStartupMode>("managed");
   const [draftExtraEnv, setDraftExtraEnv] = useState<Record<string, string>>({});
   const [editorBaseline, setEditorBaseline] = useState<ProfileEditorDraft | null>(null);
   const [modelCatalogByBaseUrl, setModelCatalogByBaseUrl] = useState<Record<string, ModelCatalogCacheEntry>>({});
@@ -599,6 +621,12 @@ function App() {
   const profilesSelectedSessionIdRef = useRef("");
   const profilesSessionsCacheRef = useRef(new Map<string, ProfilesSessionsCacheEntry>());
   const reusableProfilesSessionsCacheRef = useRef(new Map<string, ProfilesSessionsCacheEntry>());
+  const hiddenAtRef = useRef<number | null>(null);
+  const reactivationPromiseRef = useRef<Promise<void> | null>(null);
+  const reactivationCanonicalDataRef = useRef<HydratedProfilesResult | null>(null);
+  const editorDraftRef = useRef<ProfileEditorDraft | null>(null);
+  const editorBaselineRef = useRef<ProfileEditorDraft | null>(null);
+  const [reactivationBlockedMessage, setReactivationBlockedMessage] = useState<string | null>(null);
 
   // 设置
   const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>("global");
@@ -714,6 +742,30 @@ function App() {
   const profilesSessionsUninitialized = currentProfilesSessionsRequest
     ? !sameSessionRequest(profilesSessionsHydratedRequest, currentProfilesSessionsRequest)
     : false;
+  const displayedProfilesSessions = useMemo(() => {
+    if (
+      !currentProfilesSessionsRequest
+      || profilesSessionsUninitialized
+      || reactivationBlockedMessage
+    ) {
+      return [];
+    }
+    return profilesSessions.filter((session) => (
+      sessionMatchesRequest(session, currentProfilesSessionsRequest)
+    ));
+  }, [
+    currentProfilesSessionsRequest,
+    profilesSessions,
+    profilesSessionsUninitialized,
+    reactivationBlockedMessage,
+  ]);
+  const displayedProfilesSelectedSessionId = displayedProfilesSessions.some(
+    (session) => session.session_id === profilesSelectedSessionId,
+  )
+    ? profilesSelectedSessionId
+    : "";
+  const stableReconcileAfterReactivation = useEventCallback(reconcileAfterReactivation);
+  const stableHandleProfileStateChanged = useEventCallback(handleProfileStateChanged);
 
   // ---- 初始化 ----
   useEffect(() => {
@@ -782,14 +834,52 @@ function App() {
     });
   }, [activeTab, profiles.length, startupPhase]);
 
+  useEffect(() => {
+    if (startupPhase !== "ready") {
+      return;
+    }
+
+    const markHidden = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+      }
+    };
+    const reconcileIfStale = () => {
+      if (!shouldReconcileAfterHidden(hiddenAtRef.current)) {
+        return;
+      }
+      hiddenAtRef.current = null;
+      void stableReconcileAfterReactivation("stale_focus");
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        markHidden();
+        return;
+      }
+      reconcileIfStale();
+    };
+    const unsubscribe = window.profileManager?.onAppReactivated?.(
+      (_event: AppReactivationEvent) => {
+        hiddenAtRef.current = null;
+        void stableReconcileAfterReactivation("second_instance");
+      },
+    );
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", reconcileIfStale);
+    return () => {
+      unsubscribe?.();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", reconcileIfStale);
+    };
+  }, [stableReconcileAfterReactivation, startupPhase]);
+
   // 监听 profile state 变更事件
   useEffect(() => {
     if (!window.profileManager) return;
-    const unsub = window.profileManager.onStateChanged((newState) => {
-      setState(newState as LocalState);
-    });
+    const unsub = window.profileManager.onStateChanged(stableHandleProfileStateChanged);
     return unsub;
-  }, [isUnlocked]);
+  }, [isUnlocked, stableHandleProfileStateChanged]);
 
   useEffect(() => {
     if (!window.profileManager) return;
@@ -1078,18 +1168,22 @@ function App() {
     return applyBootstrapResult(result);
   }
 
-  async function loadData(): Promise<HydratedProfilesResult> {
+  async function fetchProfilesData(): Promise<HydratedProfilesResult> {
     if (!window.profileManager) {
       throw new Error("Profile API 不可用");
     }
     const result = await window.profileManager.listProfiles();
+    return normalizeListProfilesResult(result as {
+      profiles: Profile[];
+      state: LocalState;
+      siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+      defaultWorkingDirectory?: string;
+    });
+  }
+
+  async function loadData(): Promise<HydratedProfilesResult> {
     return applyHydratedProfilesResult(
-      normalizeListProfilesResult(result as {
-        profiles: Profile[];
-        state: LocalState;
-        siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
-        defaultWorkingDirectory?: string;
-      }),
+      await fetchProfilesData(),
       { parameterSettingsHydrated: true },
     );
   }
@@ -1098,6 +1192,8 @@ function App() {
     const data = await loadData();
     if (data && syncEditor) {
       syncEditorFromData(data);
+      reactivationCanonicalDataRef.current = null;
+      setReactivationBlockedMessage(null);
     }
     return data;
   }
@@ -1119,7 +1215,118 @@ function App() {
       extra_env: { ...draftExtraEnv },
       extra_args: draftArgs,
       exclude_user_settings: draftExcludeUser,
+      startup_mode: draftStartupMode,
     };
+  }
+
+  editorDraftRef.current = currentDraftSnapshot();
+  editorBaselineRef.current = editorBaseline;
+
+  function handleProfileStateChanged(newState: LocalState): void {
+    const currentRequest = buildProfilesSessionsRequest(state, undefined, { preferDraftCwd: false });
+    const nextRequest = buildProfilesSessionsRequest(newState, undefined, { preferDraftCwd: false });
+    const requestChanged = currentRequest
+      ? !nextRequest || !sameSessionRequest(currentRequest, nextRequest)
+      : Boolean(nextRequest);
+    if (requestChanged) {
+      logRendererEvent(
+        "profiles_session_request_invalidated",
+        "Profile state changed the active session request",
+        { provider: nextRequest?.provider, cwd: nextRequest?.cwd },
+      );
+      clearProfilesSessionsState({ loading: Boolean(nextRequest) });
+    }
+    setState(newState);
+  }
+
+  async function reconcileAfterReactivation(
+    trigger: "second_instance" | "stale_focus",
+  ): Promise<void> {
+    if (startupPhase !== "ready" || !window.profileManager) {
+      return;
+    }
+    if (reactivationPromiseRef.current) {
+      logRendererEvent(
+        "renderer_reconcile_coalesced",
+        "Reactivation reconciliation joined an in-flight request",
+        { trigger },
+      );
+      await reactivationPromiseRef.current;
+      return;
+    }
+
+    const reconciliation = (async () => {
+      const initiallyDirty = Boolean(
+        editorDraftRef.current
+        && hasProfileDraftChanges(editorDraftRef.current, editorBaselineRef.current),
+      );
+      clearProfilesSessionsState({
+        loading: !initiallyDirty,
+        clearCache: true,
+      });
+      if (initiallyDirty) {
+        setReactivationBlockedMessage("检测到未保存修改。请先保存或取消修改，再加载当前目录会话。");
+      }
+      logRendererEvent(
+        "renderer_reconcile_started",
+        "Reactivation reconciliation started",
+        { trigger, initiallyDirty },
+      );
+
+      try {
+        const data = await fetchProfilesData();
+        const isDirty = Boolean(
+          editorDraftRef.current
+          && hasProfileDraftChanges(editorDraftRef.current, editorBaselineRef.current),
+        );
+        applyHydratedProfilesResult(data, { parameterSettingsHydrated: true });
+        reactivationCanonicalDataRef.current = data;
+
+        if (isDirty) {
+          clearProfilesSessionsState({ loading: false, resetHydration: false });
+          setReactivationBlockedMessage("检测到未保存修改。请先保存或取消修改，再加载当前目录会话。");
+          logRendererEvent(
+            "renderer_reconcile_blocked_by_draft",
+            "Reactivation reconciliation preserved an unsaved profile draft",
+            { trigger },
+          );
+          return;
+        }
+
+        syncEditorFromData(data);
+        reactivationCanonicalDataRef.current = null;
+        setReactivationBlockedMessage(null);
+        if (activeTab === "profiles") {
+          await handleLoadProfilesSessions(data.state, undefined, { source: "auto" });
+        }
+        logRendererEvent(
+          "renderer_reconcile_completed",
+          "Reactivation reconciliation completed",
+          {
+            trigger,
+            provider: data.state.selected_provider,
+            profileKey: data.state.selected_profile_key,
+          },
+        );
+      } catch (error) {
+        clearProfilesSessionsState({ loading: false });
+        setErrorMessage(error instanceof Error ? error.message : "重新同步配置失败");
+        logRendererEvent(
+          "renderer_reconcile_failed",
+          "Reactivation reconciliation failed",
+          { trigger },
+        );
+      }
+    })();
+
+    reactivationPromiseRef.current = reconciliation;
+    try {
+      await reconciliation;
+    } finally {
+      if (reactivationPromiseRef.current === reconciliation) {
+        reactivationPromiseRef.current = null;
+      }
+    }
   }
 
   function applyDraftSnapshot(draft: ProfileEditorDraft) {
@@ -1137,6 +1344,7 @@ function App() {
     setDraftArgs(draft.extra_args);
     setDraftExtraEnv({ ...draft.extra_env });
     setDraftExcludeUser(draft.exclude_user_settings);
+    setDraftStartupMode(draft.startup_mode ?? "managed");
   }
 
   function syncEditorFromData(data: HydratedProfilesResult) {
@@ -1275,6 +1483,7 @@ function App() {
     draftSettingsFile,
     draftArgs,
     draftExcludeUser,
+    draftStartupMode,
   ]);
 
   // 初始预览：ready 后立即计算（一次 IPC，实测约 2ms），不再 idle 延迟 600ms。
@@ -1555,6 +1764,17 @@ function App() {
   function handleCancelProfileEdit() {
     setErrorMessage(null);
     setSuccessMessage(null);
+    const reactivationData = reactivationCanonicalDataRef.current;
+    if (reactivationData) {
+      reactivationCanonicalDataRef.current = null;
+      setReactivationBlockedMessage(null);
+      syncEditorFromData(reactivationData);
+      clearProfilesSessionsState({ loading: true, clearCache: true });
+      if (activeTab === "profiles") {
+        void handleLoadProfilesSessions(reactivationData.state, undefined, { source: "auto" });
+      }
+      return;
+    }
     if (editorBaseline) {
       applyDraftSnapshot(editorBaseline);
       return;
@@ -1664,6 +1884,23 @@ function App() {
   async function handleReorder(orderedKeys: ProfileKey[]) {
     if (!window.profileManager || !state) return;
     await window.profileManager.reorderProfiles(state.selected_provider, orderedKeys);
+  }
+
+  async function handleProfileOrganizationChange(organization: ProfileOrganization) {
+    if (!window.profileManager || !state) return;
+    const provider = state.selected_provider;
+    try {
+      if (window.profileManager.updateProfileOrganization) {
+        await window.profileManager.updateProfileOrganization(provider, organization);
+      } else {
+        await window.profileManager.reorderProfiles(
+          provider,
+          flattenProfileOrganization(organization),
+        );
+      }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "保存 Profile 分组失败");
+    }
   }
 
   // ---- 启动操作 ----
@@ -1890,7 +2127,11 @@ function App() {
       clearProfilesSessionsState();
       return;
     }
-    const request = buildProfilesSessionsRequest(nextState, cwdOverride);
+    const request = buildProfilesSessionsRequest(
+      nextState,
+      cwdOverride,
+      { preferDraftCwd: false },
+    );
     if (!request) {
       clearProfilesSessionsState();
       return;
@@ -1930,6 +2171,11 @@ function App() {
         requestSeq !== profilesSessionsRequestSeqRef.current
         || !sameSessionRequest(latestProfilesSessionsRequestRef.current, request)
       ) {
+        logRendererEvent(
+          "profiles_session_stale_response_ignored",
+          "Ignored a stale profile session response",
+          { provider: request.provider, cwd: request.cwd },
+        );
         return;
       }
       const page = normalizeSessionPageResult(result);
@@ -1937,7 +2183,18 @@ function App() {
         sessionCatalogRevisionRef.current[request.provider] ?? 0,
         page.revision,
       );
-      const loadedSessions = page.sessions;
+      const loadedSessions = page.sessions.filter((session) => sessionMatchesRequest(session, request));
+      if (loadedSessions.length !== page.sessions.length) {
+        logRendererEvent(
+          "profiles_session_scope_mismatch_ignored",
+          "Ignored profile sessions outside the active request scope",
+          {
+            provider: request.provider,
+            cwd: request.cwd,
+            ignoredCount: page.sessions.length - loadedSessions.length,
+          },
+        );
+      }
       const nextSessions = shouldKeepExisting && (options.source === "manual" || options.source === "followup")
         ? mergeSessionSummaries(
             loadedSessions,
@@ -2151,7 +2408,7 @@ function App() {
         return;
       }
       const detailedSession = detail as SessionSummary | null;
-      if (!detailedSession) {
+      if (!detailedSession || !sessionMatchesRequest(detailedSession, request)) {
         return;
       }
       setProfilesSessions((current) => current.map((candidate) => (
@@ -2968,6 +3225,10 @@ function App() {
     return state.profile_order_by_provider[state.selected_provider] ?? [];
   }, [state?.selected_provider, state?.profile_order_by_provider]);
 
+  const profileOrganization = state?.profile_organization_by_provider[
+    state.selected_provider
+  ];
+
   const balanceEntries = useMemo(() => {
     const result: Record<ProfileKey, ReturnType<typeof buildBalanceListEntry>> = {};
     if (!state?.balance_checks_by_profile) return result;
@@ -3002,6 +3263,7 @@ function App() {
     extra_args: draftArgs,
     launch_mode: "new" as const,
     exclude_user_settings: draftExcludeUser,
+    startup_mode: draftStartupMode,
   }), [
     draftArgs,
     draftCommandBase,
@@ -3009,6 +3271,7 @@ function App() {
     draftExtraEnv,
     draftExcludeUser,
     draftSettingsFile,
+    draftStartupMode,
   ]);
   const globalPermissions = useMemo(
     () => {
@@ -3102,6 +3365,7 @@ function App() {
     draftArgs,
     draftExtraEnv,
     draftExcludeUser,
+    draftStartupMode,
     editorBaseline,
     editingKey,
     state?.selected_profile_key,
@@ -3114,6 +3378,7 @@ function App() {
       case "extra_args": setDraftArgs(val as string); break;
       case "extra_env": setDraftExtraEnv(val as Record<string, string>); break;
       case "exclude_user_settings": setDraftExcludeUser(val as boolean); break;
+      case "startup_mode": setDraftStartupMode(val as RuntimeStartupMode); break;
     }
   }, []);
 
@@ -3143,6 +3408,7 @@ function App() {
   const stableHandleSessionsViewSwitch = useEventCallback(handleSessionsViewSwitch);
   const stableHandleSelectProfile = useEventCallback(handleSelectProfile);
   const stableHandleReorder = useEventCallback(handleReorder);
+  const stableHandleProfileOrganizationChange = useEventCallback(handleProfileOrganizationChange);
   const stableHandleNewProfile = useEventCallback(handleNewProfile);
   const stableHandleCancelProfileEdit = useEventCallback(handleCancelProfileEdit);
   const stableHandleCloneProfile = useEventCallback(handleCloneProfile);
@@ -3235,11 +3501,13 @@ function App() {
   const stableResumeLaunchAction = useCallback(
     () => void stableHandleLaunch(
       "resume_selected",
-      profilesSelectedSessionId,
+      displayedProfilesSelectedSessionId,
       undefined,
-      sessionSourceFromSummary(profilesSessions.find((session) => session.session_id === profilesSelectedSessionId)),
+      sessionSourceFromSummary(displayedProfilesSessions.find(
+        (session) => session.session_id === displayedProfilesSelectedSessionId,
+      )),
     ),
-    [profilesSelectedSessionId, profilesSessions, stableHandleLaunch],
+    [displayedProfilesSelectedSessionId, displayedProfilesSessions, stableHandleLaunch],
   );
   const stableTemporaryReadonlyLaunchAction = useCallback(
     () => void stableHandleLaunch("new", undefined, "readonly"),
@@ -3434,9 +3702,11 @@ function App() {
               activeProvider: selectedProvider,
               selectedKey: state?.selected_profile_key ?? "",
               orderedKeys,
+              organization: profileOrganization,
               balanceEntries,
               onSelect: stableHandleSelectProfile,
               onReorder: stableHandleReorder,
+              onOrganizationChange: stableHandleProfileOrganizationChange,
               onCreate: stableHandleNewProfile,
               onClone: stableHandleCloneProfile,
               onDelete: stableHandleDeleteProfile,
@@ -3500,14 +3770,16 @@ function App() {
               preview: launchPanelPreview,
               monitorModeEnabled: profilesLaunchMonitorModeEnabled,
               onMonitorModeChange: stableHandleProfilesLaunchMonitorModeChange,
-              disabled: isBusy || !state?.selected_profile_key,
-              resumeDisabled: !profilesSelectedSessionId,
-              sessions: profilesSessions,
-              sessionsLoading: profilesSessionsLoading || profilesSessionsUninitialized,
+              disabled: isBusy || !state?.selected_profile_key || Boolean(reactivationBlockedMessage),
+              resumeDisabled: !displayedProfilesSelectedSessionId,
+              sessions: displayedProfilesSessions,
+              sessionsLoading: !reactivationBlockedMessage
+                && (profilesSessionsLoading || profilesSessionsUninitialized),
               sessionsRefreshing: profilesSessionsRefreshing,
               sessionsUninitialized: profilesSessionsUninitialized,
+              sessionsBlockedMessage: reactivationBlockedMessage,
               sessionsCatalogState: profilesCatalogState,
-              selectedSessionId: profilesSelectedSessionId,
+              selectedSessionId: displayedProfilesSelectedSessionId,
               favoriteSessionKeys: sessionFavoriteKeys,
               getSessionFavoriteKey,
               onSelectSession: stableHandleSelectProfilesSession,
@@ -3592,6 +3864,7 @@ function App() {
               parameterSettingsProps={{
                 settings: state?.parameter_settings ?? {} as ParameterSettings,
                 onChange: stableHandleParameterSettingsChange,
+                profiles,
                 disabled: isBusy,
               }}
             />

@@ -1,4 +1,4 @@
-import type { ParameterSettings } from "../parameter/types.js";
+import { normalizeParameterSettings, type ParameterSettings } from "../parameter/types.js";
 import {
   normalizeGlobalSettings,
   type GlobalSettings,
@@ -32,10 +32,10 @@ export class SettingsStateService {
 
   async updateParameterSettings(settings: Partial<ParameterSettings>): Promise<ParameterSettings> {
     const state = cloneLocalState(this.stateAccessor.get());
-    state.parameter_settings = {
+    state.parameter_settings = normalizeParameterSettings({
       ...state.parameter_settings,
       ...settings,
-    };
+    });
     await this.stateAccessor.save(state);
     return state.parameter_settings;
   }

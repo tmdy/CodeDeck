@@ -21,9 +21,11 @@ import type { LocalState } from "./local-state.js";
 import {
   defaultLocalState,
   ensureInitialized,
+  normalizeProfileOrganizationsByProvider,
   normalizeSessionFavorites,
   normalizeWorkingDirectoryFavorites,
 } from "./local-state.js";
+import { cloneProfileOrganization, type ProfileOrganization } from "../profile/organization.js";
 import { isSessionListScope, type SessionListScope } from "../services/session-service.js";
 import { normalizeSessionsTabScope } from "../session-history-state.js";
 import { normalizeCheckinStatesByAccount } from "../checkin/types.js";
@@ -35,6 +37,7 @@ interface RawState {
   selected_profile_name?: string;  // 遗留字段
   selected_profile_key_by_provider: Record<string, string>;
   profile_order_by_provider: Record<string, string[]>;
+  profile_organization_by_provider?: Record<string, ProfileOrganization>;
   runtime_by_profile: Record<string, RuntimeSettings>;
   connectivity_tests_by_profile?: unknown;
   balance_checks_by_profile: Record<string, BalanceCheckState>;
@@ -89,6 +92,10 @@ export class LocalStateStore {
       selected_profile_key: normalized.selected_profile_key,
       selected_profile_key_by_provider: {},
       profile_order_by_provider: {},
+      profile_organization_by_provider: normalizeProfileOrganizationsByProvider(
+        normalized.profile_organization_by_provider,
+        normalized.profile_order_by_provider,
+      ),
       runtime_by_profile: {},
       balance_checks_by_profile: {},
       checkin_states_by_account: normalizeCheckinStatesByAccount(
@@ -241,6 +248,11 @@ function normalizeState(raw: RawState): LocalState {
     state.balance_checks_by_profile[nKey] = ts;
   }
 
+  state.profile_organization_by_provider = normalizeProfileOrganizationsByProvider(
+    raw.profile_organization_by_provider,
+    state.profile_order_by_provider,
+  );
+
   state.checkin_states_by_account = normalizeCheckinStatesByAccount(
     raw.checkin_states_by_account,
   );
@@ -275,6 +287,12 @@ export function cloneLocalState(state: LocalState): LocalState {
     selected_profile_key_by_provider: { ...state.selected_profile_key_by_provider },
     profile_order_by_provider: Object.fromEntries(
       Object.entries(state.profile_order_by_provider).map(([k, v]) => [k, [...v]]),
+    ),
+    profile_organization_by_provider: Object.fromEntries(
+      Object.entries(state.profile_organization_by_provider).map(([provider, organization]) => [
+        provider,
+        cloneProfileOrganization(organization),
+      ]),
     ),
     runtime_by_profile: Object.fromEntries(
       Object.entries(state.runtime_by_profile).map(([k, v]) => [
