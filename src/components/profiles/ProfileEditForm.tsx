@@ -19,6 +19,7 @@ import {
   shouldRecommendClaudeSingleModelCompatibility,
   isOfficialNativeProfile,
 } from "../../shared/profile/types.js";
+import { parseRuntimeEnvText } from "../../shared/profile/runtime-env.js";
 import { defaultProfilePermissions, normalizeProfilePermissions, type ProfilePermissions } from "../../shared/profile/permissions.js";
 import { GlassCard } from "../common/GlassCard.jsx";
 import { PermissionSettingsCard } from "../permissions/PermissionSettingsCard.jsx";
@@ -115,6 +116,9 @@ export const ProfileEditForm = memo(function ProfileEditForm({
 }: ProfileEditFormProps) {
   const [showApiKey, setShowApiKey] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [bulkEnvOpen, setBulkEnvOpen] = useState(false);
+  const [bulkEnvText, setBulkEnvText] = useState("");
+  const [bulkEnvStatus, setBulkEnvStatus] = useState("");
   const advancedMapping = draft.advancedModelMapping;
   const isNativeStartup = isOfficialNativeProfile({ provider, name: draft.name });
   const claudeAliasMode = resolveClaudeModelAliasMode(advancedMapping);
@@ -220,6 +224,34 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     delete nextEnv[key];
     onRuntimeChange("extra_env", nextEnv);
   }, [onRuntimeChange, runtimeEnv]);
+
+  const cancelBulkEnvImport = useCallback(() => {
+    setBulkEnvOpen(false);
+    setBulkEnvText("");
+    setBulkEnvStatus("");
+  }, []);
+
+  const importBulkRuntimeEnv = useCallback(() => {
+    const parsed = parseRuntimeEnvText(bulkEnvText);
+    const importedCount = Object.keys(parsed.values).length;
+
+    if (importedCount > 0) {
+      onRuntimeChange("extra_env", {
+        ...runtimeEnv,
+        ...parsed.values,
+      });
+    }
+
+    if (parsed.invalidLineNumbers.length > 0) {
+      const prefix = importedCount > 0 ? `已导入 ${importedCount} 项，` : "未导入任何项目，";
+      setBulkEnvStatus(`${prefix}已跳过第 ${parsed.invalidLineNumbers.join("、")} 行。`);
+      return;
+    }
+
+    setBulkEnvOpen(false);
+    setBulkEnvText("");
+    setBulkEnvStatus("");
+  }, [bulkEnvText, onRuntimeChange, runtimeEnv]);
 
   const updateAdvancedMapping = useCallback((changes: Partial<AdvancedModelMapping>) => {
     onAdvancedModelMappingChange({
@@ -764,7 +796,58 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 >
                   添加环境变量
                 </button>
+                <button
+                  type="button"
+                  className="secondary-button small"
+                  onClick={() => {
+                    setBulkEnvOpen(true);
+                    setBulkEnvStatus("");
+                  }}
+                  disabled={disabled || bulkEnvOpen}
+                >
+                  批量粘贴
+                </button>
               </div>
+              {bulkEnvOpen && (
+                <div className="profile-runtime-env-import">
+                  <label>
+                    批量内容
+                    <textarea
+                      value={bulkEnvText}
+                      onChange={(event) => {
+                        setBulkEnvText(event.target.value);
+                        setBulkEnvStatus("");
+                      }}
+                      placeholder={"HTTP_PROXY=http://127.0.0.1:10808\nHTTPS_PROXY=http://127.0.0.1:10808"}
+                      autoFocus
+                      disabled={disabled}
+                    />
+                  </label>
+                  {bulkEnvStatus && (
+                    <p className="profile-runtime-env-import-status" role="status">
+                      {bulkEnvStatus}
+                    </p>
+                  )}
+                  <div className="profile-runtime-env-import-actions">
+                    <button
+                      type="button"
+                      className="secondary-button small"
+                      onClick={cancelBulkEnvImport}
+                      disabled={disabled}
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      className="small"
+                      onClick={importBulkRuntimeEnv}
+                      disabled={disabled || !bulkEnvText.trim()}
+                    >
+                      导入
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             <label className="checkbox-label">
               <input

@@ -370,6 +370,82 @@ describe("ProfileEditForm", () => {
     container.remove();
   });
 
+  it("should bulk import runtime environment variables and report skipped lines", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onRuntimeChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "codex",
+            settings_file: "",
+            extra_args: "",
+            extra_env: { HTTP_PROXY: "old", KEEP_ME: "unchanged" },
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="codex"
+          modelOptions={[]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={onRuntimeChange}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const bulkButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "批量粘贴",
+    );
+    await act(async () => {
+      bulkButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const textarea = container.querySelector("textarea");
+    expect(textarea).toBeInstanceOf(HTMLTextAreaElement);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "HTTP_PROXY=http://127.0.0.1:10808\ninvalid line\nTOKEN=part=two");
+      textarea?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const importButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "导入",
+    );
+    await act(async () => {
+      importButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onRuntimeChange).toHaveBeenLastCalledWith("extra_env", {
+      HTTP_PROXY: "http://127.0.0.1:10808",
+      KEEP_ME: "unchanged",
+      TOKEN: "part=two",
+    });
+    expect(container.querySelector('[role="status"]')?.textContent).toBe("已导入 2 项，已跳过第 2 行。");
+    expect(container.querySelector("textarea")).toBeInstanceOf(HTMLTextAreaElement);
+
+    const cancelButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "取消",
+    );
+    await act(async () => {
+      cancelButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container.querySelector("textarea")).toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("should expose working directory favorite controls", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
