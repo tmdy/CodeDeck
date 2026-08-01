@@ -1,13 +1,16 @@
 import type {
   AdvancedModelMapping,
   Profile,
+  ProfileChannel,
   RuntimeSettings,
   RuntimeStartupMode,
 } from "./profile/types.js";
 import {
   defaultRuntimeSettings,
+  getActiveProfileChannel,
   normalizeClaudeReasoningEffort,
   normalizeCodexReasoningEffort,
+  normalizeProfile,
   shouldRecommendClaudeSingleModelCompatibility,
 } from "./profile/types.js";
 import { normalizeProfilePermissions, type ProfilePermissions } from "./profile/permissions.js";
@@ -17,6 +20,8 @@ export interface ProfileEditorDraft {
   url: string;
   key: string;
   selectedModelId: string;
+  channels?: ProfileChannel[];
+  activeChannelId?: string;
   advancedModelMapping: AdvancedModelMapping;
   permissions: ProfilePermissions | null;
   balanceSessionSelection: string;
@@ -50,11 +55,15 @@ export function buildSelectedProfileDraft(
   },
 ): ProfileEditorDraft {
   const baseRuntime = runtime ?? defaultRuntimeSettings(provider);
+  const normalizedProfile = normalizeProfile(profile);
+  const activeChannel = getActiveProfileChannel(normalizedProfile);
   return {
     name: profile.name,
     url: profile.url,
-    key: profile.key,
-    selectedModelId: profile.selectedModelId ?? baseRuntime.model ?? "",
+    key: activeChannel.key,
+    selectedModelId: activeChannel.selectedModelId ?? baseRuntime.model ?? "",
+    channels: normalizedProfile.channels?.map(cloneProfileChannel) ?? [],
+    activeChannelId: normalizedProfile.activeChannelId ?? "",
     advancedModelMapping: cloneAdvancedModelMapping(profile.advancedModelMapping),
     permissions: profile.permissions ? normalizeProfilePermissions(profile.permissions, provider) : null,
     balanceSessionSelection: profile.balance_session_id ?? "auto",
@@ -91,6 +100,13 @@ export function buildNewProfileDraft(provider: string, initial?: { url?: string;
     url,
     key: "",
     selectedModelId,
+    channels: [{
+      id: "default",
+      name: "默认渠道",
+      key: "",
+      ...(selectedModelId ? { selectedModelId } : {}),
+    }],
+    activeChannelId: "default",
     advancedModelMapping: cloneAdvancedModelMapping(useClaudeSingleModelCompat
       ? {
           enabled: true,
@@ -139,6 +155,8 @@ export function hasProfileDraftChanges(
       current.url ||
       current.key ||
       current.selectedModelId ||
+      !profileChannelsEqual(editorChannels(current), [{ id: "default", name: "默认渠道", key: "" }]) ||
+      (current.activeChannelId ?? "default") !== "default" ||
       current.advancedModelMapping.enabled ||
       current.permissions !== null ||
       current.balanceSessionSelection !== "auto" ||
@@ -168,6 +186,8 @@ export function hasProfileDraftChanges(
     current.url !== baseline.url ||
     current.key !== baseline.key ||
     current.selectedModelId !== baseline.selectedModelId ||
+    !profileChannelsEqual(editorChannels(current), editorChannels(baseline)) ||
+    (current.activeChannelId ?? "default") !== (baseline.activeChannelId ?? "default") ||
     !advancedModelMappingsEqual(current.advancedModelMapping, baseline.advancedModelMapping) ||
     !profilePermissionsEqual(current.permissions, baseline.permissions) ||
     current.balanceSessionSelection !== baseline.balanceSessionSelection ||
@@ -201,10 +221,22 @@ export function hasOnlyProfileDraftSelectedModelIdChange(
     return false;
   }
 
-  return !hasProfileDraftChanges(
-    { ...current, selectedModelId: baseline.selectedModelId },
-    baseline,
-  );
+  const currentChannels = editorChannels(current);
+  const baselineChannels = editorChannels(baseline);
+  const currentActiveChannelId = current.activeChannelId ?? currentChannels[0]?.id ?? "default";
+  const baselineActiveChannelId = baseline.activeChannelId ?? baselineChannels[0]?.id ?? "default";
+  const restoredChannels = currentChannels.map((channel) => channel.id === currentActiveChannelId
+    ? {
+        ...channel,
+        selectedModelId: baselineChannels.find((item) => item.id === baselineActiveChannelId)
+          ?.selectedModelId,
+      }
+    : channel);
+  return !hasProfileDraftChanges({
+    ...current,
+    selectedModelId: baseline.selectedModelId,
+    channels: restoredChannels,
+  }, baseline);
 }
 
 export function hasOnlyProfileDraftReasoningEffortChange(
@@ -330,6 +362,28 @@ function envMapsEqual(left?: Record<string, string> | null, right?: Record<strin
 
 function cloneEnvMap(value?: Record<string, string>): Record<string, string> {
   return { ...(value ?? {}) };
+}
+
+function cloneProfileChannel(channel: ProfileChannel): ProfileChannel {
+  return {
+    ...channel,
+    ...(channel.models ? { models: [...channel.models] } : {}),
+  };
+}
+
+function profileChannelsEqual(left: ProfileChannel[], right: ProfileChannel[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function editorChannels(draft: Pick<ProfileEditorDraft, "channels" | "key" | "selectedModelId">): ProfileChannel[] {
+  return draft.channels?.length
+    ? draft.channels
+    : [{
+        id: "default",
+        name: "默认渠道",
+        key: draft.key,
+        ...(draft.selectedModelId ? { selectedModelId: draft.selectedModelId } : {}),
+      }];
 }
 
 export function balanceSessionDraftsEqual(

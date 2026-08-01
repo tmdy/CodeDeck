@@ -51,6 +51,39 @@ function makeResolvedSession(overrides: Partial<SiteBalanceSession> = {}): SiteB
 }
 
 describe("BalanceService", () => {
+  it("uses a learned platform family without probing management endpoints first", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      code: 0,
+      data: { basicBalance: "2", bindBalance: "1", usedBasicBalance: "0.5" },
+    }));
+    const onPathLearned = vi.fn();
+    const service = new BalanceService(fetchMock as typeof fetch);
+
+    const result = await service.query(
+      makeProfile("https://relay.example.com/v1"),
+      60_000,
+      makeResolvedSession({
+        base_url: "https://relay.example.com",
+        access_token: "voapi-jwt",
+      }),
+      {
+        learnedPath: {
+          family: "voapi_v2",
+          auth_mode: "bearer",
+          learned_at: new Date().toISOString(),
+          credential_updated_at: "2026-05-05T09:00:00.000Z",
+          base_url: "https://relay.example.com",
+        },
+        onPathLearned,
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://relay.example.com/api/user/info");
+    expect(onPathLearned).toHaveBeenCalledWith(expect.objectContaining({ family: "voapi_v2" }));
+  });
+
   it("normalizes base urls back to the site root before probing", () => {
     expect(normalizeBalanceBaseUrl("https://relay.example.com/v1/chat/completions")).toBe(
       "https://relay.example.com",

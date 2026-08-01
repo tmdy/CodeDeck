@@ -30,6 +30,7 @@ import { isSessionListScope, type SessionListScope } from "../services/session-s
 import { normalizeSessionsTabScope } from "../session-history-state.js";
 import { normalizeCheckinStatesByAccount } from "../checkin/types.js";
 import { atomicWriteJson, recoverAtomicWrite } from "../atomic-file.js";
+import { normalizeSiteCapabilityCache } from "../site-capability-cache.js";
 
 interface RawState {
   selected_provider: string;
@@ -43,6 +44,7 @@ interface RawState {
   balance_checks_by_profile: Record<string, BalanceCheckState>;
   checkin_states_by_account?: unknown;
   checkin_next_scheduled_at?: unknown;
+  site_capability_cache?: unknown;
   global_settings: GlobalSettings;
   model_mappings?: unknown[];
   parameter_settings?: ParameterSettings;
@@ -102,6 +104,7 @@ export class LocalStateStore {
         normalized.checkin_states_by_account,
       ),
       checkin_next_scheduled_at: normalized.checkin_next_scheduled_at,
+      site_capability_cache: normalizeSiteCapabilityCache(normalized.site_capability_cache),
       global_settings: {
         ...normalizeGlobalSettings(normalized.global_settings),
         proxy: "",
@@ -259,6 +262,7 @@ function normalizeState(raw: RawState): LocalState {
   state.checkin_next_scheduled_at = typeof raw.checkin_next_scheduled_at === "string"
     ? raw.checkin_next_scheduled_at
     : "";
+  state.site_capability_cache = normalizeSiteCapabilityCache(raw.site_capability_cache);
 
   for (const [providerID, scope] of Object.entries(raw.sessions_tab_scope_by_provider ?? {})) {
     if (isSessionListScope(scope)) {
@@ -305,6 +309,7 @@ export function cloneLocalState(state: LocalState): LocalState {
     ),
     checkin_states_by_account: normalizeCheckinStatesByAccount(state.checkin_states_by_account),
     checkin_next_scheduled_at: state.checkin_next_scheduled_at,
+    site_capability_cache: normalizeSiteCapabilityCache(state.site_capability_cache),
     global_settings: { ...state.global_settings },
     model_mappings: state.model_mappings ? [...state.model_mappings] : undefined,
     parameter_settings: { ...state.parameter_settings },

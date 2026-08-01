@@ -301,21 +301,28 @@ export function ParameterSettingsPanel({
           />
         </label>
         {profiles.length > 0 && (
-          <div className="parameter-profile-blacklist">
-            {profiles.map((profile) => {
-              const profileKey = itemKey(profile);
-              const blocked = settings.agent_bridge?.blocked_profile_keys?.includes(profileKey) ?? false;
-              return (
-                <label className="checkbox-label" key={profileKey}>
-                  <input
-                    type="checkbox"
-                    checked={blocked}
-                    onChange={(e) => {
+          <div className="parameter-profile-blacklist-section">
+            <div className="parameter-profile-blacklist-hint">
+              <span>Profile 黑名单</span>
+              <small>点击方框切换，灰色表示禁止调用</small>
+            </div>
+            <div className="parameter-profile-blacklist" role="group" aria-label="Profile 黑名单">
+              {profiles.map((profile) => {
+                const profileKey = itemKey(profile);
+                const blocked = settings.agent_bridge?.blocked_profile_keys?.includes(profileKey) ?? false;
+                return (
+                  <button
+                    type="button"
+                    className="parameter-profile-blacklist-option"
+                    key={profileKey}
+                    aria-pressed={blocked}
+                    title={blocked ? "点击移出黑名单" : "点击加入黑名单"}
+                    onClick={() => {
                       const current = new Set(settings.agent_bridge?.blocked_profile_keys ?? []);
-                      if (e.target.checked) {
-                        current.add(profileKey);
-                      } else {
+                      if (blocked) {
                         current.delete(profileKey);
+                      } else {
+                        current.add(profileKey);
                       }
                       onChange({
                         agent_bridge: {
@@ -325,11 +332,13 @@ export function ParameterSettingsPanel({
                       });
                     }}
                     disabled={disabled}
-                  />
-                  禁止调用 {profile.name} ({profile.provider})
-                </label>
-              );
-            })}
+                  >
+                    <span>{profile.name}</span>
+                    <small>{profile.provider}</small>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </GlassCard>

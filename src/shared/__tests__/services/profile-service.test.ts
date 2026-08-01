@@ -514,6 +514,7 @@ describe("ProfileService", () => {
 
       expect(updated.auto_checkin_enabled).toBe(true);
       expect(updated.access_token).toBe("token-sess-a");
+      expect(updated.updated_at).toBe("2026-05-05T09:00:00.000Z");
       expect(localService.getSiteBalanceSessionsByBaseUrl()["https://new-api.example.com"][0]
         .auto_checkin_enabled).toBe(true);
     });

@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import type {
   AdvancedModelMapping,
   Profile,
+  ProfileChannel,
   ProfileKey,
   GlobalSettings,
   LaunchMode,
@@ -557,6 +558,10 @@ function App() {
   const [draftUrl, setDraftUrl] = useState("");
   const [draftKey, setDraftKey] = useState("");
   const [draftModel, setDraftModel] = useState("");
+  const [draftChannels, setDraftChannels] = useState<ProfileChannel[]>([
+    { id: "default", name: "默认渠道", key: "" },
+  ]);
+  const [draftActiveChannelId, setDraftActiveChannelId] = useState("default");
   const [draftAdvancedModelMapping, setDraftAdvancedModelMapping] = useState(buildNewProfileDraft(PROVIDER_CLAUDE).advancedModelMapping);
   const [draftPermissions, setDraftPermissions] = useState<ProfilePermissions | null>(null);
   const [draftBalanceSessionSelection, setDraftBalanceSessionSelection] = useState("auto");
@@ -1204,6 +1209,11 @@ function App() {
       url: draftUrl,
       key: draftKey,
       selectedModelId: draftModel,
+      channels: draftChannels.map((channel) => ({
+        ...channel,
+        ...(channel.models ? { models: [...channel.models] } : {}),
+      })),
+      activeChannelId: draftActiveChannelId,
       advancedModelMapping: draftAdvancedModelMapping,
       permissions: draftPermissions,
       balanceSessionSelection: draftBalanceSessionSelection,
@@ -1334,6 +1344,17 @@ function App() {
     setDraftUrl(draft.url);
     setDraftKey(draft.key);
     setDraftModel(draft.selectedModelId);
+    const channels = draft.channels ?? [{
+      id: "default",
+      name: "默认渠道",
+      key: draft.key,
+      ...(draft.selectedModelId ? { selectedModelId: draft.selectedModelId } : {}),
+    }];
+    setDraftChannels(channels.map((channel) => ({
+      ...channel,
+      ...(channel.models ? { models: [...channel.models] } : {}),
+    })));
+    setDraftActiveChannelId(draft.activeChannelId ?? channels[0]?.id ?? "default");
     setDraftAdvancedModelMapping(draft.advancedModelMapping);
     setDraftPermissions(draft.permissions);
     setDraftBalanceSessionSelection(draft.balanceSessionSelection);
@@ -1555,6 +1576,8 @@ function App() {
         url: snapshot.url,
         key: snapshot.key,
         selectedModelId: snapshot.selectedModelId,
+        channels: snapshot.channels,
+        activeChannelId: snapshot.activeChannelId,
         advancedModelMapping: snapshot.advancedModelMapping,
         permissions: snapshot.permissions ?? undefined,
         balance_session_id: balanceSessionId,
@@ -1884,6 +1907,27 @@ function App() {
   async function handleReorder(orderedKeys: ProfileKey[]) {
     if (!window.profileManager || !state) return;
     await window.profileManager.reorderProfiles(state.selected_provider, orderedKeys);
+  }
+
+  async function handleSelectProfileChannel(channelId: string) {
+    const selectProfileChannel = window.profileManager?.selectProfileChannel;
+    if (!selectProfileChannel || !state?.selected_profile_key || !editingKey) return;
+    const selectedProfile = profiles.find((profile) => itemKey(profile) === state.selected_profile_key);
+    if (!selectedProfile || selectedProfile.activeChannelId === channelId) return;
+    if (!(await resolveUnsavedProfileChanges())) {
+      return;
+    }
+    setIsBusy(true);
+    setErrorMessage(null);
+    try {
+      await selectProfileChannel(state.selected_profile_key, channelId);
+      await refreshAll(true);
+      setSuccessMessage("启动渠道已切换");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "切换渠道失败");
+    } finally {
+      setIsBusy(false);
+    }
   }
 
   async function handleProfileOrganizationChange(organization: ProfileOrganization) {
@@ -3076,7 +3120,15 @@ function App() {
   async function handleDraftCommit(field: string, value?: string | boolean) {
     if (field === "selectedModelId") {
       const snapshot = typeof value === "string"
-        ? { ...currentDraftSnapshot(), selectedModelId: value }
+        ? {
+            ...currentDraftSnapshot(),
+            selectedModelId: value,
+            channels: (currentDraftSnapshot().channels ?? []).map((channel) => (
+              channel.id === draftActiveChannelId
+                ? { ...channel, selectedModelId: value || undefined }
+                : channel
+            )),
+          }
         : currentDraftSnapshot();
       await persistSelectedModelOnlyChange(snapshot);
     }
@@ -3175,21 +3227,48 @@ function App() {
 
   async function handleFetchSiteModels() {
     if (!window.profileManager || !state) return;
-    const cacheKey = normalizeBalanceBaseUrl(draftUrl);
+    const cacheKey = `${normalizeBalanceBaseUrl(draftUrl)}::${draftActiveChannelId}`;
     setModelCatalogFetchByBaseUrl((current) => ({
       ...current,
       [cacheKey]: { busy: true, error: null },
     }));
     try {
-      const result = await window.profileManager.fetchSiteModels({
+      const savedChannel = editorBaseline?.channels?.find(
+        (channel) => editorBaseline.url === draftUrl
+          && channel.id === draftActiveChannelId
+          && channel.key === draftKey,
+      );
+      const persistedResult = editingKey && savedChannel && window.profileManager.refreshProfileChannelModels
+        ? await window.profileManager.refreshProfileChannelModels(editingKey, draftActiveChannelId)
+        : null;
+      const result = persistedResult ?? await window.profileManager.fetchSiteModels({
         url: draftUrl,
         key: draftKey,
       });
+      const fetchedAt = persistedResult?.modelsFetchedAt ?? new Date().toISOString();
+      setDraftChannels((current) => current.map((channel) => (
+        channel.id === draftActiveChannelId
+          ? { ...channel, models: [...result.models], modelsFetchedAt: fetchedAt, modelsBaseUrl: draftUrl }
+          : channel
+      )));
+      if (persistedResult) {
+        setProfiles((current) => current.map((profile) => (
+          itemKey(profile) === editingKey ? persistedResult.profile : profile
+        )));
+      }
+      if (editingKey && savedChannel) {
+        setEditorBaseline((current) => current ? {
+          ...current,
+          channels: (current.channels ?? []).map((channel) => channel.id === draftActiveChannelId
+            ? { ...channel, models: [...result.models], modelsFetchedAt: fetchedAt, modelsBaseUrl: draftUrl }
+            : channel),
+        } : current);
+      }
       setModelCatalogByBaseUrl((current) => ({
         ...current,
         [cacheKey]: {
           models: result.models,
-          fetchedAt: new Date().toLocaleString(),
+          fetchedAt,
         },
       }));
       setModelCatalogFetchByBaseUrl((current) => ({
@@ -3239,16 +3318,21 @@ function App() {
   }, [state?.balance_checks_by_profile]);
 
   const selectedProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
+  const selectedSavedProfile = profiles.find((profile) => itemKey(profile) === state?.selected_profile_key);
   const workingDirectoryFavorites = state?.working_directory_favorites ?? [];
   const profileDraft = useMemo(() => ({
     name: draftName,
     url: draftUrl,
     key: draftKey,
     selectedModelId: draftModel,
+    channels: draftChannels,
+    activeChannelId: draftActiveChannelId,
     advancedModelMapping: draftAdvancedModelMapping,
     permissions: draftPermissions,
   }), [
     draftAdvancedModelMapping,
+    draftActiveChannelId,
+    draftChannels,
     draftKey,
     draftModel,
     draftName,
@@ -3280,17 +3364,24 @@ function App() {
     },
     [selectedProvider, state?.global_settings.permissions],
   );
-  const modelCatalogCacheKey = normalizeBalanceBaseUrl(draftUrl);
+  const modelCatalogCacheKey = `${normalizeBalanceBaseUrl(draftUrl)}::${draftActiveChannelId}`;
   const modelCatalogCacheEntry = modelCatalogCacheKey
     ? modelCatalogByBaseUrl[modelCatalogCacheKey]
     : undefined;
   const modelCatalogFetchState = modelCatalogFetchByBaseUrl[modelCatalogCacheKey];
-  const modelOptions = modelCatalogCacheEntry?.models ?? EMPTY_MODEL_OPTIONS;
-  const modelFetchedAt = modelCatalogCacheEntry?.fetchedAt;
+  const activeDraftChannel = draftChannels.find((channel) => channel.id === draftActiveChannelId);
+  const activeChannelCacheMatchesUrl = activeDraftChannel?.modelsBaseUrl
+    ? normalizeBalanceBaseUrl(activeDraftChannel.modelsBaseUrl) === normalizeBalanceBaseUrl(draftUrl)
+    : editorBaseline?.url === draftUrl;
+  const modelOptions = (activeChannelCacheMatchesUrl ? activeDraftChannel?.models : undefined)
+    ?? modelCatalogCacheEntry?.models
+    ?? EMPTY_MODEL_OPTIONS;
+  const modelFetchedAt = (activeChannelCacheMatchesUrl ? activeDraftChannel?.modelsFetchedAt : undefined)
+    ?? modelCatalogCacheEntry?.fetchedAt;
   const modelFetchBusy = modelCatalogFetchState?.busy ?? false;
   const modelFetchError = modelCatalogFetchState?.error ?? null;
-  const modelFetchSuccess = modelCatalogCacheEntry
-    ? `已获取${modelCatalogCacheEntry.models.length}个模型`
+  const modelFetchSuccess = modelFetchedAt
+    ? `已获取${modelOptions.length}个模型`
     : null;
   const handleProfileDraftChange = useCallback((field: string, val: string | boolean) => {
     switch (field) {
@@ -3307,10 +3398,22 @@ function App() {
         }));
         break;
       }
-      case "key": setDraftKey(val as string); break;
+      case "key": {
+        const nextKey = val as string;
+        setDraftKey(nextKey);
+        setDraftChannels((current) => current.map((channel) => (
+          channel.id === draftActiveChannelId ? { ...channel, key: nextKey } : channel
+        )));
+        break;
+      }
       case "selectedModelId": {
         const nextModel = val as string;
         setDraftModel(nextModel);
+        setDraftChannels((current) => current.map((channel) => (
+          channel.id === draftActiveChannelId
+            ? { ...channel, selectedModelId: nextModel || undefined }
+            : channel
+        )));
         setDraftAdvancedModelMapping((current) => applyClaudeAliasRecommendationForNewDraft({
           provider: selectedProvider,
           editingKey,
@@ -3321,7 +3424,17 @@ function App() {
         break;
       }
     }
-  }, [draftModel, draftUrl, editingKey, selectedProvider]);
+  }, [draftActiveChannelId, draftModel, draftUrl, editingKey, selectedProvider]);
+  const handleProfileChannelsChange = useCallback((channels: ProfileChannel[], activeChannelId: string) => {
+    const activeChannel = channels.find((channel) => channel.id === activeChannelId) ?? channels[0];
+    setDraftChannels(channels.map((channel) => ({
+      ...channel,
+      ...(channel.models ? { models: [...channel.models] } : {}),
+    })));
+    setDraftActiveChannelId(activeChannel?.id ?? "");
+    setDraftKey(activeChannel?.key ?? "");
+    setDraftModel(activeChannel?.selectedModelId ?? "");
+  }, []);
   const handleBalanceSessionSelectionChange = useCallback((value: string) => {
     setDraftBalanceSessionSelection(value);
     if (value === "auto" || value === "new") {
@@ -3427,6 +3540,7 @@ function App() {
   const stableHandleFetchSiteModels = useEventCallback(handleFetchSiteModels);
   const stableHandleOpenBaseUrl = useEventCallback(handleOpenBaseUrl);
   const stableHandleSaveProfile = useEventCallback(handleSaveProfile);
+  const stableHandleSelectProfileChannel = useEventCallback(handleSelectProfileChannel);
   const stableHandlePickWorkingDirectory = useEventCallback(handlePickWorkingDirectory);
   const stableHandleToggleWorkingDirectoryFavorite = useEventCallback(handleToggleWorkingDirectoryFavorite);
   const stableHandleSelectWorkingDirectoryFavorite = useEventCallback(handleSelectWorkingDirectoryFavorite);
@@ -3482,6 +3596,10 @@ function App() {
   const stableFetchModelsAction = useCallback(() => void stableHandleFetchSiteModels(), [stableHandleFetchSiteModels]);
   const stableOpenBaseUrlAction = useCallback(() => void stableHandleOpenBaseUrl(), [stableHandleOpenBaseUrl]);
   const stableSaveProfileAction = useCallback(() => void stableHandleSaveProfile(), [stableHandleSaveProfile]);
+  const stableSelectProfileChannelAction = useCallback(
+    (channelId: string) => void stableHandleSelectProfileChannel(channelId),
+    [stableHandleSelectProfileChannel],
+  );
   const stableCancelProfileEditAction = useCallback(() => void stableHandleCancelProfileEdit(), [stableHandleCancelProfileEdit]);
   const stablePickWorkingDirectoryAction = useCallback(() => void stableHandlePickWorkingDirectory(), [stableHandlePickWorkingDirectory]);
   const stableToggleWorkingDirectoryFavoriteAction = useCallback(
@@ -3751,6 +3869,7 @@ function App() {
               modelFetchSuccess,
               workingDirectoryFavorites,
               onChange: handleProfileDraftChange,
+              onChannelsChange: handleProfileChannelsChange,
               onAdvancedModelMappingChange: handleAdvancedModelMappingChange,
               onPermissionsChange: setDraftPermissions,
               onDraftCommit: stableDraftCommitAction,
@@ -3767,6 +3886,10 @@ function App() {
             }}
             launchPanelProps={{
               provider: activeProvider,
+              channels: selectedSavedProfile?.channels ?? [],
+              activeChannelId: selectedSavedProfile?.activeChannelId ?? "",
+              onChannelChange: stableSelectProfileChannelAction,
+              channelSwitchDisabled: !editingKey,
               preview: launchPanelPreview,
               monitorModeEnabled: profilesLaunchMonitorModeEnabled,
               onMonitorModeChange: stableHandleProfilesLaunchMonitorModeChange,

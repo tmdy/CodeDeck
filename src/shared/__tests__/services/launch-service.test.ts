@@ -76,7 +76,7 @@ describe("LaunchService", () => {
     expect(plan.permissionSummary).toBeUndefined();
   });
 
-  it("should launch Codex natively with global CLI configuration and resume arguments", () => {
+  it("should launch Codex natively with the App Runtime home and resume arguments", () => {
     const profile: Profile = {
       provider: "codex",
       name: "Local Codex",
@@ -92,16 +92,23 @@ describe("LaunchService", () => {
     const plan = launchService.buildExecutionPlan({
       profile_key: itemKey(profile),
       provider: "codex",
-      runtime_settings: makeRuntime({ command_base: "codex", startup_mode: "native", launch_mode: "resume_selected" }),
+      runtime_settings: makeRuntime({
+        command_base: "codex",
+        startup_mode: "native",
+        launch_mode: "resume_selected",
+        extra_env: { CODEX_HOME: "C:/user/override" },
+      }),
       session_id: "session-global",
     });
 
     expect(plan.valid).toBe(true);
     expect(plan.command).toBe('codex resume "session-global"');
     expect(plan.commandArgs).toEqual(["resume", "session-global"]);
-    expect(plan.env).not.toHaveProperty("CODEX_HOME");
+    expect(plan.env.CODEX_HOME).toBe("C:/tmp/codex-runtime/home");
+    expect(plan.requiredEnvKeys).toEqual(["CODEX_HOME"]);
     expect(plan.codexConfig).toBeUndefined();
     expect(plan.permissionSummary).toBeUndefined();
+    expect(plan.capabilitySummary).toBe("官方 CLI · App Runtime");
   });
 
   it("should launch Claude with the raw selectedModelId and custom model env vars by default", () => {

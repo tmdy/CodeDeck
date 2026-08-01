@@ -2,9 +2,14 @@ import { memo } from "react";
 import { LaunchControls } from "../launcher/LaunchControls.jsx";
 import { SessionPicker } from "../launcher/SessionPicker.jsx";
 import type { SessionCatalogState, SessionSummary } from "../../shared/services/session-service.js";
+import type { ProfileChannel } from "../../shared/profile/types.js";
 
 interface ProfilesLaunchPanelProps {
   provider: "claude" | "codex";
+  channels?: ProfileChannel[];
+  activeChannelId?: string;
+  onChannelChange?: (channelId: string) => void;
+  channelSwitchDisabled?: boolean;
   monitorModeEnabled?: boolean;
   onMonitorModeChange?: (enabled: boolean) => void;
   disabled?: boolean;
@@ -30,6 +35,10 @@ interface ProfilesLaunchPanelProps {
 
 export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
   provider,
+  channels = [],
+  activeChannelId = "",
+  onChannelChange,
+  channelSwitchDisabled,
   monitorModeEnabled,
   onMonitorModeChange,
   disabled,
@@ -54,6 +63,22 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
 }: ProfilesLaunchPanelProps) {
   return (
     <div className="profiles-launch-panel">
+      {channels.length > 0 && (
+        <label className="profile-quick-channel">
+          启动渠道
+          <select
+            value={activeChannelId}
+            onChange={(event) => onChannelChange?.(event.target.value)}
+            disabled={disabled || channelSwitchDisabled || !onChannelChange}
+          >
+            {channels.map((channel) => (
+              <option key={channel.id} value={channel.id}>
+                {channel.name || "未命名渠道"}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <LaunchControls
         provider={provider}
         monitorModeEnabled={monitorModeEnabled}

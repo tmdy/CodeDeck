@@ -19,6 +19,11 @@ import {
   normalizeProfileOrganization,
   type ProfileOrganization,
 } from "../profile/organization.js";
+import {
+  emptySiteCapabilityCache,
+  normalizeSiteCapabilityCache,
+  type SiteCapabilityCache,
+} from "../site-capability-cache.js";
 
 export interface FavoriteSessionSummary extends SessionSummary {
   favorite_key: string;
@@ -35,6 +40,7 @@ export interface LocalState {
   balance_checks_by_profile: Record<ProfileKey, BalanceCheckState>;
   checkin_states_by_account: CheckinStatesByAccount;
   checkin_next_scheduled_at: string;
+  site_capability_cache: SiteCapabilityCache;
   global_settings: GlobalSettings;
   /** 遗留的全局模型映射配置，仅为兼容旧状态读取 */
   model_mappings?: unknown[];
@@ -63,6 +69,7 @@ export type BootstrapLocalState = Pick<
   profile_organization_by_provider?: Record<string, ProfileOrganization>;
   checkin_states_by_account?: CheckinStatesByAccount;
   checkin_next_scheduled_at?: string;
+  site_capability_cache?: SiteCapabilityCache;
   working_directory_favorites?: string[];
   session_favorites?: FavoriteSessionSummary[];
 };
@@ -85,6 +92,7 @@ export function defaultLocalState(): LocalState {
     balance_checks_by_profile: {},
     checkin_states_by_account: {},
     checkin_next_scheduled_at: "",
+    site_capability_cache: emptySiteCapabilityCache(),
     global_settings: defaultGlobalSettings(),
     parameter_settings: defaultParameterSettings(),
     sessions_tab_scope_by_provider: {},
@@ -117,6 +125,7 @@ export function ensureInitialized(state: LocalState): LocalState {
   state.checkin_next_scheduled_at = typeof state.checkin_next_scheduled_at === "string"
     ? state.checkin_next_scheduled_at
     : "";
+  state.site_capability_cache = normalizeSiteCapabilityCache(state.site_capability_cache);
   state.global_settings ??= defaultGlobalSettings();
   state.parameter_settings = normalizeParameterSettings(
     state.parameter_settings ?? defaultParameterSettings(),
@@ -145,6 +154,7 @@ export function mergeBootstrapState(state: BootstrapLocalState): LocalState {
     balance_checks_by_profile: { ...state.balance_checks_by_profile },
     checkin_states_by_account: normalizeCheckinStatesByAccount(state.checkin_states_by_account),
     checkin_next_scheduled_at: state.checkin_next_scheduled_at ?? "",
+    site_capability_cache: normalizeSiteCapabilityCache(state.site_capability_cache),
     global_settings: state.global_settings ?? defaultGlobalSettings(),
     working_directory_favorites: normalizeWorkingDirectoryFavorites(
       state.working_directory_favorites,

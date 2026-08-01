@@ -104,17 +104,23 @@ import {
 } from "../src/shared/electron/terminal-session-title.js";
 import type { TerminalAutoContinueConfigPatch } from "../src/shared/electron/terminal-auto-continue.js";
 import {
+  isCapabilityPathCurrent,
+  type LearnedBalancePath,
+  type LearnedCheckinPath,
+} from "../src/shared/site-capability-cache.js";
+import {
   findMonitoredTerminalSessionTitle,
   getClaudeSessionDetail,
   getCodexSessionDetail,
   getSessionDetailForProvider,
-  importCodexSessionToRuntimeHome,
+  copyCodexSessionBetweenHomes,
   invalidateCodexSessionCache,
   listClaudeSessions,
   listCodexSessions,
   listCodexSessionsFromHomes,
   listSessionsForProvider,
   readLastAssistantTextFromSessionFile,
+  resolveCodexSessionTransferHomes,
   resolveMonitoredTerminalSessionFile,
   type CodexSessionHome,
   type GetSessionDetailRequest,
@@ -205,6 +211,12 @@ let nodePtyModule: NodePtyModule | null = null;
 let nodePtyLoadPromise: Promise<NodePtyModule> | null = null;
 let checkinStateWriteQueue: Promise<void> = Promise.resolve();
 const checkinRunsByAccount = new Map<string, Promise<CheckinResult>>();
+const deferredCheckinStates = new Map<string, CheckinAccountState>();
+const deferredCheckinCapabilityPaths = new Map<string, LearnedCheckinPath | null>();
+const queuedBalanceRefreshAccounts = new Set<string>();
+const balanceRefreshQueue: SiteBalanceSession[] = [];
+let activeBalanceRefreshCount = 0;
+const MAX_BALANCE_REFRESH_CONCURRENCY = 3;
 let agentBridgeServer: AgentBridgeServer | null = null;
 let agentTaskManager: AgentTaskManager | null = null;
 
@@ -932,30 +944,48 @@ async function resolveCodexSessionHomes(request: ListSessionsRequest): Promise<C
   return homes;
 }
 
-async function importExternalCodexSessionIfNeeded(request: LaunchRequest): Promise<void> {
+async function synchronizeCodexSessionForLaunch(
+  request: LaunchRequest,
+  configuredRuntimeHome?: string,
+): Promise<void> {
   if (request.provider.trim().toLowerCase() !== "codex") {
     return;
   }
-  if (request.runtime_settings.startup_mode === "native") {
+  if (request.runtime_settings.launch_mode !== "resume_selected") {
     return;
   }
-  if (request.session_source?.source_kind !== "global_codex") {
+  const sourceKind = request.session_source?.source_kind;
+  if (!sourceKind) {
     return;
   }
+  if (sourceKind === "app_runtime") {
+    return;
+  }
+  const sourceFileRelativePath = request.session_source?.source_file_relative_path;
   const sessionId = request.session_id?.trim() ?? "";
   if (!sessionId) {
     throw new Error("恢复指定会话时必须提供 sessionId。");
   }
-  const runtimeHome = await ensureConfiguredCodexRuntimeHome();
-  const sourceHome = request.session_source.source_home?.trim() || path.join(os.homedir(), ".codex");
-  if (path.resolve(sourceHome) === path.resolve(runtimeHome)) {
-    return;
-  }
-  await importCodexSessionToRuntimeHome({
+  const runtimeHome = configuredRuntimeHome ?? await ensureConfiguredCodexRuntimeHome();
+  const globalHome = path.join(os.homedir(), ".codex");
+  const { sourceHome, targetHome } = resolveCodexSessionTransferHomes({
+    sourceKind,
+    appRuntimeHome: runtimeHome,
+    globalHome,
+  });
+  const result = await copyCodexSessionBetweenHomes({
     sessionId,
     sourceHome,
-    runtimeHome,
-    sourceFileRelativePath: request.session_source.source_file_relative_path,
+    targetHome,
+    sourceFileRelativePath,
+  });
+  appLogger.info("launcher", "codex_session_synchronized", "Codex session prepared for restore", {
+    context: {
+      sessionId,
+      sourceKind,
+      targetKind: "app_runtime",
+      result,
+    },
   });
 }
 
@@ -1173,7 +1203,10 @@ async function prepareLaunchExecution(request: LaunchRequest): Promise<{
   if (!plan.valid) {
     throw new Error(plan.error || "无法生成启动命令");
   }
-  await importExternalCodexSessionIfNeeded(request);
+  const codexRuntimeHome = request.provider.trim().toLowerCase() === "codex"
+    ? await ensureConfiguredCodexRuntimeHome()
+    : undefined;
+  await synchronizeCodexSessionForLaunch(request, codexRuntimeHome);
   if (plan.claudeSettings) {
     await writeManagedLaunchTextFile(plan.claudeSettings.settingsPath, plan.claudeSettings.content);
     appLogger.info("launcher", "claude_permissions_written", "Claude managed permission settings written", {
@@ -1600,6 +1633,23 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
     profile,
     siteBalanceSessionsByBaseUrl,
   );
+  const capabilityTargetKey = resolvedAuth.kind === "explicit_session"
+    ? `session:${buildCheckinAccountKey(resolvedAuth.base_url, resolvedAuth.session.id)}`
+    : `profile:${profileKey}`;
+  const credentialUpdatedAt = resolvedAuth.kind === "explicit_session"
+    ? resolvedAuth.session.updated_at
+    : "";
+  const cachedBalancePath = getProfileService().getState().site_capability_cache
+    .balance_by_target[capabilityTargetKey];
+  const learnedBalancePath = cachedBalancePath
+    && cachedBalancePath.base_url === normalizeBalanceBaseUrl(profile.url)
+    && isCapabilityPathCurrent(
+      cachedBalancePath.learned_at,
+      cachedBalancePath.credential_updated_at,
+      credentialUpdatedAt,
+    )
+    ? cachedBalancePath
+    : undefined;
   appLogger.info("balance", "balance_check_start", "Balance check started", {
     context: {
       profileKey,
@@ -1607,6 +1657,7 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
       baseUrlHost: safeUrlHost(normalizeBalanceBaseUrl(profile.url)),
       authKind: resolvedAuth.kind,
       sharedProfileCount: sharedProfileKeys.length,
+      capabilityCacheHit: Boolean(learnedBalancePath),
     },
   });
 
@@ -1645,6 +1696,15 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
           ? resolvedAuth.session
           : null,
         {
+          learnedPath: learnedBalancePath,
+          onPathLearned: (path: LearnedBalancePath) => {
+            getProfileStateAccessor().get().site_capability_cache
+              .balance_by_target[capabilityTargetKey] = path;
+          },
+          onPathInvalidated: () => {
+            delete getProfileStateAccessor().get().site_capability_cache
+              .balance_by_target[capabilityTargetKey];
+          },
           onSessionUpdated: resolvedAuth.kind === "explicit_session"
             ? async (session) => {
               await getProfileService().saveSiteBalanceSession(session.base_url, {
@@ -1673,6 +1733,7 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
         baseUrlHost: safeUrlHost(normalizeBalanceBaseUrl(profile.url)),
         authKind: resolvedAuth.kind,
         sharedProfileCount: sharedProfileKeys.length,
+        capabilityCacheHit: Boolean(learnedBalancePath),
         supported: finalState.supported,
         success: finalState.success,
         message: finalState.message,
@@ -1750,11 +1811,41 @@ function mutateCheckinLocalState(mutator: (state: LocalState) => void): Promise<
 async function persistCheckinAccountState(
   accountKey: string,
   nextState: CheckinAccountState,
+  deferSave: boolean = false,
 ): Promise<void> {
+  if (deferSave) {
+    deferredCheckinStates.set(accountKey, nextState);
+    getProfileStateAccessor().get().checkin_states_by_account[accountKey] = nextState;
+    emitCheckinProgress(accountKey, nextState);
+    return;
+  }
   await mutateCheckinLocalState((state) => {
     state.checkin_states_by_account[accountKey] = nextState;
   });
   emitCheckinProgress(accountKey, nextState);
+}
+
+async function flushCheckinLocalState(): Promise<void> {
+  const pendingStates = [...deferredCheckinStates.entries()];
+  const pendingPaths = [...deferredCheckinCapabilityPaths.entries()];
+  deferredCheckinStates.clear();
+  deferredCheckinCapabilityPaths.clear();
+  const operation = checkinStateWriteQueue.then(async () => {
+    const state = getProfileService().getState();
+    for (const [accountKey, nextState] of pendingStates) {
+      state.checkin_states_by_account[accountKey] = nextState;
+    }
+    for (const [accountKey, path] of pendingPaths) {
+      if (path) {
+        state.site_capability_cache.checkin_by_account[accountKey] = path;
+      } else {
+        delete state.site_capability_cache.checkin_by_account[accountKey];
+      }
+    }
+    await getProfileStateAccessor().save(state);
+  });
+  checkinStateWriteQueue = operation.catch(() => undefined);
+  await operation;
 }
 
 async function persistNextCheckinSchedule(nextScheduledAt: string): Promise<void> {
@@ -1845,6 +1936,38 @@ async function refreshBalanceForCheckinAccount(account: SiteBalanceSession): Pro
   }
 }
 
+function queueBalanceRefreshForCheckinAccount(account: SiteBalanceSession): void {
+  const accountKey = buildCheckinAccountKey(normalizeBalanceBaseUrl(account.base_url), account.id);
+  if (queuedBalanceRefreshAccounts.has(accountKey)) return;
+  queuedBalanceRefreshAccounts.add(accountKey);
+  balanceRefreshQueue.push({ ...account });
+  pumpBalanceRefreshQueue();
+}
+
+function pumpBalanceRefreshQueue(): void {
+  while (
+    activeBalanceRefreshCount < MAX_BALANCE_REFRESH_CONCURRENCY
+    && balanceRefreshQueue.length > 0
+  ) {
+    const account = balanceRefreshQueue.shift();
+    if (!account) return;
+    const accountKey = buildCheckinAccountKey(normalizeBalanceBaseUrl(account.base_url), account.id);
+    activeBalanceRefreshCount += 1;
+    void refreshBalanceForCheckinAccount(account)
+      .catch((error: unknown) => {
+        appLogger.warn("balance", "checkin_balance_refresh_failed", "Background balance refresh failed", {
+          context: { baseUrlHost: safeUrlHost(account.base_url), accountId: account.id },
+          error,
+        });
+      })
+      .finally(() => {
+        activeBalanceRefreshCount -= 1;
+        queuedBalanceRefreshAccounts.delete(accountKey);
+        pumpBalanceRefreshQueue();
+      });
+  }
+}
+
 function mergeCheckinVerificationResult(
   initialResult: CheckinResult,
   verificationResult: CheckinVerificationResult,
@@ -1887,7 +2010,9 @@ function mergeCheckinVerificationResult(
 async function executeCheckinAccountOnce(
   account: SiteBalanceSession,
   trigger: CheckinTrigger,
+  verificationPolicy: "open" | "defer",
 ): Promise<CheckinResult> {
+  const deferStateSave = verificationPolicy === "defer";
   const baseUrl = normalizeBalanceBaseUrl(account.base_url);
   const accountKey = buildCheckinAccountKey(baseUrl, account.id);
   const current = getProfileService().getState().checkin_states_by_account[accountKey];
@@ -1912,14 +2037,33 @@ async function executeCheckinAccountOnce(
     message: "正在签到...",
     error_code: undefined,
     diagnostic_run_id: undefined,
-  });
+  }, deferStateSave);
+
+  const cachedPath = getProfileService().getState().site_capability_cache
+    .checkin_by_account[accountKey];
+  const learnedPath = cachedPath && isCapabilityPathCurrent(
+    cachedPath.learned_at,
+    cachedPath.credential_updated_at,
+    account.updated_at,
+  ) ? cachedPath : undefined;
+  const updateLearnedPath = (path: LearnedCheckinPath): void => {
+    getProfileStateAccessor().get().site_capability_cache.checkin_by_account[accountKey] = path;
+    if (deferStateSave) deferredCheckinCapabilityPaths.set(accountKey, path);
+  };
+  const invalidateLearnedPath = (): void => {
+    delete getProfileStateAccessor().get().site_capability_cache.checkin_by_account[accountKey];
+    if (deferStateSave) deferredCheckinCapabilityPaths.set(accountKey, null);
+  };
 
   let result = await getCheckinService().checkin(
     { ...account, base_url: baseUrl },
-    10_000,
+    12_000,
     {
       runId,
       trigger,
+      learnedPath,
+      onPathLearned: updateLearnedPath,
+      onPathInvalidated: invalidateLearnedPath,
       onDiagnostic: (event) => {
         const { duration_ms: durationMs, ...context } = event;
         diagnosticAttempts.push({
@@ -1942,7 +2086,7 @@ async function executeCheckinAccountOnce(
       },
     },
   );
-  if (result.status === "manual_required") {
+  if (result.status === "manual_required" && verificationPolicy === "open") {
     await persistCheckinAccountState(accountKey, {
       ...current,
       status: "verifying",
@@ -1990,7 +2134,7 @@ async function executeCheckinAccountOnce(
         ? { satisfied_local_date: current.satisfied_local_date }
         : {}),
   };
-  await persistCheckinAccountState(accountKey, nextState);
+  await persistCheckinAccountState(accountKey, nextState, deferStateSave);
   const logOptions = {
     durationMs: Date.now() - startedAt,
     context: {
@@ -1999,6 +2143,8 @@ async function executeCheckinAccountOnce(
       trigger,
       status: result.status,
       error_code: result.error_code,
+      capability_cache_hit: Boolean(learnedPath),
+      request_count: diagnosticAttempts.length,
       attempts: diagnosticAttempts,
     },
   };
@@ -2013,6 +2159,7 @@ async function executeCheckinAccountOnce(
 function executeCheckinAccount(
   account: SiteBalanceSession,
   trigger: CheckinTrigger,
+  verificationPolicy: "open" | "defer",
 ): Promise<CheckinResult> {
   const accountKey = buildCheckinAccountKey(
     normalizeBalanceBaseUrl(account.base_url),
@@ -2022,7 +2169,7 @@ function executeCheckinAccount(
   if (running) {
     return running;
   }
-  const operation = executeCheckinAccountOnce(account, trigger).finally(() => {
+  const operation = executeCheckinAccountOnce(account, trigger, verificationPolicy).finally(() => {
     checkinRunsByAccount.delete(accountKey);
   });
   checkinRunsByAccount.set(accountKey, operation);
@@ -2086,7 +2233,7 @@ async function reopenCheckinVerification(
         : {}),
   });
   if (mergedResult.success) {
-    await refreshBalanceForCheckinAccount(account);
+    queueBalanceRefreshForCheckinAccount(account);
   }
   return verificationResult;
 }
@@ -2109,16 +2256,20 @@ async function runCheckinBatch(
       const currentIndex = groupIndex;
       groupIndex += 1;
       for (const account of groups[currentIndex]) {
-        const result = await executeCheckinAccount(account, trigger);
+        const result = await executeCheckinAccount(account, trigger, "defer");
         results.push({ account, result });
       }
     }
   });
-  await Promise.all(workers);
+  try {
+    await Promise.all(workers);
+  } finally {
+    await flushCheckinLocalState();
+  }
 
   for (const { account, result } of results) {
     if (result.status === "success" || result.status === "already_checked") {
-      await refreshBalanceForCheckinAccount(account);
+      queueBalanceRefreshForCheckinAccount(account);
     }
   }
 
@@ -2961,6 +3112,38 @@ function registerAllIpcHandlers(): void {
   );
 
   handleIpc(
+    "profile:select-channel",
+    async (_event, profileKey: ProfileKey, channelId: string) => {
+      return getProfileService().selectProfileChannel(profileKey, channelId);
+    },
+  );
+
+  handleIpc(
+    "profile:refresh-channel-models",
+    async (_event, profileKey: ProfileKey, channelId: string) => {
+      const svc = getProfileService();
+      const profile = svc.getProfiles().find((candidate) => itemKey(candidate) === profileKey);
+      const channel = profile?.channels?.find((candidate) => candidate.id === channelId.trim());
+      if (!profile || !channel) {
+        throw new Error("Profile 渠道不存在");
+      }
+      const result = await getModelCatalogService().fetch({
+        baseUrl: profile.url,
+        apiKey: channel.key,
+      });
+      const modelsFetchedAt = new Date().toISOString();
+      const updatedProfile = await svc.updateProfileChannelModels(
+        profileKey,
+        channel.id,
+        result.models,
+        modelsFetchedAt,
+        profile.url,
+      );
+      return { models: result.models, modelsFetchedAt, profile: updatedProfile };
+    },
+  );
+
+  handleIpc(
     "profile:update-organization",
     async (_event, provider: string, organization: ProfileOrganization) => {
       await getProfileService().updateProfileOrganization(provider, organization);
@@ -3259,9 +3442,9 @@ function registerAllIpcHandlers(): void {
     "checkin:run-account",
     async (_event, baseUrl: string, sessionId: string): Promise<CheckinResult> => {
       const account = findCheckinAccount(baseUrl, sessionId);
-      const result = await executeCheckinAccount(account, "manual");
+      const result = await executeCheckinAccount(account, "manual", "open");
       if (result.status === "success" || result.status === "already_checked") {
-        await refreshBalanceForCheckinAccount(account);
+        queueBalanceRefreshForCheckinAccount(account);
       }
       return result;
     },

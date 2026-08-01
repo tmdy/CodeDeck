@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   encodeClaudeProjectPath,
   findMonitoredTerminalSessionTitle,
-  importCodexSessionToRuntimeHome,
+  copyCodexSessionBetweenHomes,
   invalidateCodexSessionCache,
   type ListSessionsRequest,
   type SessionSummary,
@@ -13,6 +13,7 @@ import {
   listCodexSessions,
   listCodexSessionsFromHomes,
   listSessionsForProvider,
+  resolveCodexSessionTransferHomes,
   resolveMonitoredTerminalSessionFile,
 } from "../../services/session-service.js";
 
@@ -32,6 +33,33 @@ async function setFileTime(filePath: string, isoTime: string): Promise<void> {
 
 describe("session-service", () => {
   const tempDirs: string[] = [];
+
+  it("routes Codex session transfers into the App Runtime home", () => {
+    expect(resolveCodexSessionTransferHomes({
+      sourceKind: "app_runtime",
+      appRuntimeHome: "C:/codex/runtime",
+      globalHome: "C:/codex/global",
+    })).toEqual({
+      sourceHome: "C:/codex/runtime",
+      targetHome: "C:/codex/runtime",
+    });
+    expect(resolveCodexSessionTransferHomes({
+      sourceKind: "global_codex",
+      appRuntimeHome: "C:/codex/runtime",
+      globalHome: "C:/codex/global",
+    })).toEqual({
+      sourceHome: "C:/codex/global",
+      targetHome: "C:/codex/runtime",
+    });
+  });
+
+  it("rejects an unknown Codex session source", () => {
+    expect(() => resolveCodexSessionTransferHomes({
+      sourceKind: "C:/arbitrary/home",
+      appRuntimeHome: "C:/codex/runtime",
+      globalHome: "C:/codex/global",
+    })).toThrow("Codex 会话来源无效，请刷新会话列表后重试。");
+  });
 
   afterEach(async () => {
     invalidateCodexSessionCache();
@@ -1498,10 +1526,10 @@ describe("session-service", () => {
       ],
     );
 
-    await importCodexSessionToRuntimeHome({
+    await copyCodexSessionBetweenHomes({
       sessionId: "global-session",
       sourceHome: globalHome,
-      runtimeHome,
+      targetHome: runtimeHome,
     });
 
     const sessions = await listCodexSessions({
@@ -1513,6 +1541,110 @@ describe("session-service", () => {
       session_id: "global-session",
       preview: "Global session",
     });
+  });
+
+  it("copies a Codex session between explicit homes", async () => {
+    const runtimeHome = await createTempDir("codedeck-codex-runtime-export-");
+    const globalHome = await createTempDir("codedeck-codex-global-export-");
+    tempDirs.push(runtimeHome, globalHome);
+    await writeJsonl(
+      path.join(runtimeHome, "sessions", "2026", "05", "04", "rollout-2026-05-04T10-30-00-runtime-session.jsonl"),
+      [
+        {
+          type: "session_meta",
+          payload: {
+            id: "runtime-session",
+            cwd: "C:/workspace/runtime",
+            updated_at: "2026-05-04T10:30:00.000Z",
+            thread_name: "Runtime session",
+          },
+        },
+      ],
+    );
+
+    await expect(copyCodexSessionBetweenHomes({
+      sessionId: "runtime-session",
+      sourceHome: runtimeHome,
+      targetHome: globalHome,
+    })).resolves.toBe("copied");
+
+    const sessions = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, globalHome);
+    expect(sessions).toMatchObject([{
+      session_id: "runtime-session",
+      preview: "Runtime session",
+    }]);
+  });
+
+  it("does not overwrite an existing target Codex session", async () => {
+    const sourceHome = await createTempDir("codedeck-codex-source-existing-");
+    const targetHome = await createTempDir("codedeck-codex-target-existing-");
+    tempDirs.push(sourceHome, targetHome);
+    const relativePath = path.join(
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-30-00-shared-session.jsonl",
+    );
+    const sourcePath = path.join(sourceHome, "sessions", relativePath);
+    const targetPath = path.join(targetHome, "sessions", relativePath);
+    await writeJsonl(sourcePath, [{
+      type: "session_meta",
+      payload: { id: "shared-session", thread_name: "Source version" },
+    }]);
+    await writeJsonl(targetPath, [{
+      type: "session_meta",
+      payload: { id: "shared-session", thread_name: "Target version" },
+    }]);
+
+    await expect(copyCodexSessionBetweenHomes({
+      sessionId: "shared-session",
+      sourceHome,
+      targetHome,
+      sourceFileRelativePath: relativePath,
+    })).resolves.toBe("already_present");
+
+    const targetContent = await readFile(targetPath, "utf-8");
+    expect(targetContent).toContain("Target version");
+    expect(targetContent).not.toContain("Source version");
+  });
+
+  it("copies the rollout when the target index exists without a session file", async () => {
+    const sourceHome = await createTempDir("codedeck-codex-source-index-only-");
+    const targetHome = await createTempDir("codedeck-codex-target-index-only-");
+    tempDirs.push(sourceHome, targetHome);
+    const relativePath = path.join(
+      "2026",
+      "05",
+      "04",
+      "rollout-2026-05-04T10-30-00-index-only-session.jsonl",
+    );
+    await writeJsonl(path.join(sourceHome, "sessions", relativePath), [{
+      type: "session_meta",
+      payload: {
+        id: "index-only-session",
+        cwd: "C:/workspace/source",
+        updated_at: "2026-05-04T10:30:00.000Z",
+      },
+    }]);
+    await writeFile(path.join(targetHome, "session_index.jsonl"), `${JSON.stringify({
+      id: "index-only-session",
+      thread_name: "Missing rollout",
+      updated_at: "2026-05-04T10:30:00.000Z",
+      cwd: "C:/workspace/source",
+    })}\n`, "utf-8");
+
+    await expect(copyCodexSessionBetweenHomes({
+      sessionId: "index-only-session",
+      sourceHome,
+      targetHome,
+      sourceFileRelativePath: relativePath,
+    })).resolves.toBe("copied");
+
+    await expect(readFile(path.join(targetHome, "sessions", relativePath), "utf-8"))
+      .resolves.toContain("index-only-session");
   });
 
   it("imports a global Codex session from a known relative source path before scanning fallback files", async () => {
@@ -1549,12 +1681,12 @@ describe("session-service", () => {
       ],
     );
 
-    await importCodexSessionToRuntimeHome({
+    await copyCodexSessionBetweenHomes({
       sessionId: "global-known",
       sourceHome: globalHome,
-      runtimeHome,
+      targetHome: runtimeHome,
       sourceFileRelativePath: selectedRelativePath,
-    } as Parameters<typeof importCodexSessionToRuntimeHome>[0] & { sourceFileRelativePath: string });
+    });
 
     const sessions = await listCodexSessions({
       provider: "codex",
@@ -1583,11 +1715,11 @@ describe("session-service", () => {
       "utf-8",
     );
 
-    await expect(importCodexSessionToRuntimeHome({
+    await expect(copyCodexSessionBetweenHomes({
       sessionId: "missing-file-session",
       sourceHome: globalHome,
-      runtimeHome,
-    })).rejects.toThrow("全局 .codex 中未找到该会话文件，无法导入恢复。");
+      targetHome: runtimeHome,
+    })).rejects.toThrow("源 Codex home 中未找到该会话文件，请刷新会话列表后重试。");
   });
 
   it("writes a minimal runtime index when importing a global Codex session without source index", async () => {
@@ -1609,10 +1741,10 @@ describe("session-service", () => {
       ],
     );
 
-    await importCodexSessionToRuntimeHome({
+    await copyCodexSessionBetweenHomes({
       sessionId: "global-file-only",
       sourceHome: globalHome,
-      runtimeHome,
+      targetHome: runtimeHome,
     });
 
     const indexContent = await readFile(path.join(runtimeHome, "session_index.jsonl"), "utf-8");

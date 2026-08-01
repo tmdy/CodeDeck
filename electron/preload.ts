@@ -133,6 +133,10 @@ const profileApi = {
     ipcRenderer.invoke("profile:clone", sourceKey, targetProvider),
   selectProfile: (provider: string, key: string): Promise<void> =>
     ipcRenderer.invoke("profile:select", provider, key),
+  selectProfileChannel: (profileKey: string, channelId: string): Promise<unknown> =>
+    ipcRenderer.invoke("profile:select-channel", profileKey, channelId),
+  refreshProfileChannelModels: (profileKey: string, channelId: string): Promise<unknown> =>
+    ipcRenderer.invoke("profile:refresh-channel-models", profileKey, channelId),
   reorderProfiles: (provider: string, orderedKeys: string[]): Promise<void> =>
     ipcRenderer.invoke("profile:reorder", provider, orderedKeys),
   updateProfileOrganization: (provider: string, organization: unknown): Promise<void> =>

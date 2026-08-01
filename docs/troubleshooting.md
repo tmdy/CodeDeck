@@ -43,7 +43,7 @@ Get-Command codex -ErrorAction SilentlyContinue
 
 ## Codex 为什么没有直接使用全局 `.codex`
 
-CodeDeck 为 Profile 生成隔离的 `CODEX_HOME`，避免修改全局配置。全局 MCP、Skills 和启用插件可以通过 runtime overlay 接入；全局会话也可以在恢复时导入。
+CodeDeck 为所有 Codex Profile（包括官方 Codex）设置隔离的 `CODEX_HOME`，避免修改全局配置。全局 MCP、Skills 和启用插件可以通过 runtime overlay 接入；App Runtime 会话直接恢复，全局会话只在用户从 CodeDeck 选择恢复时导入。若 App Runtime 尚未保存官方登录态，Codex 会使用自己的交互式登录流程；CodeDeck 不复制全局 `auth.json`。
 
 ## 余额或签到失败
 

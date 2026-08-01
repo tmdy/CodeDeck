@@ -8,6 +8,7 @@ import {
   DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND,
   PROVIDER_CLAUDE,
+  PROVIDER_CODEX,
   normalizeClaudeReasoningEffort,
   normalizeCodexReasoningEffort,
   normalizeRuntimeSettings,
@@ -260,7 +261,9 @@ export class LaunchService {
       codexConfig: artifacts.codexConfig,
       codexAutoContinue: profile.provider === PROVIDER_CLAUDE ? undefined : this.buildCodexAutoContinuePlan(),
       permissionSummary: artifacts.permissionSummary,
-      capabilitySummary: isNativeStartup ? "原生 CLI 配置" : this.buildCapabilitySummary(capabilityOverlay),
+      capabilitySummary: isNativeStartup
+        ? (profile.provider === PROVIDER_CODEX ? "官方 CLI · App Runtime" : "原生 CLI 配置")
+        : this.buildCapabilitySummary(capabilityOverlay),
       terminalSummary: this.buildTerminalSummary(profile.provider, terminalMode),
     };
   }
@@ -306,8 +309,10 @@ export class LaunchService {
       commandExecutable: commandBase,
       commandArgs: buildCodexArgs(options),
       command: buildCodexCommand(options),
-      env: {},
-      requiredEnvKeys: [],
+      env: {
+        CODEX_HOME: this.toDisplayPath(this.getCodexRuntimeHome()),
+      },
+      requiredEnvKeys: ["CODEX_HOME"],
     };
   }
 

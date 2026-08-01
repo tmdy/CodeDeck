@@ -90,6 +90,13 @@ describe("profile-editor-state", () => {
       url: "https://api.anthropic.com",
       key: "sk-ant",
       selectedModelId: "deepseek-v4-pro",
+      channels: [{
+        id: "default",
+        name: "默认渠道",
+        key: "sk-ant",
+        selectedModelId: "deepseek-v4-pro",
+      }],
+      activeChannelId: "default",
       advancedModelMapping: {
         enabled: false,
         claude: {

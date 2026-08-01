@@ -36,6 +36,31 @@ describe("LocalStateStore", () => {
     expect("connectivity_tests_by_profile" in persisted).toBe(false);
   });
 
+  it("persists only non-sensitive learned site capabilities", async () => {
+    const store = await makeStore();
+    const state = defaultLocalState();
+    state.site_capability_cache.checkin_by_account["https://example.com::account-a"] = {
+      platform: "management",
+      endpoint_path: "/api/user/checkin",
+      method: "POST",
+      authorization_mode: "bearer",
+      cookie_mode: "none",
+      requires_user_id: true,
+      learned_at: new Date().toISOString(),
+      credential_updated_at: "2026-07-28T12:00:00.000Z",
+    };
+
+    await store.save(state);
+    const loaded = await store.load();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    const rawText = await readFile(rawPath, "utf-8");
+
+    expect(loaded.site_capability_cache.checkin_by_account)
+      .toHaveProperty("https://example.com::account-a");
+    expect(rawText).not.toContain("access-token");
+    expect(rawText).not.toContain("Cookie");
+  });
+
   it("persists profile groups and their collapsed state", async () => {
     const store = await makeStore();
     const state = defaultLocalState();

@@ -118,6 +118,11 @@ declare global {
       deleteProfile: (key: ProfileKey) => Promise<void>;
       cloneProfile: (sourceKey: ProfileKey, targetProvider: string) => Promise<Profile>;
       selectProfile: (provider: string, key: ProfileKey) => Promise<void>;
+      selectProfileChannel?: (profileKey: ProfileKey, channelId: string) => Promise<Profile>;
+      refreshProfileChannelModels?: (
+        profileKey: ProfileKey,
+        channelId: string,
+      ) => Promise<{ models: string[]; modelsFetchedAt: string; profile: Profile }>;
       reorderProfiles: (provider: string, orderedKeys: ProfileKey[]) => Promise<void>;
       updateProfileOrganization?: (
         provider: string,

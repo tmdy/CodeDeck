@@ -75,9 +75,51 @@ describe("ParameterSettingsPanel", () => {
 
     expect(html).toContain("本地 AI 委托接口");
     expect(html).toContain("允许本机 AI 调用 Profile");
-    expect(html).toContain("禁止调用 Delegated (codex)");
+    expect(html).toContain("Profile 黑名单");
+    expect(html).toContain("灰色表示禁止调用");
+    expect(html).toContain("Delegated");
+    expect(html).toContain("codex");
+    expect(html).toContain('aria-pressed="true"');
     expect(html).not.toContain("secret");
     expect(html).not.toContain("https://example.com");
+  });
+
+  it("adds a Profile to the blacklist when its option is clicked", async () => {
+    const onChange = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <ParameterSettingsPanel
+          settings={defaultParameterSettings()}
+          profiles={[{
+            provider: "codex",
+            name: "Delegated",
+            url: "https://example.com/v1",
+            key: "secret",
+            selectedModelId: "gpt-test",
+          }]}
+          onChange={onChange}
+        />,
+      );
+    });
+
+    const option = container.querySelector<HTMLButtonElement>(
+      ".parameter-profile-blacklist-option",
+    );
+    expect(option?.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => option?.click());
+
+    expect(onChange).toHaveBeenCalledWith({
+      agent_bridge: expect.objectContaining({
+        blocked_profile_keys: ["codex::Delegated"],
+      }),
+    });
+
+    await act(async () => root.unmount());
+    container.remove();
   });
 
   it("parses the single-line keyword field with comma compatibility and deduplication", async () => {

@@ -41,7 +41,7 @@
 
 ### Profile 与启动预览
 
-每个站点 Profile 可以保存 Base URL、API Key 或 Token、模型、工作目录、额外参数和环境变量。每个 Provider 的 Profile 列顶部还提供一个官方 CLI Profile，它不要求填写站点凭据或模型配置，Claude/Codex 会继续使用用户全局配置和会话目录。
+每个站点 Profile 可以保存 Base URL、API Key 或 Token、模型、工作目录、额外参数和环境变量。每个 Provider 的 Profile 列顶部还提供一个官方 CLI Profile，它不要求填写站点凭据或模型配置。官方 Claude 继续使用用户全局配置和会话目录；CodeDeck 启动的官方 Codex 使用 `app-data/codex-runtime/home`，系统终端直接启动的 Codex 仍使用用户全局 `~/.codex`。
 
 ### 分开的权限模型
 

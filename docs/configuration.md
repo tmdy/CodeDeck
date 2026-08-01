@@ -65,7 +65,7 @@ npm run agent -- wait --session "<session-id>"
 | `app-data/runtime-overlays/` | 从全局配置接入的 MCP、Skills 和插件能力 |
 | `library/codex/`、`library/claude/` | 当前未启用的托管 Skills |
 
-官方 CLI Profile 使用 runtime 的 `startup_mode = native`，不设置 `CODEX_HOME`、provider 凭据、模型映射、managed 权限或能力 overlay，直接使用用户 CLI 的全局配置。官方 Codex 会话不会导入到 `app-data/codex-runtime`。
+官方 CLI Profile 使用 runtime 的 `startup_mode = native`，不注入 provider 凭据、模型映射、managed 权限或能力 overlay。官方 Claude 直接使用用户 CLI 的全局配置；CodeDeck 启动的官方 Codex 会设置 `CODEX_HOME=app-data/codex-runtime/home`，因此配置、认证、插件、Skills、索引和会话均来自 App Runtime。系统终端直接启动的 Codex 不受影响，仍使用 `~/.codex`。历史列表同时展示两处 Codex 会话：App Runtime 会话直接恢复，全局会话仅在用户选择恢复时导入 App Runtime。
 
 `.gitignore` 默认排除这些运行数据和构建产物，只保留仓库已有的公开翻译、标签文件。
 

@@ -30,6 +30,51 @@ describe("ProfileEditForm", () => {
     };
   }
 
+  it("renders channel management controls for the active credential", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{
+          name: "Relay",
+          url: "https://relay.example.com",
+          key: "sk-b",
+          selectedModelId: "model-b",
+          channels: [
+            { id: "a", name: "渠道 A", key: "sk-a" },
+            { id: "b", name: "渠道 B", key: "sk-b", selectedModelId: "model-b" },
+          ],
+          activeChannelId: "b",
+          advancedModelMapping: makeAdvancedMapping(),
+        }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        onChange={vi.fn()}
+        onChannelsChange={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("当前渠道");
+    expect(html).toContain("渠道名称");
+    expect(html).toContain("渠道 A");
+    expect(html).toContain("渠道 B");
+    expect(html).toContain('value="sk-b"');
+    expect(html).toContain('aria-label="添加渠道"');
+    expect(html).toContain('aria-label="删除当前渠道"');
+  });
+
 
   it("should render direct model-id controls instead of the old global mapping panel", () => {
     const html = renderToStaticMarkup(
@@ -845,7 +890,42 @@ describe("ProfileEditForm", () => {
     container.remove();
   });
 
-  it("should render model fetch success as compact status text instead of a large success banner", () => {
+  it("should render model fetch success as responsive Beijing-time status text", () => {
+    const html = renderToStaticMarkup(
+      <ProfileEditForm
+        draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+        runtime={{
+          cwd: "",
+          command_base: "claude",
+          settings_file: "",
+          extra_args: "",
+          launch_mode: "new",
+          exclude_user_settings: true,
+        }}
+        provider="claude"
+        modelOptions={[]}
+        modelFetchedAt="2026-07-31T09:45:13.399Z"
+        modelFetchSuccess="已获取2个模型"
+        onChange={vi.fn()}
+        onAdvancedModelMappingChange={vi.fn()}
+        onRuntimeChange={vi.fn()}
+        onFetchModels={vi.fn()}
+        onPickCwd={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("最近获取：2026年07月31日 17:45:13，已获取2个模型");
+    expect(html).toContain('class="inline-actions model-fetch-actions"');
+    expect(html).toContain('class="muted model-fetch-status"');
+    expect(html).not.toContain('flex-wrap:nowrap');
+    expect(html).not.toContain('white-space:nowrap');
+    expect(html).not.toContain("已更新当前站点模型列表");
+    expect(html).not.toContain("banner success");
+  });
+
+  it("should normalize legacy model fetch timestamps without shifting their Beijing wall time", () => {
     const html = renderToStaticMarkup(
       <ProfileEditForm
         draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
@@ -871,9 +951,7 @@ describe("ProfileEditForm", () => {
       />,
     );
 
-    expect(html).toContain("最近获取：2026/5/5 14:55:20，已获取2个模型");
-    expect(html).not.toContain("已更新当前站点模型列表");
-    expect(html).not.toContain("banner success");
+    expect(html).toContain("最近获取：2026年05月05日 14:55:20，已获取2个模型");
   });
 
   it("should render working directory picker button and invoke onPickCwd", async () => {

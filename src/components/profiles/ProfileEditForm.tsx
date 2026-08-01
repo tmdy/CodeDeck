@@ -7,6 +7,7 @@ import type {
   ClaudeReasoningEffort,
   CodexReasoningEffort,
   LaunchMode,
+  ProfileChannel,
   ProviderID,
 } from "../../shared/profile/types.js";
 import {
@@ -28,6 +29,8 @@ interface ProfileEditFormProps {
     url: string;
     key: string;
     selectedModelId: string;
+    channels?: ProfileChannel[];
+    activeChannelId?: string;
     advancedModelMapping: AdvancedModelMapping;
     permissions?: ProfilePermissions | null;
   };
@@ -51,6 +54,7 @@ interface ProfileEditFormProps {
   commandPreview?: ReactNode;
   workingDirectoryFavorites?: string[];
   onChange: (field: string, value: string | boolean) => void;
+  onChannelsChange?: (channels: ProfileChannel[], activeChannelId: string) => void;
   onPermissionsChange?: (permissions: ProfilePermissions | null) => void;
   onDraftCommit?: (field: string, value?: string | boolean) => void;
   onAdvancedModelMappingChange: (next: AdvancedModelMapping) => void;
@@ -70,6 +74,16 @@ const noopPermissionsChange = () => {};
 const noopOpenBaseUrl = () => {};
 const noopToggleWorkingDirectoryFavorite = () => {};
 const noopSelectWorkingDirectoryFavorite = () => {};
+const beijingDateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
 
 export const ProfileEditForm = memo(function ProfileEditForm({
   draft,
@@ -84,6 +98,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   commandPreview,
   workingDirectoryFavorites = [],
   onChange,
+  onChannelsChange,
   onPermissionsChange,
   onDraftCommit,
   onAdvancedModelMappingChange,
@@ -122,7 +137,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   );
   const modelFetchStatus = useMemo(
     () => [
-      modelFetchedAt ? `最近获取：${modelFetchedAt}` : "",
+      modelFetchedAt ? `最近获取：${formatBeijingDateTime(modelFetchedAt)}` : "",
       modelFetchSuccess ?? "",
     ].filter(Boolean).join("，"),
     [modelFetchedAt, modelFetchSuccess],
@@ -143,6 +158,41 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     ? workingDirectoryFavorites.includes(normalizedCwd)
     : false;
   const favoriteButtonLabel = cwdIsFavorite ? "取消收藏当前工作目录" : "收藏当前工作目录";
+  const channels = draft.channels?.length
+    ? draft.channels
+    : [{ id: "default", name: "默认渠道", key: draft.key, selectedModelId: draft.selectedModelId }];
+  const activeChannelId = draft.activeChannelId ?? channels[0]?.id ?? "default";
+  const activeChannel = channels.find((channel) => channel.id === activeChannelId)
+    ?? channels[0];
+
+  const selectChannel = useCallback((channelId: string) => {
+    onChannelsChange?.(channels, channelId);
+  }, [channels, onChannelsChange]);
+
+  const addChannel = useCallback(() => {
+    const channel: ProfileChannel = {
+      id: createChannelId(),
+      name: `渠道 ${channels.length + 1}`,
+      key: "",
+    };
+    onChannelsChange?.([...channels, channel], channel.id);
+  }, [channels, onChannelsChange]);
+
+  const renameActiveChannel = useCallback((name: string) => {
+    if (!activeChannel) return;
+    onChannelsChange?.(
+      channels.map((channel) => channel.id === activeChannel.id
+        ? { ...channel, name }
+        : channel),
+      activeChannel.id,
+    );
+  }, [activeChannel, channels, onChannelsChange]);
+
+  const removeActiveChannel = useCallback(() => {
+    if (!activeChannel || channels.length <= 1) return;
+    const nextChannels = channels.filter((channel) => channel.id !== activeChannel.id);
+    onChannelsChange?.(nextChannels, nextChannels[0]?.id ?? "");
+  }, [activeChannel, channels, onChannelsChange]);
 
   const updateRuntimeEnvKey = useCallback((currentKey: string, nextKey: string, value: string) => {
     const nextEnv = { ...runtimeEnv };
@@ -404,6 +454,54 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 </button>
               </div>
             </label>}
+            {!isNativeStartup && <div className="profile-channel-editor">
+              <label>
+                当前渠道
+                <div className="path-field">
+                  <select
+                    value={activeChannel?.id ?? ""}
+                    onChange={(event) => selectChannel(event.target.value)}
+                    disabled={disabled}
+                    aria-label="当前渠道"
+                  >
+                    {channels.map((channel) => (
+                      <option key={channel.id} value={channel.id}>
+                        {channel.name || "未命名渠道"}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="secondary-button icon-button"
+                    onClick={addChannel}
+                    disabled={disabled}
+                    aria-label="添加渠道"
+                    title="添加渠道"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button icon-button"
+                    onClick={removeActiveChannel}
+                    disabled={disabled || channels.length <= 1}
+                    aria-label="删除当前渠道"
+                    title="删除当前渠道"
+                  >
+                    ×
+                  </button>
+                </div>
+              </label>
+              <label>
+                渠道名称
+                <input
+                  value={activeChannel?.name ?? ""}
+                  onChange={(event) => renameActiveChannel(event.target.value)}
+                  placeholder="输入渠道名称"
+                  disabled={disabled}
+                />
+              </label>
+            </div>}
             {!isNativeStartup && <label>
               API Key / Token
               <div className="secret-field">
@@ -538,7 +636,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 ))}
               </select>
             </label>
-            <div className="inline-actions" style={{flexWrap: "nowrap"}}>
+            <div className="inline-actions model-fetch-actions">
               <button type="button" className="secondary-button small" onClick={onFetchModels} disabled={disabled || isNativeStartup || modelFetchBusy}>
                 {modelFetchBusy ? "获取中..." : "获取模型列表"}
               </button>
@@ -547,7 +645,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                   清除
                 </button>
               )}
-              {modelFetchStatus && <span className="muted" style={{whiteSpace: "nowrap"}}>{modelFetchStatus}</span>}
+              {modelFetchStatus && <span className="muted model-fetch-status">{modelFetchStatus}</span>}
             </div>
             {modelFetchError && <div className="banner error">{modelFetchError}</div>}
           </GlassCard>}
@@ -693,3 +791,41 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     </div>
   );
 });
+
+function createChannelId(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `channel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatBeijingDateTime(value: string): string {
+  const normalized = value.trim();
+  const legacyMatch = normalized.match(
+    /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[T ](\d{1,2}):(\d{1,2}):(\d{1,2})(?:\.\d+)?$/,
+  );
+  if (legacyMatch) {
+    const [year, month, day, hour, minute, second] = legacyMatch.slice(1).map(Number);
+    const candidate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    const valid = candidate.getUTCFullYear() === year
+      && candidate.getUTCMonth() === month - 1
+      && candidate.getUTCDate() === day
+      && candidate.getUTCHours() === hour
+      && candidate.getUTCMinutes() === minute
+      && candidate.getUTCSeconds() === second;
+    if (valid) {
+      return `${year}年${padDatePart(month)}月${padDatePart(day)}日 ${padDatePart(hour)}:${padDatePart(minute)}:${padDatePart(second)}`;
+    }
+  }
+
+  const timestamp = Date.parse(normalized);
+  if (!Number.isFinite(timestamp)) {
+    return value;
+  }
+  const parts = Object.fromEntries(
+    beijingDateTimeFormatter.formatToParts(new Date(timestamp)).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}年${parts.month}月${parts.day}日 ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+function padDatePart(value: number): string {
+  return value.toString().padStart(2, "0");
+}

@@ -1731,7 +1731,7 @@ function codexIndexRecordFromFileSummary(summary: SessionFileSummary): Record<st
 
 async function mergeCodexIndexEntry(
   sourceHome: string,
-  runtimeHome: string,
+  targetHome: string,
   sessionId: string,
   fallbackSummary: SessionFileSummary,
 ): Promise<void> {
@@ -1742,7 +1742,7 @@ async function mergeCodexIndexEntry(
     ? selectedRecords
     : [codexIndexRecordFromFileSummary(fallbackSummary)];
 
-  const targetPath = path.join(runtimeHome, "session_index.jsonl");
+  const targetPath = path.join(targetHome, "session_index.jsonl");
   const existingRecords = await safeReadJsonl(targetPath).catch(() => []);
   const existingIds = new Set(
     existingRecords
@@ -1758,15 +1758,44 @@ async function mergeCodexIndexEntry(
     return;
   }
   await writeJsonlRecords(targetPath, [...existingRecords, ...nextRecords]);
-  invalidateCodexSessionCache(runtimeHome);
+  invalidateCodexSessionCache(targetHome);
 }
 
-export async function importCodexSessionToRuntimeHome(options: {
+export type CopyCodexSessionResult = "copied" | "already_present";
+
+export function resolveCodexSessionTransferHomes(options: {
+  sourceKind: unknown;
+  appRuntimeHome: string;
+  globalHome: string;
+}): { sourceHome: string; targetHome: string } {
+  if (options.sourceKind !== "app_runtime" && options.sourceKind !== "global_codex") {
+    throw new Error("Codex 会话来源无效，请刷新会话列表后重试。");
+  }
+  return {
+    sourceHome: options.sourceKind === "app_runtime"
+      ? options.appRuntimeHome
+      : options.globalHome,
+    targetHome: options.appRuntimeHome,
+  };
+}
+
+async function findCodexSessionInHome(
+  home: string,
+  sessionId: string,
+  knownRelativePath = "",
+): Promise<SessionFileSummary | null> {
+  const path = await import("node:path");
+  return (await summarizeKnownCodexSessionFile(home, knownRelativePath, sessionId))
+    ?? (await findCodexSessionFileFromIndex(home, sessionId))
+    ?? (await findCodexSessionFile(path.join(home, "sessions"), sessionId));
+}
+
+export async function copyCodexSessionBetweenHomes(options: {
   sessionId: string;
   sourceHome: string;
-  runtimeHome: string;
+  targetHome: string;
   sourceFileRelativePath?: string;
-}): Promise<void> {
+}): Promise<CopyCodexSessionResult> {
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
   const sessionId = options.sessionId.trim();
@@ -1774,23 +1803,33 @@ export async function importCodexSessionToRuntimeHome(options: {
     throw new Error("恢复指定会话时必须提供 sessionId。");
   }
 
-  const sourceSummary = (await summarizeKnownCodexSessionFile(
-    options.sourceHome,
-    options.sourceFileRelativePath ?? "",
+  const knownRelativePath = options.sourceFileRelativePath ?? "";
+  const targetSummary = await findCodexSessionInHome(
+    options.targetHome,
     sessionId,
-  ))
-    ?? (await findCodexSessionFileFromIndex(options.sourceHome, sessionId))
-    ?? (await findCodexSessionFile(path.join(options.sourceHome, "sessions"), sessionId));
+    knownRelativePath,
+  );
+  if (targetSummary) {
+    return "already_present";
+  }
+
+  const sourceSummary = await findCodexSessionInHome(
+    options.sourceHome,
+    sessionId,
+    knownRelativePath,
+  );
   if (!sourceSummary) {
-    throw new Error("全局 .codex 中未找到该会话文件，无法导入恢复。");
+    throw new Error("源 Codex home 中未找到该会话文件，请刷新会话列表后重试。");
   }
 
   const relativePath = sourceSummary.source_file_relative_path
     ?? path.relative(path.join(options.sourceHome, "sessions"), sourceSummary.filePath);
-  const targetPath = path.join(options.runtimeHome, "sessions", relativePath);
+  const targetPath = path.join(options.targetHome, "sessions", relativePath);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await fs.copyFile(sourceSummary.filePath, targetPath);
-  await mergeCodexIndexEntry(options.sourceHome, options.runtimeHome, sessionId, sourceSummary);
+  await mergeCodexIndexEntry(options.sourceHome, options.targetHome, sessionId, sourceSummary);
+  invalidateCodexSessionCache(options.targetHome);
+  return "copied";
 }
 
 export async function listSessionsForProvider(

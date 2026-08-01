@@ -11,6 +11,7 @@ import {
   type ManagementAuthorizationMode,
   type ManagementCookieMode,
 } from "./management-auth.js";
+import type { LearnedCheckinPath } from "../site-capability-cache.js";
 
 interface CheckinResponse {
   status: number;
@@ -45,6 +46,7 @@ interface CheckinAuthTransport {
 interface CheckinAttemptExecution {
   response: CheckinResponse;
   result: CheckinResult;
+  method: "GET" | "POST";
 }
 
 interface CheckinStatusInspection {
@@ -84,6 +86,9 @@ export interface CheckinDiagnosticsOptions {
   runId: string;
   trigger: CheckinTrigger;
   onDiagnostic?: (event: CheckinDiagnosticAttempt) => void;
+  learnedPath?: LearnedCheckinPath;
+  onPathLearned?: (path: LearnedCheckinPath) => void;
+  onPathInvalidated?: () => void;
 }
 
 const ALREADY_CHECKED_PATTERN = /今天?已(?:经)?签到|今日已(?:经)?签到|已经签到|已签到|already\s+(?:checked|signed|check(?:ed)?\s*in)|already\s+sign(?:ed)?\s+in|checked[_\s-]*in[_\s-]*today/i;
@@ -107,6 +112,10 @@ export class CheckinService {
     const savedUserId = session.user_id.trim() || null;
     const checkinEndpoint = `${baseUrl}/api/user/checkin`;
     const failures: CheckinResult[] = [];
+    const deadline = Date.now() + Math.max(1, timeoutMs);
+    const requestTimeout = (capMs: number = 5_000): number => (
+      Math.max(1, Math.min(capMs, deadline - Date.now()))
+    );
     const knownUserIds = new Set<string>(savedUserId ? [savedUserId] : []);
 
     const sensitiveValues = (
@@ -132,6 +141,18 @@ export class CheckinService {
       }, accessToken);
     };
 
+    const learnPath = (
+      result: CheckinResult,
+      path: Omit<LearnedCheckinPath, "learned_at" | "credential_updated_at">,
+    ): void => {
+      if (!isTerminalResult(result)) return;
+      diagnostics?.onPathLearned?.({
+        ...path,
+        learned_at: new Date().toISOString(),
+        credential_updated_at: session.updated_at,
+      });
+    };
+
     if (isKnownUnsupportedCheckinPlatform(baseUrl)) {
       return finish(unsupportedResult(
         `${baseUrl}/api/user/checkin`,
@@ -149,7 +170,17 @@ export class CheckinService {
     }
 
     if (isVoApiV2BaseUrl(baseUrl)) {
-      const result = await this.tryVoApiV2Checkin(baseUrl, accessToken, timeoutMs);
+      const result = await this.tryVoApiV2Checkin(baseUrl, accessToken, deadline);
+      if (result) {
+        learnPath(result, {
+          platform: "voapi_v2",
+          endpoint_path: "/api/check_in",
+          method: "POST",
+          authorization_mode: "raw",
+          cookie_mode: "none",
+          requires_user_id: false,
+        });
+      }
       return finish(result ?? unsupportedResult(
         `${baseUrl}/api/check_in`,
         baseUrl,
@@ -205,7 +236,7 @@ export class CheckinService {
       const endpoint = `${baseUrl}${endpointPath}`;
       const response = await this.request(
         endpoint,
-        timeoutMs,
+        requestTimeout(),
         {
           ...transport.headers,
           ...(userId ? buildUserIdHeaders(userId) : {}),
@@ -226,7 +257,7 @@ export class CheckinService {
         userIdSource,
         method,
       );
-      return { response, result };
+      return { response, result, method };
     };
 
     const runCompatibleActionAttempt = async (
@@ -256,7 +287,7 @@ export class CheckinService {
       const endpoint = `${baseUrl}${endpointPath}`;
       const response = await this.request(
         endpoint,
-        timeoutMs,
+        requestTimeout(),
         transport.headers,
         { method: "GET" },
       );
@@ -296,7 +327,7 @@ export class CheckinService {
       const endpoint = `${baseUrl}${endpointPath}`;
       const response = await this.request(
         endpoint,
-        timeoutMs,
+        requestTimeout(),
         {
           ...transport.headers,
           ...buildUserIdHeaders(userId),
@@ -410,6 +441,73 @@ export class CheckinService {
       })),
     ];
 
+    const learnedPath = diagnostics?.learnedPath;
+    if (learnedPath?.platform === "voapi_v2") {
+      const learnedResult = await this.tryVoApiV2Checkin(baseUrl, accessToken, deadline);
+      if (learnedResult && !isDeterministicPathFailure(learnedResult)) {
+        learnPath(learnedResult, {
+          platform: "voapi_v2",
+          endpoint_path: "/api/check_in",
+          method: "POST",
+          authorization_mode: "raw",
+          cookie_mode: "none",
+          requires_user_id: false,
+        });
+        return finish(learnedResult);
+      }
+      diagnostics?.onPathInvalidated?.();
+    } else if (learnedPath?.platform === "management") {
+      const learnedTransport = buildLearnedTransport(accessToken, learnedPath);
+      const learnedUserId = learnedPath.requires_user_id ? savedUserId : null;
+      if (learnedTransport && (!learnedPath.requires_user_id || learnedUserId)) {
+        if (learnedUserId) {
+          const statusAttempt = await probeCheckinStatus(learnedTransport, learnedUserId, "saved");
+          if (statusAttempt.inspection.terminalResult) {
+            const terminal = statusAttempt.inspection.terminalResult;
+            if (!isDeterministicPathFailure(terminal)) {
+              learnPath(terminal, {
+                ...learnedPath,
+                requires_user_id: true,
+              });
+              return finish(terminal);
+            }
+          } else if (statusAttempt.inspection.authenticated) {
+            const attempt = await runActionAttempt(
+              learnedPath.endpoint_path,
+              learnedTransport,
+              learnedTransport.cookieMode === "none" ? "checkin_direct" : "checkin_cookie",
+              learnedUserId,
+              "saved",
+              learnedPath.method,
+            );
+            if (!isDeterministicPathFailure(attempt.result)) {
+              learnPath(attempt.result, {
+                ...learnedPath,
+                method: attempt.method,
+              });
+              return finish(attempt.result);
+            }
+          } else if (shouldStopTryingAuthCandidates(statusAttempt.inspection.diagnosticResult)) {
+            return finish(statusAttempt.inspection.diagnosticResult);
+          }
+        } else {
+          const attempt = await runActionAttempt(
+            learnedPath.endpoint_path,
+            learnedTransport,
+            learnedTransport.cookieMode === "none" ? "checkin_direct" : "checkin_cookie",
+            null,
+            "none",
+            learnedPath.method,
+          );
+          if (!isDeterministicPathFailure(attempt.result)) {
+            learnPath(attempt.result, { ...learnedPath, method: attempt.method });
+            return finish(attempt.result);
+          }
+        }
+      }
+      diagnostics?.onPathInvalidated?.();
+    }
+
     let checkinEndpointObserved = false;
     for (const transport of transports) {
       const statusAttempt = await resolveStatusAttempt(transport);
@@ -428,6 +526,14 @@ export class CheckinService {
           || inspection.terminalResult.error_code === "business_rejected"
           || shouldStopTryingAuthCandidates(inspection.terminalResult)
         ) {
+          learnPath(inspection.terminalResult, {
+            platform: "management",
+            endpoint_path: "/api/user/checkin",
+            method: "POST",
+            authorization_mode: transport.authorizationMode,
+            cookie_mode: transport.cookieMode,
+            requires_user_id: true,
+          });
           return finish(inspection.terminalResult);
         }
       }
@@ -440,6 +546,14 @@ export class CheckinService {
           transport.cookieMode === "none" ? "checkin_direct" : "checkin_cookie",
         );
         failures.push(actionAttempt.result);
+        learnPath(actionAttempt.result, {
+          platform: "management",
+          endpoint_path: "/api/user/checkin",
+          method: actionAttempt.method,
+          authorization_mode: transport.authorizationMode,
+          cookie_mode: transport.cookieMode,
+          requires_user_id: true,
+        });
         return finish(actionAttempt.result);
       }
 
@@ -459,6 +573,14 @@ export class CheckinService {
           || legacyAction.result.error_code === "business_rejected"
           || shouldStopTryingAuthCandidates(legacyAction.result)
         ) {
+          learnPath(legacyAction.result, {
+            platform: "management",
+            endpoint_path: "/api/user/checkin",
+            method: legacyAction.method,
+            authorization_mode: transport.authorizationMode,
+            cookie_mode: transport.cookieMode,
+            requires_user_id: true,
+          });
           return finish(legacyAction.result);
         }
         continue;
@@ -493,14 +615,30 @@ export class CheckinService {
           || signInAttempt.result.error_code === "business_rejected"
           || shouldStopTryingAuthCandidates(signInAttempt.result)
         ) {
+          learnPath(signInAttempt.result, {
+            platform: "management",
+            endpoint_path: "/api/user/sign_in",
+            method: signInAttempt.method,
+            authorization_mode: "none",
+            cookie_mode: candidate.mode,
+            requires_user_id: false,
+          });
           return finish(signInAttempt.result);
         }
       }
     }
 
     if (!checkinEndpointObserved) {
-      const voApiV2Result = await this.tryVoApiV2Checkin(baseUrl, accessToken, timeoutMs);
+      const voApiV2Result = await this.tryVoApiV2Checkin(baseUrl, accessToken, deadline);
       if (voApiV2Result) {
+        learnPath(voApiV2Result, {
+          platform: "voapi_v2",
+          endpoint_path: "/api/check_in",
+          method: "POST",
+          authorization_mode: "raw",
+          cookie_mode: "none",
+          requires_user_id: false,
+        });
         return finish(voApiV2Result);
       }
     }
@@ -511,13 +649,13 @@ export class CheckinService {
   private async tryVoApiV2Checkin(
     baseUrl: string,
     accessToken: string,
-    timeoutMs: number,
+    deadline: number,
   ): Promise<CheckinResult | null> {
     const statsEndpoint = `${baseUrl}/api/check_in/stats`;
     const headers = { Authorization: accessToken };
     const statsResponse = await this.request(
       statsEndpoint,
-      timeoutMs,
+      Math.max(1, Math.min(5_000, deadline - Date.now())),
       headers,
       { method: "GET" },
     );
@@ -526,6 +664,13 @@ export class CheckinService {
       extractResponseMessage(statsResponse),
     )) {
       return manualRequiredResult(statsEndpoint, baseUrl, "站点签到需要人工验证");
+    }
+    if (
+      statsResponse.responseKind === "network_error"
+      || statsResponse.status === 429
+      || statsResponse.status >= 500
+    ) {
+      return classifyResponse(statsResponse, statsEndpoint, baseUrl);
     }
     if (!isVoApiV2Envelope(statsResponse.payload)) {
       return null;
@@ -551,7 +696,7 @@ export class CheckinService {
     const actionEndpoint = `${baseUrl}/api/check_in`;
     const actionResponse = await this.request(
       actionEndpoint,
-      timeoutMs,
+      Math.max(1, Math.min(5_000, deadline - Date.now())),
       headers,
       { method: "POST" },
     );
@@ -811,6 +956,45 @@ function shouldStopTryingAuthCandidates(result: CheckinResult): boolean {
   return result.error_code === "rate_limited"
     || result.error_code === "network_error"
     || result.error_code === "server_error";
+}
+
+function isDeterministicPathFailure(result: CheckinResult): boolean {
+  return result.error_code === "endpoint_missing"
+    || result.error_code === "auth_not_logged_in"
+    || result.error_code === "access_token_invalid"
+    || result.error_code === "user_id_missing"
+    || result.error_code === "user_id_mismatch"
+    || result.error_code === "unknown_failure";
+}
+
+function buildLearnedTransport(
+  accessToken: string,
+  path: LearnedCheckinPath,
+): CheckinAuthTransport | null {
+  if (path.authorization_mode !== "none") {
+    const candidate = buildManagementAuthorizationCandidates(accessToken)
+      .find((item) => item.mode === path.authorization_mode);
+    return candidate ? {
+      headers: { Authorization: candidate.headerValue },
+      authorizationMode: candidate.mode,
+      cookieMode: "none",
+    } : null;
+  }
+  if (path.cookie_mode !== "none") {
+    const candidate = buildManagementCookieCandidates(accessToken)
+      .find((item) => item.mode === path.cookie_mode);
+    return candidate ? {
+      headers: {
+        Cookie: candidate.headerValue,
+        ...(path.endpoint_path === "/api/user/sign_in"
+          ? { "X-Requested-With": "XMLHttpRequest" }
+          : {}),
+      },
+      authorizationMode: "none",
+      cookieMode: candidate.mode,
+    } : null;
+  }
+  return null;
 }
 
 function isAuthErrorCode(errorCode: CheckinErrorCode | undefined): boolean {

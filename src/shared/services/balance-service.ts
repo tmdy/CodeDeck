@@ -5,6 +5,10 @@ import {
   type SiteBalanceSession,
 } from "../balance/site-balance-sessions.js";
 import { buildManagementCookieCandidates } from "./management-auth.js";
+import type {
+  LearnedBalanceFamily,
+  LearnedBalancePath,
+} from "../site-capability-cache.js";
 
 export { normalizeBalanceBaseUrl } from "../balance/site-balance-sessions.js";
 
@@ -47,10 +51,14 @@ interface RequestJsonOptions {
   includeAuthorization?: boolean;
   method?: "GET" | "POST";
   body?: unknown;
+  deadline?: number;
 }
 
 export interface BalanceQueryOptions {
   onSessionUpdated?: (session: SiteBalanceSession) => Promise<void> | void;
+  learnedPath?: LearnedBalancePath;
+  onPathLearned?: (path: LearnedBalancePath) => void;
+  onPathInvalidated?: () => void;
 }
 
 interface ManagementInspectionResult {
@@ -1121,6 +1129,31 @@ function describeNetworkError(error: unknown): string {
   return message || "网络错误 / 超时";
 }
 
+function isDeterministicBalancePathFailure(state: BalanceCheckState): boolean {
+  return !state.success && (
+    /HTTP\s+(?:404|405)/i.test(state.message)
+    || /暂未适配|不支持.*接口|非预期格式/.test(state.message)
+  );
+}
+
+function isTransientBalanceFailure(state: BalanceCheckState): boolean {
+  return !state.success && /网络|超时|TLS|HTTP\s+(?:429|5\d\d)/i.test(state.message);
+}
+
+function isBalanceAuthFailure(state: BalanceCheckState): boolean {
+  return !state.success && /鉴权|登录状态|会话|Access Token|API Key/i.test(state.message);
+}
+
+function prioritizeBalanceCookieCandidates(
+  candidates: ReturnType<typeof buildManagementCookieCandidates>,
+  preferredMode: LearnedBalancePath["cookie_mode"],
+): ReturnType<typeof buildManagementCookieCandidates> {
+  if (!preferredMode) return candidates;
+  return [...candidates].sort((left, right) => (
+    Number(right.mode === preferredMode) - Number(left.mode === preferredMode)
+  ));
+}
+
 export class BalanceService {
   constructor(private fetchImpl: typeof fetch = fetch) {}
 
@@ -1136,82 +1169,132 @@ export class BalanceService {
       return supportedFailureState(context, "", AUTH_FAILURE_MESSAGE);
     }
 
+    const configuredDeadline = Date.now() + Math.max(1, timeoutMs);
+    const credentialUpdatedAt = resolvedSession?.updated_at ?? "";
+    const learn = (
+      family: LearnedBalanceFamily,
+      authMode: "bearer" | "session_cookie" = "bearer",
+      cookieMode?: LearnedBalancePath["cookie_mode"],
+    ): void => options.onPathLearned?.({
+      family,
+      auth_mode: authMode,
+      ...(cookieMode ? { cookie_mode: cookieMode } : {}),
+      learned_at: new Date().toISOString(),
+      credential_updated_at: credentialUpdatedAt,
+      base_url: context.base_url,
+    });
+
     if (isDeepSeekBaseUrl(context.base_url)) {
-      return this.queryDeepSeek(context, apiKey, timeoutMs);
+      return this.queryDeepSeek(context, apiKey, timeoutMs, configuredDeadline);
+    }
+
+    const runFamily = async (
+      family: LearnedBalanceFamily,
+      assumeFamily: boolean,
+      deadline: number,
+      learned?: LearnedBalancePath,
+      requestTimeoutMs: number = timeoutMs,
+    ): Promise<BalanceCheckState | null> => {
+      const learnedAuth: {
+        value: { mode: "bearer" | "session_cookie"; cookieMode?: LearnedBalancePath["cookie_mode"] } | null;
+      } = { value: null };
+      let result: BalanceCheckState | null;
+      if (family === "aihubmix") {
+        result = await this.queryAIHubMix(context, apiKey, requestTimeoutMs, resolvedSession, deadline);
+      } else if (family === "sharedchat") {
+        result = await this.querySharedChat(
+          context,
+          apiKey,
+          requestTimeoutMs,
+          resolvedSession,
+          deadline,
+          learned?.cookie_mode,
+          (cookieMode) => { learnedAuth.value = { mode: "session_cookie", cookieMode }; },
+        );
+      } else if (family === "voapi_v2") {
+        result = await this.queryVoApiV2(
+          context, apiKey, requestTimeoutMs, resolvedSession, assumeFamily, deadline,
+        );
+      } else if (family === "sub2api") {
+        result = await this.querySub2Api(
+          context, apiKey, requestTimeoutMs, resolvedSession, options, assumeFamily, deadline,
+        );
+      } else {
+        result = await this.queryManagementFamily(
+          context,
+          apiKey,
+          requestTimeoutMs,
+          resolvedSession,
+          family,
+          assumeFamily,
+          deadline,
+          learned,
+          (mode, cookieMode) => {
+            learnedAuth.value = { mode, ...(cookieMode ? { cookieMode } : {}) };
+          },
+        );
+      }
+      if (result?.success) {
+        learn(
+          family,
+          learnedAuth.value?.mode ?? "bearer",
+          learnedAuth.value?.cookieMode,
+        );
+      }
+      return result;
+    };
+
+    if (options.learnedPath?.base_url === context.base_url) {
+      const learnedResult = await runFamily(
+        options.learnedPath.family,
+        true,
+        configuredDeadline,
+        options.learnedPath,
+      );
+      if (learnedResult && !isDeterministicBalancePathFailure(learnedResult)) {
+        if (isBalanceAuthFailure(learnedResult)) {
+          options.onPathInvalidated?.();
+        }
+        return learnedResult;
+      }
+      options.onPathInvalidated?.();
     }
 
     const familyHint = detectPlatformFamily(context.base_url);
-    if (familyHint === "aihubmix") {
-      return this.queryAIHubMix(context, apiKey, timeoutMs, resolvedSession);
-    }
-    if (familyHint === "sharedchat") {
-      return this.querySharedChat(context, apiKey, timeoutMs, resolvedSession);
-    }
-    if (familyHint === "voapi_v2") {
-      return (await this.queryVoApiV2(context, apiKey, timeoutMs, resolvedSession, true))
-        ?? unsupportedState(context, NOT_SUPPORTED_MESSAGE);
-    }
     if (familyHint === "official_unsupported") {
       return unsupportedState(context, "官方兼容接口不提供公开余额查询");
     }
-    if (familyHint === "sub2api") {
-      return (await this.querySub2Api(
-        context,
-        apiKey,
-        timeoutMs,
-        resolvedSession,
-        options,
-        true,
-      ))
+    if (familyHint !== "unknown") {
+      return (await runFamily(familyHint, true, configuredDeadline))
         ?? unsupportedState(context, NOT_SUPPORTED_MESSAGE);
     }
-    if (familyHint !== "unknown") {
-      return (await this.queryManagementFamily(
-        context,
-        apiKey,
-        timeoutMs,
-        resolvedSession,
-        familyHint,
-        true,
-      )) ?? unsupportedState(context, NOT_SUPPORTED_MESSAGE);
-    }
 
+    const discoveryDeadline = Math.min(configuredDeadline, Date.now() + 15_000);
     const managementResult = await this.queryManagementFamily(
       context,
       apiKey,
-      timeoutMs,
+      Math.min(timeoutMs, 5_000),
       resolvedSession,
       null,
       false,
+      discoveryDeadline,
+      undefined,
+      (mode, cookieMode, family) => {
+        if (family) learn(family, mode, cookieMode);
+      },
     );
-    if (managementResult) {
-      return managementResult;
-    }
+    if (managementResult) return managementResult;
 
-    const voApiV2Result = await this.queryVoApiV2(
-      context,
-      apiKey,
-      timeoutMs,
-      resolvedSession,
-      false,
+    const discoveryRequestTimeoutMs = Math.min(timeoutMs, 5_000);
+    const voApiV2Result = await runFamily(
+      "voapi_v2", false, discoveryDeadline, undefined, discoveryRequestTimeoutMs,
     );
-    if (voApiV2Result) {
-      return voApiV2Result;
-    }
+    if (voApiV2Result) return voApiV2Result;
 
-    const sub2ApiResult = await this.querySub2Api(
-      context,
-      apiKey,
-      timeoutMs,
-      resolvedSession,
-      options,
-      false,
+    const sub2ApiResult = await runFamily(
+      "sub2api", false, discoveryDeadline, undefined, discoveryRequestTimeoutMs,
     );
-    if (sub2ApiResult) {
-      return sub2ApiResult;
-    }
-
-    return unsupportedState(context, NOT_SUPPORTED_MESSAGE);
+    return sub2ApiResult ?? unsupportedState(context, NOT_SUPPORTED_MESSAGE);
   }
 
   private async requestJson(
@@ -1222,7 +1305,11 @@ export class BalanceService {
     options: RequestJsonOptions = {},
   ): Promise<RequestResult> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const effectiveTimeoutMs = Math.max(1, Math.min(
+      timeoutMs,
+      options.deadline === undefined ? timeoutMs : options.deadline - Date.now(),
+    ));
+    const timeout = setTimeout(() => controller.abort(), effectiveTimeoutMs);
 
     try {
       const headers: Record<string, string> = {
@@ -1280,9 +1367,10 @@ export class BalanceService {
     context: BalanceContext,
     apiKey: string,
     timeoutMs: number,
+    deadline: number,
   ): Promise<BalanceCheckState> {
     const endpoint = `${context.base_url}/user/balance`;
-    const response = await this.requestJson(endpoint, apiKey, timeoutMs);
+    const response = await this.requestJson(endpoint, apiKey, timeoutMs, {}, { deadline });
 
     if (response.error) {
       return supportedFailureState(context, endpoint, response.error);
@@ -1340,6 +1428,7 @@ export class BalanceService {
     apiKey: string,
     timeoutMs: number,
     resolvedSession: SiteBalanceSession | null,
+    deadline: number,
   ): Promise<BalanceCheckState> {
     const endpoint = `${AIHUBMIX_API_ORIGIN}/api/user/self`;
     const authToken = (resolvedSession?.access_token ?? apiKey).trim();
@@ -1352,7 +1441,7 @@ export class BalanceService {
       authToken,
       timeoutMs,
       { Authorization: authToken },
-      { includeAuthorization: false },
+      { includeAuthorization: false, deadline },
     );
     if (response.error) {
       return supportedFailureState(context, endpoint, response.error);
@@ -1381,6 +1470,9 @@ export class BalanceService {
     apiKey: string,
     timeoutMs: number,
     resolvedSession: SiteBalanceSession | null,
+    deadline: number,
+    preferredCookieMode?: LearnedBalancePath["cookie_mode"],
+    onAuthenticated?: (cookieMode: NonNullable<LearnedBalancePath["cookie_mode"]>) => void,
   ): Promise<BalanceCheckState> {
     const sharedChatOrigin = new URL(context.base_url).origin;
     const endpoint = `${sharedChatOrigin}/frontend-api/vibe-code/quota`;
@@ -1390,19 +1482,23 @@ export class BalanceService {
     }
 
     let lastResponse: RequestResult | null = null;
-    for (const candidate of buildManagementCookieCandidates(authToken)) {
+    for (const candidate of prioritizeBalanceCookieCandidates(
+      buildManagementCookieCandidates(authToken),
+      preferredCookieMode,
+    )) {
       const response = await this.requestJson(
         endpoint,
         authToken,
         timeoutMs,
         { Cookie: candidate.headerValue },
-        { includeAuthorization: false },
+        { includeAuthorization: false, deadline },
       );
       lastResponse = response;
       if (response.error) {
         continue;
       }
       if (response.ok && isRecord(response.payload) && coerceNumber(response.payload.code) === 1) {
+        onAuthenticated?.(candidate.mode);
         return parseSharedChatBalanceState(context, endpoint, response.payload);
       }
     }
@@ -1423,6 +1519,7 @@ export class BalanceService {
     timeoutMs: number,
     resolvedSession: SiteBalanceSession | null,
     assumeFamily: boolean,
+    deadline: number,
   ): Promise<BalanceCheckState | null> {
     const endpoint = `${context.base_url}/api/user/info`;
     const authToken = (resolvedSession?.access_token ?? apiKey).trim();
@@ -1435,14 +1532,14 @@ export class BalanceService {
       authToken,
       timeoutMs,
       { Authorization: authToken },
-      { includeAuthorization: false },
+      { includeAuthorization: false, deadline },
     );
+    if (response.error) {
+      return supportedFailureState(context, endpoint, response.error);
+    }
     const matched = assumeFamily || voApiV2PayloadLooksSupported(response.payload);
     if (!matched) {
       return null;
-    }
-    if (response.error) {
-      return supportedFailureState(context, endpoint, response.error);
     }
     if (!response.ok) {
       return supportedFailureState(
@@ -1463,6 +1560,7 @@ export class BalanceService {
     resolvedSession: SiteBalanceSession | null,
     options: BalanceQueryOptions,
     assumeFamily: boolean,
+    deadline: number,
   ): Promise<BalanceCheckState | null> {
     const endpoint = `${context.base_url}/api/v1/auth/me`;
     let authToken = (resolvedSession?.access_token ?? apiKey).trim();
@@ -1475,26 +1573,30 @@ export class BalanceService {
       && resolvedSession.token_expires_at
       && resolvedSession.token_expires_at <= Date.now() + 30_000
     ) {
-      const refreshed = await this.refreshSub2ApiSession(context, resolvedSession, timeoutMs, options);
+      const refreshed = await this.refreshSub2ApiSession(
+        context, resolvedSession, timeoutMs, options, deadline,
+      );
       if (!refreshed) {
         return supportedFailureState(context, endpoint, SESSION_EXPIRED_MESSAGE);
       }
       authToken = refreshed.access_token;
     }
 
-    let response = await this.requestJson(endpoint, authToken, timeoutMs);
+    let response = await this.requestJson(endpoint, authToken, timeoutMs, {}, { deadline });
     if ((response.status === 401 || response.status === 403) && resolvedSession?.refresh_token) {
-      const refreshed = await this.refreshSub2ApiSession(context, resolvedSession, timeoutMs, options);
+      const refreshed = await this.refreshSub2ApiSession(
+        context, resolvedSession, timeoutMs, options, deadline,
+      );
       if (!refreshed) {
         return supportedFailureState(context, endpoint, SESSION_EXPIRED_MESSAGE);
       }
       authToken = refreshed.access_token;
-      response = await this.requestJson(endpoint, authToken, timeoutMs);
+      response = await this.requestJson(endpoint, authToken, timeoutMs, {}, { deadline });
     }
     const matched = assumeFamily || sub2ApiPayloadLooksSupported(response.payload);
 
     if (response.error) {
-      return matched ? supportedFailureState(context, endpoint, response.error) : null;
+      return supportedFailureState(context, endpoint, response.error);
     }
 
     if (!response.ok) {
@@ -1526,6 +1628,7 @@ export class BalanceService {
     session: SiteBalanceSession,
     timeoutMs: number,
     options: BalanceQueryOptions,
+    deadline: number,
   ): Promise<SiteBalanceSession | null> {
     const refreshToken = session.refresh_token?.trim();
     if (!refreshToken) {
@@ -1540,6 +1643,7 @@ export class BalanceService {
         includeAuthorization: false,
         method: "POST",
         body: { refresh_token: refreshToken },
+        deadline,
       },
     );
     if (!response.ok || response.error) {
@@ -1579,6 +1683,13 @@ export class BalanceService {
     resolvedSession: SiteBalanceSession | null,
     familyHint: PlatformFamily | null,
     assumeFamily: boolean,
+    deadline: number,
+    learnedPath?: LearnedBalancePath,
+    onAuthenticated?: (
+      mode: "bearer" | "session_cookie",
+      cookieMode?: LearnedBalancePath["cookie_mode"],
+      family?: ManagementFamily | null,
+    ) => void,
   ): Promise<BalanceCheckState | null> {
     const endpoint = `${context.base_url}/api/user/self`;
     const authToken = (resolvedSession?.access_token ?? apiKey).trim();
@@ -1603,11 +1714,51 @@ export class BalanceService {
       }
     };
 
+    if (learnedPath?.auth_mode === "session_cookie" && learnedPath.cookie_mode) {
+      const learnedCookie = buildManagementCookieCandidates(authToken)
+        .find((candidate) => candidate.mode === learnedPath.cookie_mode);
+      if (learnedCookie) {
+        const learnedResponse = await this.requestJson(
+          endpoint,
+          authToken,
+          timeoutMs,
+          {
+            ...buildNewApiUserHeadersFromValue(explicitUserId),
+            Cookie: learnedCookie.headerValue,
+          },
+          { includeAuthorization: false, deadline },
+        );
+        const learnedInspection = this.inspectManagementResponse(
+          context,
+          endpoint,
+          authToken,
+          learnedResponse,
+          hintedManagementFamily ?? "new_api_family",
+          true,
+          "session_cookie",
+          true,
+        );
+        rememberState(learnedInspection.state);
+        if (learnedInspection.state?.success) {
+          onAuthenticated?.(
+            "session_cookie",
+            learnedCookie.mode,
+            learnedInspection.family,
+          );
+          return learnedInspection.state;
+        }
+        if (learnedInspection.state && isTransientBalanceFailure(learnedInspection.state)) {
+          return learnedInspection.state;
+        }
+      }
+    }
+
     const bearerResponse = await this.requestJson(
       endpoint,
       authToken,
       timeoutMs,
       buildNewApiUserHeadersFromValue(explicitUserId),
+      { deadline },
     );
     const firstInspection = this.inspectManagementResponse(
       context,
@@ -1621,6 +1772,7 @@ export class BalanceService {
     );
     rememberState(firstInspection.state);
     if (firstInspection.state?.success) {
+      onAuthenticated?.("bearer", undefined, firstInspection.family);
       return firstInspection.state;
     }
 
@@ -1641,6 +1793,7 @@ export class BalanceService {
           authToken,
           timeoutMs,
           buildNewApiUserHeadersFromValue(userId),
+          { deadline },
         );
         const retryInspection = this.inspectManagementResponse(
           context,
@@ -1654,6 +1807,7 @@ export class BalanceService {
         );
         rememberState(retryInspection.state);
         if (retryInspection.state?.success) {
+          onAuthenticated?.("bearer", undefined, retryInspection.family);
           return retryInspection.state;
         }
         if (!retryInspection.shouldRetryWithUserId) {
@@ -1663,7 +1817,11 @@ export class BalanceService {
     }
 
     if (shouldRetryWithManagementSessionCookie(bearerResponse, authToken, resolvedSession)) {
-      for (const cookieCandidate of buildManagementCookieCandidates(authToken)) {
+      const cookieCandidates = prioritizeBalanceCookieCandidates(
+        buildManagementCookieCandidates(authToken),
+        learnedPath?.auth_mode === "session_cookie" ? learnedPath.cookie_mode : undefined,
+      );
+      for (const cookieCandidate of cookieCandidates) {
         const cookieHeader = cookieCandidate.headerValue;
         const triedUserIds = new Set<string>();
         const tryCookieProbe = async (userId: string | null): Promise<ManagementInspectionResult> => {
@@ -1675,7 +1833,7 @@ export class BalanceService {
               ...buildNewApiUserHeadersFromValue(userId),
               Cookie: cookieHeader,
             },
-            { includeAuthorization: false },
+            { includeAuthorization: false, deadline },
           );
           return this.inspectManagementResponse(
             context,
@@ -1692,6 +1850,7 @@ export class BalanceService {
         const firstCookieInspection = await tryCookieProbe(explicitUserId);
         rememberState(firstCookieInspection.state);
         if (firstCookieInspection.state?.success) {
+          onAuthenticated?.("session_cookie", cookieCandidate.mode, firstCookieInspection.family);
           return firstCookieInspection.state;
         }
         if (explicitUserId) {
@@ -1708,6 +1867,7 @@ export class BalanceService {
             const retryInspection = await tryCookieProbe(userId);
             rememberState(retryInspection.state);
             if (retryInspection.state?.success) {
+              onAuthenticated?.("session_cookie", cookieCandidate.mode, retryInspection.family);
               return retryInspection.state;
             }
             if (!retryInspection.shouldRetryWithUserId) {
@@ -1753,9 +1913,6 @@ export class BalanceService {
     }
 
     if (response.error) {
-      if (!family && !assumeFamily) {
-        return { family: null, state: null, shouldRetryWithUserId: false };
-      }
       return {
         family: family ?? responseFamilyHint,
         state: supportedFailureState(context, endpoint, response.error),
@@ -1764,7 +1921,7 @@ export class BalanceService {
     }
 
     if (!response.ok) {
-      if (!family && !assumeFamily) {
+      if (!family && !assumeFamily && response.status !== 429 && response.status < 500) {
         return { family: null, state: null, shouldRetryWithUserId: false };
       }
 

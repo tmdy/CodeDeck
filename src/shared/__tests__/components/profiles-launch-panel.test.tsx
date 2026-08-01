@@ -12,6 +12,31 @@ import { ProfilesLaunchPanel } from "../../../components/profiles/ProfilesLaunch
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("ProfilesLaunchPanel", () => {
+  it("renders the saved channel selector above launch controls", () => {
+    const html = renderToStaticMarkup(
+      <ProfilesLaunchPanel
+        provider="claude"
+        channels={[
+          { id: "a", name: "低倍率", key: "sk-a" },
+          { id: "b", name: "高速", key: "sk-b" },
+        ]}
+        activeChannelId="b"
+        onChannelChange={vi.fn()}
+        sessions={[]}
+        onSelectSession={vi.fn()}
+        onRefreshSessions={vi.fn()}
+        onDirectLaunch={vi.fn()}
+        onContinueLaunch={vi.fn()}
+        onResumeLaunch={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("启动渠道");
+    expect(html).toContain("低倍率");
+    expect(html).toContain("高速");
+    expect(html.indexOf("启动渠道")).toBeLessThan(html.indexOf("直接启动"));
+  });
+
   it("does not imply global capabilities are enabled when the command preview summary is missing", () => {
     const html = renderToStaticMarkup(
       <CmdPreview

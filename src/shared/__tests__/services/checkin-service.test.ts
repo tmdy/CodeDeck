@@ -46,6 +46,71 @@ function statusPayload(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe("CheckinService", () => {
+  it("uses a learned bearer path without retrying raw authorization", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+      isStatusRequest(input, init)
+        ? jsonResponse(statusPayload())
+        : jsonResponse({ success: true, message: "签到成功" })
+    ));
+    const onPathInvalidated = vi.fn();
+
+    const result = await new CheckinService(fetchMock as unknown as typeof fetch).checkin(
+      makeSession({ updated_at: "2026-07-28T12:00:00.000Z" }),
+      12_000,
+      {
+        runId: "learned-run",
+        trigger: "manual",
+        learnedPath: {
+          platform: "management",
+          endpoint_path: "/api/user/checkin",
+          method: "POST",
+          authorization_mode: "bearer",
+          cookie_mode: "none",
+          requires_user_id: true,
+          learned_at: "2026-07-28T12:00:00.000Z",
+          credential_updated_at: "2026-07-28T12:00:00.000Z",
+        },
+        onPathInvalidated,
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(requestHeaders(call[1]).Authorization).toBe("Bearer access-token-a");
+    }
+    expect(onPathInvalidated).not.toHaveBeenCalled();
+  });
+
+  it("stops after a learned-path network failure instead of probing every credential form", async () => {
+    const fetchMock = vi.fn(async () => { throw new Error("fetch failed"); });
+    const onPathInvalidated = vi.fn();
+
+    const result = await new CheckinService(fetchMock as unknown as typeof fetch).checkin(
+      makeSession(),
+      12_000,
+      {
+        runId: "network-run",
+        trigger: "automatic",
+        learnedPath: {
+          platform: "management",
+          endpoint_path: "/api/user/checkin",
+          method: "POST",
+          authorization_mode: "raw",
+          cookie_mode: "none",
+          requires_user_id: true,
+          learned_at: new Date().toISOString(),
+          credential_updated_at: "",
+        },
+        onPathInvalidated,
+      },
+    );
+
+    expect(result.error_code).toBe("network_error");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onPathInvalidated).not.toHaveBeenCalled();
+  });
+
   it("preflights status and checks in with the same raw access-token headers", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
       isStatusRequest(input, init)

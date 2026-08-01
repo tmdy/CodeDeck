@@ -1,7 +1,7 @@
 // Profile Service — 翻译自 Go internal/app/usecase/profile_usecase.go (525行)
 // 核心业务逻辑：Profile CRUD、排序、克隆、Provider 切换
 
-import type { Profile, ProfileKey, RuntimeSettings } from "../profile/types.js";
+import type { Profile, ProfileChannel, ProfileKey, RuntimeSettings } from "../profile/types.js";
 import {
   normalizeProfile,
   normalizeProvider,
@@ -180,6 +180,60 @@ export class ProfileService {
     return nextRuntime;
   }
 
+  async selectProfileChannel(profileKey: ProfileKey, channelId: string): Promise<Profile> {
+    const nKey = normalizeKeyWithFallback(profileKey, this.getState().selected_provider);
+    const index = this.profiles.findIndex((profile) => itemKey(profile) === nKey);
+    if (index < 0) {
+      throw new Error(`profile not found: ${profileKey}`);
+    }
+    const current = this.profiles[index];
+    if (isOfficialNativeProfile(current)) {
+      throw new Error("官方 CLI Profile 不支持渠道切换");
+    }
+    const normalizedChannelId = channelId.trim();
+    if (!current.channels?.some((channel) => channel.id === normalizedChannelId)) {
+      throw new Error("所选渠道不存在");
+    }
+    const next = normalizeProfile({ ...current, activeChannelId: normalizedChannelId });
+    const nextProfiles = this.profiles.map((profile, currentIndex) => (
+      currentIndex === index ? next : profile
+    ));
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl);
+    this.profiles = nextProfiles;
+    return next;
+  }
+
+  async updateProfileChannelModels(
+    profileKey: ProfileKey,
+    channelId: string,
+    models: string[],
+    modelsFetchedAt: string,
+    modelsBaseUrl: string,
+  ): Promise<Profile> {
+    const nKey = normalizeKeyWithFallback(profileKey, this.getState().selected_provider);
+    const index = this.profiles.findIndex((profile) => itemKey(profile) === nKey);
+    if (index < 0) {
+      throw new Error(`profile not found: ${profileKey}`);
+    }
+    const current = this.profiles[index];
+    const normalizedChannelId = channelId.trim();
+    if (!current.channels?.some((channel) => channel.id === normalizedChannelId)) {
+      throw new Error("所选渠道不存在");
+    }
+    const next = normalizeProfile({
+      ...current,
+      channels: current.channels.map((channel) => channel.id === normalizedChannelId
+        ? { ...channel, models: [...models], modelsFetchedAt, modelsBaseUrl }
+        : channel),
+    });
+    const nextProfiles = this.profiles.map((profile, currentIndex) => (
+      currentIndex === index ? next : profile
+    ));
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl);
+    this.profiles = nextProfiles;
+    return next;
+  }
+
   // ---- 保存（创建/更新） ----
 
   async saveProfile(
@@ -203,7 +257,7 @@ export class ProfileService {
     if (!nd.name) throw new Error("名称不能为空");
     if (!isNativeStartup) {
       if (!nd.url) throw new Error("Base URL 不能为空");
-      if (!nd.key) throw new Error("Key / Token 不能为空");
+      validateProfileChannels(nd.channels ?? []);
       if (!validateHttpUrl(nd.url)) throw new Error("Base URL 必须以 http:// 或 https:// 开头");
     } else if (nd.url && !validateHttpUrl(nd.url)) {
       throw new Error("Base URL 必须以 http:// 或 https:// 开头");
@@ -329,6 +383,12 @@ export class ProfileService {
       name: this.allocateCloneName(targetProv, source.name),
       url: source.url,
       key: source.key,
+      channels: source.channels?.map((channel) => ({
+        id: channel.id,
+        name: channel.name,
+        key: channel.key,
+      })),
+      activeChannelId: source.activeChannelId,
       permissions: source.permissions,
       balance_session_id: source.balance_session_id,
     };
@@ -486,7 +546,6 @@ export class ProfileService {
     const nextSession: SiteBalanceSession = {
       ...sessions[index],
       auto_checkin_enabled: enabled,
-      updated_at: new Date().toISOString(),
     };
     nextSessionsByBaseUrl[baseUrl] = sessions.map((session, currentIndex) => (
       currentIndex === index ? nextSession : { ...session }
@@ -524,6 +583,8 @@ export class ProfileService {
     const state = this.getState();
     const deletedAccountKey = `${baseUrl}::${sessionId}`;
     delete state.checkin_states_by_account[deletedAccountKey];
+    delete state.site_capability_cache.checkin_by_account[deletedAccountKey];
+    delete state.site_capability_cache.balance_by_target[`session:${deletedAccountKey}`];
 
     await this.saveConfig(nextProfiles, nextSessionsByBaseUrl, state);
     this.profiles = nextProfiles;
@@ -580,6 +641,26 @@ export class ProfileService {
 }
 
 // ---- 辅助函数（翻译自 Go） ----
+
+function validateProfileChannels(channels: ProfileChannel[]): void {
+  if (channels.length === 0) {
+    throw new Error("至少需要一个渠道");
+  }
+  const names = new Set<string>();
+  for (const channel of channels) {
+    if (!channel.name.trim()) {
+      throw new Error("渠道名称不能为空");
+    }
+    if (!channel.key.trim()) {
+      throw new Error(`渠道“${channel.name}”的 Key / Token 不能为空`);
+    }
+    const normalizedName = channel.name.trim().toLocaleLowerCase();
+    if (names.has(normalizedName)) {
+      throw new Error(`渠道名称重复：${channel.name}`);
+    }
+    names.add(normalizedName);
+  }
+}
 
 function removeProfileKey(keys: ProfileKey[], target: ProfileKey): ProfileKey[] {
   return keys.filter((k) => k !== target);

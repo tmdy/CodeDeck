@@ -57,12 +57,24 @@ export interface AdvancedModelMapping {
   codex?: CodexAdvancedModelMapping;
 }
 
+export interface ProfileChannel {
+  id: string;
+  name: string;
+  key: string;
+  selectedModelId?: string;
+  models?: string[];
+  modelsFetchedAt?: string;
+  modelsBaseUrl?: string;
+}
+
 export interface Profile {
   provider: ProviderID;
   name: string;
   url: string;  // Base URL
-  key: string;  // API Key / Token
+  key: string;  // 活动渠道 Key；保留用于旧配置和既有调用方兼容
   selectedModelId?: string;
+  channels?: ProfileChannel[];
+  activeChannelId?: string;
   advancedModelMapping?: AdvancedModelMapping;
   permissions?: ProfilePermissionsInput;
   balance_session_id?: string;
@@ -98,13 +110,25 @@ export function normalizeProvider(raw: string): ProviderID {
 }
 
 export function normalizeProfile(profile: Profile): Profile {
-  const selectedModelId = normalizeSelectedModelId(profile);
+  const legacySelectedModelId = normalizeSelectedModelId(profile);
+  const channels = isOfficialNativeProfile(profile)
+    ? []
+    : normalizeProfileChannels(
+        profile.channels,
+        profile.key,
+        legacySelectedModelId,
+      );
+  const requestedActiveChannelId = profile.activeChannelId?.trim() ?? "";
+  const activeChannel = channels.find((channel) => channel.id === requestedActiveChannelId)
+    ?? channels[0];
   return {
     provider: normalizeProvider(profile.provider),
     name: profile.name.trim(),
     url: profile.url.trim(),
-    key: profile.key.trim(),
-    selectedModelId,
+    key: activeChannel?.key ?? "",
+    selectedModelId: activeChannel?.selectedModelId ?? "",
+    channels,
+    activeChannelId: activeChannel?.id,
     advancedModelMapping: normalizeAdvancedModelMapping(profile.advancedModelMapping),
     permissions: profile.permissions
       ? normalizeProfilePermissions(profile.permissions, profile.provider)
@@ -122,6 +146,8 @@ export function extractSyncedProfile(profile: Profile): Profile {
     url: n.url,
     key: n.key,
     selectedModelId: n.selectedModelId,
+    channels: n.channels?.map(cloneProfileChannel),
+    activeChannelId: n.activeChannelId,
     advancedModelMapping: n.advancedModelMapping,
     permissions: n.permissions,
     balance_session_id: n.balance_session_id,
@@ -177,6 +203,95 @@ export function createOfficialNativeProfile(providerID: string): Profile {
     name: officialNativeProfileName(provider),
     url: "",
     key: "",
+    channels: [],
+  };
+}
+
+export function normalizeProfileChannels(
+  value: unknown,
+  legacyKey: string = "",
+  legacySelectedModelId: string = "",
+): ProfileChannel[] {
+  const rawChannels = Array.isArray(value) ? value : [];
+  const seenIds = new Set<string>();
+  const channels = rawChannels.flatMap((raw, index): ProfileChannel[] => {
+    if (!raw || typeof raw !== "object") {
+      return [];
+    }
+    const candidate = raw as Partial<ProfileChannel>;
+    const requestedId = typeof candidate.id === "string" ? candidate.id.trim() : "";
+    let id = requestedId || `channel-${index + 1}`;
+    let suffix = 2;
+    while (seenIds.has(id)) {
+      id = `${requestedId || `channel-${index + 1}`}-${suffix}`;
+      suffix += 1;
+    }
+    seenIds.add(id);
+    const selectedModelId = typeof candidate.selectedModelId === "string"
+      ? candidate.selectedModelId.trim()
+      : "";
+    const models = normalizeChannelModels(candidate.models);
+    const modelsFetchedAt = typeof candidate.modelsFetchedAt === "string"
+      ? candidate.modelsFetchedAt.trim()
+      : "";
+    const modelsBaseUrl = typeof candidate.modelsBaseUrl === "string"
+      ? candidate.modelsBaseUrl.trim()
+      : "";
+    return [{
+      id,
+      name: typeof candidate.name === "string" ? candidate.name.trim() : "",
+      key: typeof candidate.key === "string" ? candidate.key.trim() : "",
+      ...(selectedModelId ? { selectedModelId } : {}),
+      ...(models.length > 0 ? { models } : {}),
+      ...(modelsFetchedAt ? { modelsFetchedAt } : {}),
+      ...(modelsBaseUrl ? { modelsBaseUrl } : {}),
+    }];
+  });
+
+  if (channels.length > 0) {
+    return channels;
+  }
+  const key = legacyKey.trim();
+  const selectedModelId = legacySelectedModelId.trim();
+  return [{
+    id: "default",
+    name: "默认渠道",
+    key,
+    ...(selectedModelId ? { selectedModelId } : {}),
+  }];
+}
+
+export function getActiveProfileChannel(profile: Profile): ProfileChannel {
+  const normalized = normalizeProfile(profile);
+  return normalized.channels?.find((channel) => channel.id === normalized.activeChannelId)
+    ?? normalized.channels?.[0]
+    ?? { id: "default", name: "默认渠道", key: "" };
+}
+
+export function getProfileApiKey(profile: Profile): string {
+  return getActiveProfileChannel(profile).key;
+}
+
+export function getProfileSelectedModelId(profile: Profile): string {
+  return getActiveProfileChannel(profile).selectedModelId ?? "";
+}
+
+function normalizeChannelModels(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return Array.from(new Set(
+    value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ));
+}
+
+function cloneProfileChannel(channel: ProfileChannel): ProfileChannel {
+  return {
+    ...channel,
+    ...(channel.models ? { models: [...channel.models] } : {}),
   };
 }
 
