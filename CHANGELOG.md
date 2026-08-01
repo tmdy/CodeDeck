@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-01
+
+### Changed
+
+- 重构 README 首屏，压缩功能亮点并关联代码与测试索引。
+- 更新 package.json 描述和关键词。
+
 ## [0.2.0] - 2026-07-20
 
 ### Changed
@@ -13,5 +20,6 @@
 - 重整公开 README，把配置、开发和排障细节移入 `docs/`。
 - 增加 Windows CI、贡献指南、安全报告说明和 Issue/PR 模板。
 
-[Unreleased]: https://github.com/tmdy/CodeDeck/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tmdy/CodeDeck/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tmdy/CodeDeck/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tmdy/CodeDeck/releases/tag/v0.2.0

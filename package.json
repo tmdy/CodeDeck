@@ -4,7 +4,15 @@
   "version": "0.2.1",
   "productName": "CodeDeck",
   "author": "99395",
-  "description": "Windows desktop app for managing Claude Code and Codex profiles, skills, permissions, sessions, and monitored terminals.",
+  "description": "Windows desktop app for managing multiple Claude Code and Codex CLI profiles, permissions, skills, sessions, and monitored terminals.",
+  "keywords": [
+    "claude-code",
+    "codex-cli",
+    "electron",
+    "windows",
+    "profile-manager",
+    "dev-tools"
+  ],
   "license": "MIT",
   "homepage": "https://github.com/tmdy/CodeDeck#readme",
   "repository": {
