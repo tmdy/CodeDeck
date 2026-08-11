@@ -26,3 +26,24 @@ Backed up Codex global and CodeDeck project logs_2.sqlite databases, installed c
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Hide Codex subagent sessions
+
+**Date**: 2026-08-11
+**Task**: Hide Codex subagent sessions
+**Branch**: `main`
+
+### Summary
+
+Added a default-on Codex sub-agent session visibility filter across settings, session parsing, catalog pagination, request caches, and both session list entry points; verified 807 tests, typecheck, and Windows NSIS packaging.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7bfc731` | (see git log) |
+
+### Status
+
+[OK] **Completed**
