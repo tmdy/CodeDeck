@@ -87,6 +87,35 @@ describe("GlobalSettingsPanel", () => {
     container.remove();
   });
 
+  it("should render the Codex sub-agent filter enabled and update it", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <GlobalSettingsPanel
+          settings={defaultGlobalSettings()}
+          onChange={onChange}
+        />,
+      );
+    });
+
+    const checkbox = Array.from(container.querySelectorAll("input[type='checkbox']")).find(
+      (input) => input.parentElement?.textContent?.includes("隐藏 Codex 子代理会话"),
+    ) as HTMLInputElement | undefined;
+    expect(checkbox?.checked).toBe(true);
+
+    await act(async () => {
+      checkbox?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith({ hide_codex_subagent_sessions: false });
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
   it("should require confirmation when selecting full access", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

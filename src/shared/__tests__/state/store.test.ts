@@ -119,6 +119,39 @@ describe("LocalStateStore", () => {
     expect(loaded.global_settings.theme_mode).toBe("dark");
   });
 
+  it("defaults and normalizes the Codex sub-agent session filter", async () => {
+    expect(defaultLocalState().global_settings.hide_codex_subagent_sessions).toBe(true);
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    const legacyState = defaultLocalState();
+    const { hide_codex_subagent_sessions: _removed, ...legacyGlobalSettings } = legacyState.global_settings;
+
+    await writeFile(rawPath, JSON.stringify({
+      ...legacyState,
+      global_settings: legacyGlobalSettings,
+    }), "utf-8");
+    expect((await store.load()).global_settings.hide_codex_subagent_sessions).toBe(true);
+
+    await writeFile(rawPath, JSON.stringify({
+      ...legacyState,
+      global_settings: {
+        ...legacyGlobalSettings,
+        hide_codex_subagent_sessions: "false",
+      },
+    }), "utf-8");
+    expect((await store.load()).global_settings.hide_codex_subagent_sessions).toBe(true);
+  });
+
+  it("persists an explicitly disabled Codex sub-agent session filter", async () => {
+    const store = await makeStore();
+    const state = defaultLocalState();
+    state.global_settings.hide_codex_subagent_sessions = false;
+
+    await store.save(state);
+
+    expect((await store.load()).global_settings.hide_codex_subagent_sessions).toBe(false);
+  });
+
   it("should remove protected environment values and proxy credentials from plaintext state", async () => {
     const store = await makeStore();
     const state = defaultLocalState();

@@ -15,6 +15,7 @@ import {
   listSessionsForProvider,
   resolveCodexSessionTransferHomes,
   resolveMonitoredTerminalSessionFile,
+  scanCodexSessionCatalog,
 } from "../../services/session-service.js";
 
 async function createTempDir(prefix: string): Promise<string> {
@@ -497,6 +498,74 @@ describe("session-service", () => {
     expect(sessions.every((session) => session.provider === "codex")).toBe(true);
   });
 
+  it("classifies complete Codex index entries and collects enough visible page candidates", async () => {
+    const codexRoot = await createTempDir("codedeck-codex-index-subagents-");
+    tempDirs.push(codexRoot);
+    const indexedSessions = [
+      { id: "visible-new", updatedAt: "2026-05-04T10:40:00.000Z" },
+      { id: "hidden", updatedAt: "2026-05-04T10:30:00.000Z", subagent: "review" },
+      { id: "visible-old", updatedAt: "2026-05-04T10:20:00.000Z" },
+    ];
+    await writeFile(
+      path.join(codexRoot, "session_index.jsonl"),
+      `${indexedSessions.map((session) => JSON.stringify({
+        id: session.id,
+        thread_name: session.id,
+        updated_at: session.updatedAt,
+        cwd: "C:/workspace/project",
+      })).join("\n")}\n`,
+      "utf-8",
+    );
+    for (const session of indexedSessions) {
+      await writeJsonl(
+        path.join(
+          codexRoot,
+          "sessions",
+          "2026",
+          "05",
+          "04",
+          `rollout-${session.id}.jsonl`,
+        ),
+        [{
+          type: "session_meta",
+          payload: {
+            id: session.id,
+            cwd: "C:/workspace/project",
+            updated_at: session.updatedAt,
+            thread_name: session.id,
+            source: session.subagent ? { subagent: session.subagent } : { originator: "codex_cli_rs" },
+          },
+        }],
+      );
+    }
+
+    const hiddenGlobal = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+      limit: 2,
+      hide_subagent_sessions: true,
+    }, codexRoot);
+    const hiddenProject = await listCodexSessions({
+      provider: "codex",
+      scope: "project",
+      cwd: "C:/workspace/project",
+      limit: 2,
+      hide_subagent_sessions: true,
+    }, codexRoot);
+    const visible = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+      limit: 3,
+      hide_subagent_sessions: false,
+    }, codexRoot);
+
+    expect(hiddenGlobal.map((session) => session.session_id)).toEqual(["visible-new", "hidden", "visible-old"]);
+    expect(hiddenProject.map((session) => session.session_id)).toEqual(["visible-new", "hidden", "visible-old"]);
+    expect(hiddenGlobal.find((session) => session.session_id === "hidden")?.is_subagent).toBe(true);
+    expect(hiddenProject.find((session) => session.session_id === "hidden")?.is_subagent).toBe(true);
+    expect(visible.map((session) => session.session_id)).toEqual(["visible-new", "hidden", "visible-old"]);
+  });
+
   it("falls back to scanning Codex session files in global_recent scope when session_index is missing", async () => {
     const codexRoot = await createTempDir("codedeck-codex-no-index-");
     tempDirs.push(codexRoot);
@@ -559,6 +628,41 @@ describe("session-service", () => {
       cwd: "C:/workspace/newer",
       preview: "较新 fallback 会话",
     });
+  });
+
+  it("classifies Codex sub-agent metadata in full and fast session summaries", async () => {
+    const codexRoot = await createTempDir("codedeck-codex-subagents-");
+    tempDirs.push(codexRoot);
+    const records = [
+      { id: "ordinary", source: { originator: "codex_cli_rs" } },
+      { id: "string-subagent", source: { subagent: "review" } },
+      { id: "object-subagent", source: { subagent: { thread_spawn: { depth: 1 } } } },
+    ];
+    for (const [index, payload] of records.entries()) {
+      await writeJsonl(
+        path.join(codexRoot, "sessions", "2026", "08", "11", `rollout-${payload.id}.jsonl`),
+        [{
+          type: "session_meta",
+          payload: {
+            ...payload,
+            cwd: "C:/workspace/project",
+            updated_at: `2026-08-11T10:0${index}:00.000Z`,
+          },
+        }],
+      );
+    }
+
+    const full = await listCodexSessions({
+      provider: "codex",
+      scope: "global_recent",
+    }, codexRoot);
+    const fast = (await scanCodexSessionCatalog(codexRoot)).map((entry) => entry.summary);
+
+    for (const summaries of [full, fast]) {
+      expect(summaries.find((session) => session.session_id === "ordinary")?.is_subagent).toBeUndefined();
+      expect(summaries.find((session) => session.session_id === "string-subagent")?.is_subagent).toBe(true);
+      expect(summaries.find((session) => session.session_id === "object-subagent")?.is_subagent).toBe(true);
+    }
   });
 
   it("reuses cached Codex fallback scans until the session cache is invalidated", async () => {

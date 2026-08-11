@@ -97,6 +97,7 @@ export interface RuntimeSettings {
 export interface GlobalSettings {
   proxy: string;
   theme_mode: ThemeMode;
+  hide_codex_subagent_sessions: boolean;
   permissions: GlobalPermissions;
   permissions_preset?: string;
 }
@@ -331,6 +332,7 @@ export function defaultGlobalSettings(): GlobalSettings {
   return {
     proxy: "",
     theme_mode: "system",
+    hide_codex_subagent_sessions: true,
     permissions: normalizeGlobalPermissions(undefined),
   };
 }
@@ -446,6 +448,9 @@ export function normalizeGlobalSettings(settings: Partial<GlobalSettings> & {
   return {
     proxy: settings.proxy?.trim() ?? defaults.proxy,
     theme_mode: normalizeThemeMode(settings.theme_mode),
+    hide_codex_subagent_sessions: typeof settings.hide_codex_subagent_sessions === "boolean"
+      ? settings.hide_codex_subagent_sessions
+      : defaults.hide_codex_subagent_sessions,
     permissions: normalizeGlobalPermissions(settings.permissions) as GlobalPermissions,
   };
 }

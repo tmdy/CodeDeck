@@ -171,4 +171,93 @@ describe("SessionCatalog", () => {
     expect(first.sessions.map((session) => session.session_id)).toEqual(["session-3", "session-2"]);
     expect(second.sessions.map((session) => session.session_id)).toEqual(["session-1"]);
   });
+
+  it("filters Codex sub-agents before pagination while retaining visible mode", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codedeck-session-subagents-"));
+    tempDirs.push(root);
+    const catalog = new SessionCatalog({ filePath: path.join(root, "catalog.json") });
+    const sessions = [
+      { ...summary("visible-4", "2026-08-11T14:00:00.000Z") },
+      { ...summary("hidden-3", "2026-08-11T13:00:00.000Z"), is_subagent: true },
+      { ...summary("visible-3", "2026-08-11T12:00:00.000Z") },
+      { ...summary("hidden-2", "2026-08-11T11:00:00.000Z"), is_subagent: true },
+      { ...summary("visible-2", "2026-08-11T10:00:00.000Z") },
+      { ...summary("visible-1", "2026-08-11T09:00:00.000Z") },
+    ];
+
+    const first = await catalog.createPage({
+      provider: "codex",
+      scope: "global_recent",
+      limit: 2,
+      hide_subagent_sessions: true,
+    }, [], sessions);
+    const second = await catalog.createPage({
+      provider: "codex",
+      scope: "global_recent",
+      limit: 2,
+      cursor: first.next_cursor,
+      hide_subagent_sessions: true,
+    }, [], sessions);
+    const visible = await catalog.createPage({
+      provider: "codex",
+      scope: "global_recent",
+      hide_subagent_sessions: false,
+    }, [], sessions);
+
+    expect(first.sessions.map((session) => session.session_id)).toEqual(["visible-4", "visible-3"]);
+    expect(first.has_more).toBe(true);
+    expect(second.sessions.map((session) => session.session_id)).toEqual(["visible-2", "visible-1"]);
+    expect(second.has_more).toBe(false);
+    expect(visible.sessions.map((session) => session.session_id)).toContain("hidden-3");
+    expect(visible.sessions.map((session) => session.session_id)).toContain("hidden-2");
+  });
+
+  it("does not apply the Codex sub-agent filter to Claude summaries", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codedeck-session-claude-subagent-"));
+    tempDirs.push(root);
+    const catalog = new SessionCatalog({ filePath: path.join(root, "catalog.json") });
+    const claudeSummary: SessionSummary = {
+      provider: "claude",
+      session_id: "claude-sidechain",
+      cwd: "C:/workspace/project",
+      updated_at: "2026-08-11T10:00:00.000Z",
+      preview: "Claude sidechain",
+      is_subagent: true,
+    };
+
+    const page = await catalog.createPage({
+      provider: "claude",
+      scope: "global_recent",
+      hide_subagent_sessions: true,
+    }, [], [claudeSummary]);
+
+    expect(page.sessions).toEqual([claudeSummary]);
+  });
+
+  it("invalidates version 1 catalog snapshots", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codedeck-session-old-snapshot-"));
+    tempDirs.push(root);
+    const catalogPath = path.join(root, "catalog.json");
+    await writeFile(catalogPath, JSON.stringify({
+      version: 1,
+      revision: 10,
+      scanned_at_by_source: {},
+      entries: [{
+        provider: "codex",
+        summary: summary("legacy-entry", "2026-08-11T10:00:00.000Z"),
+        file_path: "",
+        mtime_ms: 0,
+        size: 0,
+      }],
+    }), "utf-8");
+    const catalog = new SessionCatalog({ filePath: catalogPath });
+
+    const page = await catalog.createPage({
+      provider: "codex",
+      scope: "global_recent",
+    }, [], []);
+
+    expect(page.sessions).toEqual([]);
+    expect(page.revision).toBe(0);
+  });
 });

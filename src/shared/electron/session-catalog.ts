@@ -14,7 +14,7 @@ import {
   type SessionSummary,
 } from "../services/session-service.js";
 
-const CATALOG_VERSION = 1;
+const CATALOG_VERSION = 2;
 const CATALOG_REFRESH_TTL_MS = 60_000;
 
 interface StoredCatalogEntry extends SessionCatalogFileEntry {
@@ -390,6 +390,11 @@ export class SessionCatalog {
       .filter((entry) => entry.provider === normalizedProvider)
       .map(publicSummary)
       .filter((summary) => request.scope !== "project" || normalizeComparablePath(summary.cwd) === normalizedCwd)
+      .filter((summary) => !(
+        normalizedProvider === "codex"
+        && request.hide_subagent_sessions === true
+        && summary.is_subagent === true
+      ))
       .sort((left, right) => sourcePriority(left) - sourcePriority(right) || compareSessions(left, right));
     const deduplicated = Array.from(
       matching.reduce((map, summary) => {

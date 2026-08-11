@@ -16,6 +16,52 @@ function changeInputValue(input: HTMLInputElement, value: string) {
 }
 
 describe("SettingsPage", () => {
+  it("should persist the Codex sub-agent filter only when global settings are saved", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onGlobalChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <SettingsPage
+          settingsSubTab="global"
+          onSelectGlobal={vi.fn()}
+          onSelectParameters={vi.fn()}
+          globalSettingsProps={{
+            settings: defaultGlobalSettings(),
+            onChange: onGlobalChange,
+          }}
+          parameterSettingsProps={{
+            settings: defaultParameterSettings(),
+            onChange: vi.fn(),
+          }}
+        />,
+      );
+    });
+
+    const checkbox = Array.from(container.querySelectorAll("input[type='checkbox']")).find(
+      (input) => input.parentElement?.textContent?.includes("隐藏 Codex 子代理会话"),
+    ) as HTMLInputElement | undefined;
+    await act(async () => {
+      checkbox?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onGlobalChange).not.toHaveBeenCalled();
+
+    const saveButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "保存设置",
+    );
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onGlobalChange).toHaveBeenCalledWith(expect.objectContaining({
+      hide_codex_subagent_sessions: false,
+    }));
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
   it("should keep parameter edits as a draft until the user saves", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

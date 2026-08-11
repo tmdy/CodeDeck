@@ -105,6 +105,34 @@ describe("session-list-cache", () => {
     expect(nextPage).not.toBe(firstPage);
   });
 
+  it("keeps hidden and visible sub-agent modes in separate cache and in-flight entries", async () => {
+    const homes: CodexSessionHome[] = [{ kind: "global_codex", home: "C:/Users/example/.codex" }];
+    const hiddenRequest = createRequest({ hide_subagent_sessions: true });
+    const visibleRequest = createRequest({ hide_subagent_sessions: false });
+    expect(buildSessionListCacheKey(hiddenRequest, homes))
+      .not.toBe(buildSessionListCacheKey(visibleRequest, homes));
+
+    const cache = createSessionListCache();
+    let resolveHidden!: (value: SessionSummary[]) => void;
+    let resolveVisible!: (value: SessionSummary[]) => void;
+    const hiddenLoad = vi.fn(() => new Promise<SessionSummary[]>((resolve) => {
+      resolveHidden = resolve;
+    }));
+    const visibleLoad = vi.fn(() => new Promise<SessionSummary[]>((resolve) => {
+      resolveVisible = resolve;
+    }));
+
+    const hidden = cache.run({ request: hiddenRequest, codexHomes: homes, load: hiddenLoad });
+    const visible = cache.run({ request: visibleRequest, codexHomes: homes, load: visibleLoad });
+
+    expect(hiddenLoad).toHaveBeenCalledTimes(1);
+    expect(visibleLoad).toHaveBeenCalledTimes(1);
+    resolveHidden([createSession("ordinary")]);
+    resolveVisible([createSession("subagent")]);
+    await expect(hidden).resolves.toEqual([createSession("ordinary")]);
+    await expect(visible).resolves.toEqual([createSession("subagent")]);
+  });
+
   it("invalidates cached entries by provider or globally", async () => {
     const cache = createSessionListCache({
       ttlMs: 5_000,

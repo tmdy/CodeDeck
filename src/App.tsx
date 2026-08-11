@@ -445,7 +445,8 @@ function sameSessionRequest(left: ListSessionsRequest | null, right: ListSession
     && (left.limit ?? 0) === (right.limit ?? 0)
     && (left.offset ?? 0) === (right.offset ?? 0)
     && (left.cursor ?? "") === (right.cursor ?? "")
-    && (left.detail ?? "full") === (right.detail ?? "full");
+    && (left.detail ?? "full") === (right.detail ?? "full")
+    && (left.hide_subagent_sessions === true) === (right.hide_subagent_sessions === true);
 }
 
 function sessionMatchesRequest(session: SessionSummary, request: ListSessionsRequest): boolean {
@@ -507,6 +508,7 @@ function profilesSessionsCacheKey(request: ListSessionsRequest): string {
     offset: request.offset ?? 0,
     cursor: request.cursor ?? "",
     detail: request.detail ?? "full",
+    hide_subagent_sessions: request.hide_subagent_sessions === true,
   });
 }
 
@@ -519,6 +521,7 @@ function reusableProfilesSessionsCacheKey(request: ListSessionsRequest): string 
     offset: request.offset ?? 0,
     cursor: request.cursor ?? "",
     detail: request.detail ?? "full",
+    hide_subagent_sessions: request.hide_subagent_sessions === true,
   });
 }
 
@@ -742,6 +745,7 @@ function App() {
       state?.runtime_by_profile,
       state?.selected_profile_key,
       state?.selected_provider,
+      state?.global_settings.hide_codex_subagent_sessions,
     ],
   );
   const profilesSessionsUninitialized = currentProfilesSessionsRequest
@@ -2159,6 +2163,9 @@ function App() {
       limit: HISTORY_PAGE_SIZE,
       offset: 0,
       detail: "summary",
+      ...(nextState.selected_provider === PROVIDER_CODEX
+        ? { hide_subagent_sessions: nextState.global_settings.hide_codex_subagent_sessions }
+        : {}),
     };
   }
 
@@ -2527,6 +2534,9 @@ function App() {
       limit: HISTORY_PAGE_SIZE,
       offset: historyPaginationModeRef.current === "offset" ? offset : 0,
       ...(cursor && historyPaginationModeRef.current === "cursor" ? { cursor } : {}),
+      ...(nextState.selected_provider === PROVIDER_CODEX
+        ? { hide_subagent_sessions: nextState.global_settings.hide_codex_subagent_sessions }
+        : {}),
     };
   }
 
@@ -2853,6 +2863,7 @@ function App() {
     currentProfilesSessionsRequest?.cwd,
     currentProfilesSessionsRequest?.profile_key,
     currentProfilesSessionsRequest?.provider,
+    currentProfilesSessionsRequest?.hide_subagent_sessions,
   ]);
 
   useEffect(() => {
@@ -2864,6 +2875,7 @@ function App() {
     sessionsView,
     state?.selected_provider,
     state?.selected_profile_key,
+    state?.global_settings.hide_codex_subagent_sessions,
   ]);
 
   useEffect(() => {
@@ -2908,9 +2920,11 @@ function App() {
   }, [
     activeTab,
     currentProfilesSessionsRequest?.cwd,
+    currentProfilesSessionsRequest?.hide_subagent_sessions,
     sessionsView,
     state?.selected_profile_key,
     state?.selected_provider,
+    state?.global_settings.hide_codex_subagent_sessions,
   ]);
 
   useEffect(() => {
@@ -2968,6 +2982,7 @@ function App() {
     startupPhase,
     state?.selected_provider,
     state?.selected_profile_key,
+    state?.global_settings.hide_codex_subagent_sessions,
   ]);
 
   useEffect(() => {

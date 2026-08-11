@@ -49,6 +49,7 @@ export function buildSessionListCacheKey(
     offset: request.offset ?? 0,
     cursor: request.cursor ?? "",
     detail: request.detail ?? "full",
+    hide_subagent_sessions: request.hide_subagent_sessions === true,
   };
   const normalizedHomes = codexHomes
     .map((home) => ({

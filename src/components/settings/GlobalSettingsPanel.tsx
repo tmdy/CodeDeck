@@ -104,6 +104,15 @@ export function GlobalSettingsPanel({
             disabled={disabled}
           />
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.hide_codex_subagent_sessions}
+            onChange={(event) => onChange({ hide_codex_subagent_sessions: event.target.checked })}
+            disabled={disabled}
+          />
+          隐藏 Codex 子代理会话
+        </label>
       </GlassCard>
       <PermissionSettingsCard
         title="Claude Code 默认权限"

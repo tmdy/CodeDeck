@@ -20,6 +20,7 @@ export interface ListSessionsRequest {
   offset?: number;
   cursor?: string;
   detail?: SessionDetailLevel;
+  hide_subagent_sessions?: boolean;
 }
 
 export type SessionCatalogState = "ready" | "updating" | "building";
@@ -58,6 +59,7 @@ export interface SessionSummary {
   source_kind?: CodexSessionSourceKind;
   source_home?: string;
   source_file_relative_path?: string;
+  is_subagent?: boolean;
 }
 
 export interface SessionConversationExcerpt {
@@ -223,6 +225,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+function isCodexSubagentPayload(payload: Record<string, unknown> | null): boolean {
+  const source = asRecord(payload?.source);
+  return source !== null && Object.prototype.hasOwnProperty.call(source, "subagent");
 }
 
 function extractTextValue(value: unknown): string {
@@ -596,6 +603,7 @@ function sessionSummaryFromFileSummary(summary: SessionFileSummary): SessionSumm
     user_prompts,
     conversation_excerpts,
     source_file_relative_path,
+    is_subagent,
   } = summary;
   return {
     provider,
@@ -606,6 +614,7 @@ function sessionSummaryFromFileSummary(summary: SessionFileSummary): SessionSumm
     ...(user_prompts?.length ? { user_prompts } : {}),
     ...(conversation_excerpts?.length ? { conversation_excerpts } : {}),
     ...(source_file_relative_path ? { source_file_relative_path } : {}),
+    ...(is_subagent ? { is_subagent: true } : {}),
   };
 }
 
@@ -811,6 +820,7 @@ async function summarizeCodexSessionFile(filePath: string): Promise<SessionFileS
   let cwd = "";
   let preview = "";
   let updatedAt = stat.mtime.toISOString();
+  let isSubagent = false;
   const userPrompts = collectUserPrompts(records);
   const conversationExcerpts = collectConversationExcerpts(records);
 
@@ -825,6 +835,7 @@ async function summarizeCodexSessionFile(filePath: string): Promise<SessionFileS
       cwd = firstString(payload?.cwd, cwd);
       updatedAt = firstString(payload?.updated_at, payload?.updatedAt, updatedAt);
       preview = firstString(payload?.thread_name, payload?.threadName, preview);
+      isSubagent ||= isCodexSubagentPayload(payload);
       continue;
     }
     cwd = firstString(record.cwd, cwd);
@@ -851,6 +862,7 @@ async function summarizeCodexSessionFile(filePath: string): Promise<SessionFileS
     preview: displayPreview,
     ...(userPrompts.length > 0 ? { user_prompts: userPrompts } : {}),
     ...(conversationExcerpts.length > 0 ? { conversation_excerpts: conversationExcerpts } : {}),
+    ...(isSubagent ? { is_subagent: true } : {}),
     filePath,
   };
 }
@@ -900,6 +912,7 @@ async function summarizeCodexSessionFileFast(filePath: string): Promise<SessionF
   let cwd = "";
   let preview = "";
   let updatedAt = stat.mtime.toISOString();
+  let isSubagent = false;
   const userPrompts = collectUserPrompts(records);
   const conversationExcerpts = collectConversationExcerpts(records);
 
@@ -914,6 +927,7 @@ async function summarizeCodexSessionFileFast(filePath: string): Promise<SessionF
       cwd = firstString(payload?.cwd, cwd);
       updatedAt = firstString(payload?.updated_at, payload?.updatedAt, updatedAt);
       preview = firstString(payload?.thread_name, payload?.threadName, preview);
+      isSubagent ||= isCodexSubagentPayload(payload);
       continue;
     }
     cwd = firstString(record.cwd, cwd);
@@ -938,6 +952,7 @@ async function summarizeCodexSessionFileFast(filePath: string): Promise<SessionF
     ),
     ...(userPrompts.length > 0 ? { user_prompts: userPrompts } : {}),
     ...(conversationExcerpts.length > 0 ? { conversation_excerpts: conversationExcerpts } : {}),
+    ...(isSubagent ? { is_subagent: true } : {}),
     filePath,
   };
 }
@@ -1077,12 +1092,42 @@ function requestedPageEnd(request: ListSessionsRequest): number | null {
   return Math.max(0, request.offset ?? 0) + limit;
 }
 
+function codexFastPageCandidates(
+  sessions: SessionSummary[],
+  request: ListSessionsRequest,
+): SessionSummary[] {
+  if (request.hide_subagent_sessions !== true) {
+    return paginatedSessions(sessions, request);
+  }
+
+  // The catalog applies the final filter and pagination, so retain marked entries while
+  // loading enough eligible sessions to fill the requested page.
+  const cursor = decodeSessionCursor(request.cursor);
+  const needed = requestedPageEnd(request) ?? Number.POSITIVE_INFINITY;
+  const candidates: SessionSummary[] = [];
+  let eligibleCount = 0;
+  for (const summary of sessions) {
+    if (cursor && !isSessionAfterCursor(summary, cursor)) {
+      continue;
+    }
+    candidates.push(summary);
+    if (summary.is_subagent !== true) {
+      eligibleCount += 1;
+    }
+    if (eligibleCount >= needed) {
+      break;
+    }
+  }
+  return candidates;
+}
+
 async function summarizeCodexSessionFromIndex(
   root: string,
   entry: CodexIndexEntry,
+  forceFileRead = false,
 ): Promise<SessionFileSummary | null> {
   const path = await import("node:path");
-  if (entry.cwd && entry.preview) {
+  if (!forceFileRead && entry.cwd && entry.preview) {
     return null;
   }
   const date = new Date(entry.updated_at);
@@ -1121,12 +1166,12 @@ async function summarizeCodexIndexEntryForList(
   root: string,
   entry: CodexIndexEntry,
   normalizedCwd: string,
-  loadProjectDetails: boolean,
+  loadFileDetails: boolean,
 ): Promise<SessionSummary | null> {
   let targetedSummary: SessionSummary | null = null;
-  if (normalizedCwd && (!entry.cwd || !entry.preview || loadProjectDetails)) {
+  if ((normalizedCwd && (!entry.cwd || !entry.preview)) || loadFileDetails) {
     try {
-      targetedSummary = await summarizeCodexSessionFromIndex(root, entry);
+      targetedSummary = await summarizeCodexSessionFromIndex(root, entry, loadFileDetails);
     } catch {
       targetedSummary = null;
     }
@@ -1140,6 +1185,7 @@ async function summarizeCodexIndexEntryForList(
   const userPrompts = targetedSummary?.user_prompts;
   const conversationExcerpts = targetedSummary?.conversation_excerpts;
   const sourceFileRelativePath = targetedSummary?.source_file_relative_path;
+  const isSubagent = targetedSummary?.is_subagent;
   return {
     provider: "codex",
     session_id: entry.session_id,
@@ -1149,6 +1195,7 @@ async function summarizeCodexIndexEntryForList(
     ...(userPrompts?.length ? { user_prompts: userPrompts } : {}),
     ...(conversationExcerpts?.length ? { conversation_excerpts: conversationExcerpts } : {}),
     ...(sourceFileRelativePath ? { source_file_relative_path: sourceFileRelativePath } : {}),
+    ...(isSubagent ? { is_subagent: true } : {}),
   };
 }
 
@@ -1174,6 +1221,7 @@ async function listCodexSessionsFromIndexPage(
             user_prompts: file?.user_prompts ?? indexed.user_prompts,
             conversation_excerpts: file?.conversation_excerpts ?? indexed.conversation_excerpts,
             source_file_relative_path: file?.source_file_relative_path ?? indexed.source_file_relative_path,
+            is_subagent: file?.is_subagent ?? indexed.is_subagent,
           }
         : file ? sessionSummaryFromFileSummary(file) : null;
       if (!summary || (normalizedCwd && normalizeComparablePath(summary.cwd) !== normalizedCwd)) {
@@ -1197,9 +1245,15 @@ async function listCodexSessionsFromIndexPage(
   const summaries: SessionSummary[] = [];
   const needed = requestedPageEnd(request) ?? Number.POSITIVE_INFINITY;
   const cursor = decodeSessionCursor(request.cursor);
+  let eligibleCount = 0;
   for (const entry of sortedEntries) {
-    const summary = normalizedCwd
-      ? await summarizeCodexIndexEntryForList(root, entry, normalizedCwd, true)
+    const summary = normalizedCwd || request.hide_subagent_sessions === true
+      ? await summarizeCodexIndexEntryForList(
+          root,
+          entry,
+          normalizedCwd,
+          request.hide_subagent_sessions === true,
+        )
       : codexSummaryFromCompleteIndexEntry(entry);
     if (!summary) {
       continue;
@@ -1208,11 +1262,16 @@ async function listCodexSessionsFromIndexPage(
       continue;
     }
     summaries.push(summary);
-    if (summaries.length >= needed) {
+    if (summary.is_subagent !== true) {
+      eligibleCount += 1;
+    }
+    if (eligibleCount >= needed) {
       break;
     }
   }
-  return paginatedSessions(summaries, { ...request, cursor: undefined });
+  return request.hide_subagent_sessions === true
+    ? summaries
+    : paginatedSessions(summaries, { ...request, cursor: undefined });
 }
 
 async function listCodexFallbackSessionsPage(
@@ -1231,7 +1290,7 @@ async function listCodexFallbackSessionsPage(
     sessions.push(summary);
   }
 
-  return paginatedSessions(sessions.sort(compareUpdatedAtDesc), request);
+  return codexFastPageCandidates(sessions.sort(compareUpdatedAtDesc), request);
 }
 
 async function mapWithConcurrency<T, R>(
@@ -1622,7 +1681,7 @@ export async function listCodexSessionsFromHomes(
     (left, right) =>
       new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
   );
-  return paginatedSessions(sorted, request);
+  return codexFastPageCandidates(sorted, request);
 }
 
 export async function getClaudeSessionDetail(

@@ -340,6 +340,7 @@ function createFavoritesFixture() {
 function createPrefetchFixture(options: {
   runtimeCwd?: string;
   defaultWorkingDirectory?: string;
+  hideCodexSubagentSessions?: boolean;
 } = {}) {
   const codexProfile: Profile = {
     provider: "codex",
@@ -350,6 +351,10 @@ function createPrefetchFixture(options: {
   const codexKey = itemKey(codexProfile);
   const state: LocalState = {
     ...defaultLocalState(),
+    global_settings: {
+      ...defaultLocalState().global_settings,
+      hide_codex_subagent_sessions: options.hideCodexSubagentSessions ?? true,
+    },
     selected_provider: "codex",
     selected_profile_key: codexKey,
     selected_profile_key_by_provider: {
@@ -533,6 +538,7 @@ describe("App session history provider switching", () => {
       profile_key: "codex::Codex AI",
       limit: 20,
       offset: 0,
+      hide_subagent_sessions: true,
     });
 
     const claudeButton = await waitForButtonText(container, "Claude");
@@ -577,6 +583,31 @@ describe("App session history provider switching", () => {
     container.remove();
   });
 
+  it("threads the disabled Codex sub-agent mode through both session views", async () => {
+    const fixture = createPrefetchFixture({ hideCodexSubagentSessions: false });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    expect(fixture.listSessions.mock.calls.some(([request]) => (
+      request.scope === "project" && request.hide_subagent_sessions === false
+    ))).toBe(true);
+    const sessionsTab = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "会话",
+    );
+    await act(async () => {
+      sessionsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
+    });
+    expect(fixture.listSessions.mock.calls.some(([request]) => (
+      request.scope === "global_recent" && request.hide_subagent_sessions === false
+    ))).toBe(true);
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
   it("prefetches the next Codex history page and uses it when loading more", async () => {
     const fixture = createPrefetchFixture();
     const { container, root } = await renderUnlockedApp(fixture.manager);
@@ -598,6 +629,7 @@ describe("App session history provider switching", () => {
       profile_key: "codex::Codex AI",
       limit: 20,
       offset: 0,
+      hide_subagent_sessions: true,
     });
     expect(fixture.listSessions).toHaveBeenCalledWith({
       provider: "codex",
@@ -605,6 +637,7 @@ describe("App session history provider switching", () => {
       profile_key: "codex::Codex AI",
       limit: 20,
       offset: 20,
+      hide_subagent_sessions: true,
     });
     expect(container.textContent).toContain("Codex session 1");
     expect(container.textContent).not.toContain("Codex session 21");
@@ -630,6 +663,7 @@ describe("App session history provider switching", () => {
       profile_key: "codex::Codex AI",
       limit: 20,
       offset: 40,
+      hide_subagent_sessions: true,
     });
     expect(container.textContent).toContain("Codex session 21");
 
@@ -661,6 +695,7 @@ describe("App session history provider switching", () => {
       profile_key: "codex::Codex AI",
       limit: 20,
       offset: 0,
+      hide_subagent_sessions: true,
     });
     expect(fixture.listSessions).toHaveBeenCalledWith({
       provider: "codex",
@@ -668,6 +703,7 @@ describe("App session history provider switching", () => {
       profile_key: "codex::Codex AI",
       limit: 20,
       offset: 20,
+      hide_subagent_sessions: true,
     });
     const callsAfterWarmup = fixture.listSessions.mock.calls.length;
 
