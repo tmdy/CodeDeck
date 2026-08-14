@@ -756,14 +756,11 @@ function App() {
   const currentCheckinState = currentCheckinAccountKey
     ? state?.checkin_states_by_account[currentCheckinAccountKey] ?? null
     : null;
-  const currentBrowserRuntimeStatus = browserAuthStatusByAccount[currentCheckinAccountKey]?.status;
-  const currentBrowserAuthStatus = currentCheckinAccount?.auth_kind !== "browser_session"
-    ? "unknown"
-    : currentBrowserRuntimeStatus && currentBrowserRuntimeStatus !== "unknown"
-      ? currentBrowserRuntimeStatus
-      : currentCheckinState?.status === "login_required"
-        ? "login_required"
-        : currentBrowserRuntimeStatus ?? "unknown";
+  const currentBrowserAuthStatus = currentCheckinState?.status === "login_required"
+    ? "login_required"
+    : currentCheckinAccount?.auth_kind === "browser_session"
+      ? browserAuthStatusByAccount[currentCheckinAccountKey]?.status ?? "unknown"
+      : "unknown";
   const anyCheckinRunning = Object.values(state?.checkin_states_by_account ?? {})
     .some((checkinState) => (
       checkinState.status === "running" || checkinState.status === "verifying"
