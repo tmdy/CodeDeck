@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import App, { resetAppStartupStateForTests } from "../../../App.jsx";
-import type { SiteBalanceSessionsByBaseUrl } from "../../balance/site-balance-sessions.js";
+import type {
+  BrowserIdentitySlot,
+  SiteBalanceSessionsByBaseUrl,
+} from "../../balance/site-balance-sessions.js";
 import type { BalanceCheckState } from "../../balance/types.js";
 import { createDefaultModelMappingsState } from "../../model-mapping/config-types.js";
 import { itemKey } from "../../profile/keys-internal.js";
@@ -72,6 +75,7 @@ function createBootstrapState(state: LocalState): BootstrapLocalState {
 function createProfileManagerFixture(
   initialProfiles: Profile[] = [{ ...baseProfile }],
   initialSiteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl = {},
+  browserIdentitySlots: BrowserIdentitySlot[] = [],
 ) {
   const runtime: RuntimeSettings = {
     cwd: "",
@@ -101,6 +105,7 @@ function createProfileManagerFixture(
       sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
     },
     siteBalanceSessionsByBaseUrl: cloneSiteBalanceSessions(siteBalanceSessionsByBaseUrl),
+    browserIdentitySlots: browserIdentitySlots.map((slot) => ({ ...slot })),
     defaultWorkingDirectory: "C:/Users/example/Downloads",
   }));
   const saveSiteBalanceSession = vi.fn(async (_baseUrl: string, draft) => {
@@ -149,6 +154,7 @@ function createProfileManagerFixture(
       profiles: profiles.map((profile) => ({ ...profile })),
       state: createBootstrapState(state),
       siteBalanceSessionsByBaseUrl: cloneSiteBalanceSessions(siteBalanceSessionsByBaseUrl),
+      browserIdentitySlots: browserIdentitySlots.map((slot) => ({ ...slot })),
       defaultWorkingDirectory: "C:/Users/example/Downloads",
     })),
     listProfiles,
@@ -515,6 +521,97 @@ describe("App balance session autosave", () => {
     container.remove();
   });
 
+  it("passes an explicitly selected browser identity slot to login", async () => {
+    const fixture = createProfileManagerFixture(
+      undefined,
+      {},
+      [
+        { slot: 1, browser_session_id: "slot-one" },
+        { slot: 3, browser_session_id: "slot-three" },
+      ],
+    );
+    const loginBrowserAccount = vi.fn(async () => ({
+      id: "sess-browser",
+      label: "账号3",
+      base_url: "https://new-api.example.com",
+      access_token: "",
+      auth_kind: "browser_session" as const,
+      browser_session_id: "slot-three",
+      browser_slot: 3,
+      browser_origin: "https://new-api.example.com",
+      user_id: "42",
+      auto_checkin_enabled: false,
+      updated_at: "2026-08-14T00:00:00.000Z",
+    }));
+    fixture.manager.loginBrowserAccount = loginBrowserAccount;
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    const identitySelect = Array.from(container.querySelectorAll("select")).find((select) =>
+      Array.from(select.options).some((option) => option.value === "slot:3"),
+    );
+    expect(identitySelect).toBeInstanceOf(HTMLSelectElement);
+    await selectBalanceSessionOption(identitySelect as HTMLSelectElement, "slot:3");
+
+    await act(async () => {
+      clickExactButtonByText(container, "浏览器登录");
+      await Promise.resolve();
+    });
+
+    expect(loginBrowserAccount).toHaveBeenCalledWith(
+      "https://new-api.example.com/v1",
+      3,
+    );
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("renders browser authentication status events from the main process", async () => {
+    const profile = { ...baseProfile, balance_session_id: "sess-browser" };
+    const browserSession = {
+      id: "sess-browser",
+      label: "账号1",
+      base_url: "https://new-api.example.com",
+      access_token: "",
+      auth_kind: "browser_session" as const,
+      browser_session_id: "slot-one",
+      browser_slot: 1,
+      browser_origin: "https://new-api.example.com",
+      user_id: "42",
+      auto_checkin_enabled: false,
+      updated_at: "2026-08-14T00:00:00.000Z",
+    };
+    const fixture = createProfileManagerFixture(
+      [profile],
+      { "https://new-api.example.com": [browserSession] },
+      [{ slot: 1, browser_session_id: "slot-one" }],
+    );
+    const accountKey = "https://new-api.example.com::sess-browser";
+    let statusCallback: Parameters<
+      NonNullable<MockProfileManager["onBrowserAccountStatus"]>
+    >[0] | undefined;
+    fixture.manager.getBrowserAccountStatus = vi.fn(async () => ({
+      accountKey,
+      mode: "unknown" as const,
+      status: "unknown" as const,
+    }));
+    fixture.manager.onBrowserAccountStatus = vi.fn((callback) => {
+      statusCallback = callback;
+      return () => undefined;
+    });
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    expect(container.textContent).toContain("状态：尚未检查");
+    await act(async () => {
+      statusCallback?.({ accountKey, mode: "modern", status: "ready" });
+    });
+    expect(container.textContent).toContain("状态：已登录");
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
   it("saves an empty new balance session selection as API key auto without creating a session", async () => {
     const fixture = createProfileManagerFixture();
     const { container, root } = await renderAppWithFixture(fixture);
@@ -546,9 +643,12 @@ describe("App balance session autosave", () => {
     const { container, root } = await renderAppWithFixture(fixture);
 
     await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    await act(async () => {
+      clickButtonByText(container, "改用 PAT 兼容模式");
+    });
 
     const inputs = Array.from(container.querySelectorAll("input"));
-    const tokenInput = inputs.find((input) => input.placeholder === "输入后台 Access Token 或 Session");
+    const tokenInput = inputs.find((input) => input.placeholder === "输入后台 Access Token 或 PAT");
     const userIdInput = inputs.find((input) => input.placeholder === "输入后台 User ID");
 
     expect(tokenInput).toBeInstanceOf(HTMLInputElement);
@@ -576,6 +676,7 @@ describe("App balance session autosave", () => {
       {
         label: "",
         access_token: "token-a",
+        auth_kind: "access_token",
         refresh_token: "",
         user_id: "42",
       },
@@ -615,7 +716,7 @@ describe("App balance session autosave", () => {
     const { container, root } = await renderAppWithFixture(fixture);
 
     const inputs = Array.from(container.querySelectorAll("input"));
-    const tokenInput = inputs.find((input) => input.placeholder === "输入后台 Access Token 或 Session");
+    const tokenInput = inputs.find((input) => input.placeholder === "输入后台 Access Token 或 PAT");
     const userIdInput = inputs.find((input) => input.placeholder === "输入后台 User ID");
 
     expect(tokenInput).toBeInstanceOf(HTMLInputElement);
@@ -636,7 +737,7 @@ describe("App balance session autosave", () => {
     expect((userIdInput as HTMLInputElement).value).toBe("7945");
 
     await act(async () => {
-      clickButtonByText(container, "保存会话");
+      clickButtonByText(container, "保存 PAT 账号");
     });
 
     expect(fixture.saveSiteBalanceSession).toHaveBeenCalledWith(
@@ -645,6 +746,7 @@ describe("App balance session autosave", () => {
         id: "sess-1",
         label: "",
         access_token: "new-token",
+        auth_kind: "access_token",
         refresh_token: "",
         token_expires_at: undefined,
         user_id: "7945",
@@ -704,7 +806,7 @@ describe("App balance session autosave", () => {
     });
 
     const inputs = Array.from(container.querySelectorAll("input"));
-    const tokenInput = inputs.find((input) => input.placeholder === "输入后台 Access Token 或 Session");
+    const tokenInput = inputs.find((input) => input.placeholder === "输入后台 Access Token 或 PAT");
     const userIdInput = inputs.find((input) => input.placeholder === "输入后台 User ID");
 
     expect((tokenInput as HTMLInputElement).value).toBe("token-two");

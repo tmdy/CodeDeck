@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Profile } from "../../profile/types.js";
 import {
+  allocateBrowserSlot,
   buildProfileBalanceCheckState,
   describeBalanceSessionHint,
   normalizeBalanceBaseUrl,
   normalizeSiteBalanceSessionsByBaseUrl,
+  reconcileBrowserIdentitySlots,
   resolveBalanceAuth,
   resolveSharedBalanceProfileKeys,
   type SiteBalanceSession,
@@ -62,6 +64,167 @@ describe("site-balance-sessions", () => {
     });
 
     expect(normalized["https://console.aihubmix.com"][0].user_id).toBe("");
+    expect(normalized["https://console.aihubmix.com"][0].auth_kind).toBe("access_token");
+  });
+
+  it("preserves an explicit session-cookie authentication kind", () => {
+    const normalized = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://new-api.example.com": [{
+        id: "cookie-account",
+        label: "Cookie",
+        base_url: "https://new-api.example.com",
+        access_token: "session-value",
+        auth_kind: "session_cookie",
+        user_id: "42",
+        updated_at: "2026-08-07T00:00:00.000Z",
+      }],
+    });
+
+    expect(normalized["https://new-api.example.com"][0].auth_kind).toBe("session_cookie");
+  });
+
+  it("normalizes browser sessions without persisting credential fields", () => {
+    const normalized = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://new-api.example.com": [{
+        id: "browser-account",
+        label: "Browser",
+        base_url: "https://new-api.example.com/path",
+        access_token: "must-not-survive",
+        auth_kind: "browser_session",
+        browser_session_id: "opaque-local-reference",
+        browser_origin: "https://new-api.example.com/ignored/path?query=1",
+        refresh_token: "must-not-survive",
+        token_expires_at: 1_800_000_000_000,
+        user_id: "42",
+        updated_at: "2026-08-10T00:00:00.000Z",
+      }],
+    });
+
+    expect(normalized["https://new-api.example.com"][0]).toEqual(expect.objectContaining({
+      auth_kind: "browser_session",
+      access_token: "",
+      browser_session_id: "opaque-local-reference",
+      browser_origin: "https://new-api.example.com",
+      user_id: "42",
+    }));
+    expect(normalized["https://new-api.example.com"][0].refresh_token).toBeUndefined();
+    expect(normalized["https://new-api.example.com"][0].token_expires_at).toBeUndefined();
+  });
+
+  it("migrates legacy browser sessions to stable identity slots", () => {
+    const sessions = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://one.example.com": [{
+        ...makeSession("account-a", "旧账号 A"),
+        base_url: "https://one.example.com",
+        auth_kind: "browser_session",
+        browser_session_id: "identity-a",
+        browser_origin: "https://one.example.com",
+        access_token: "",
+      }],
+      "https://two.example.com": [{
+        ...makeSession("account-b", "旧账号 B"),
+        base_url: "https://two.example.com",
+        auth_kind: "browser_session",
+        browser_session_id: "identity-b",
+        browser_origin: "https://two.example.com",
+        access_token: "",
+      }],
+    });
+
+    const reconciled = reconcileBrowserIdentitySlots(sessions, []);
+
+    expect(reconciled.slots).toEqual([
+      { slot: 1, browser_session_id: "identity-a" },
+      { slot: 2, browser_session_id: "identity-b" },
+    ]);
+    expect(reconciled.sessionsByBaseUrl["https://one.example.com"][0].browser_slot).toBe(1);
+    expect(reconciled.sessionsByBaseUrl["https://two.example.com"][0].browser_slot).toBe(2);
+  });
+
+  it("reuses one slot for bindings with the same browser session identity", () => {
+    const sessions = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://one.example.com": [{
+        ...makeSession("account-a", "账号"),
+        base_url: "https://one.example.com",
+        auth_kind: "browser_session",
+        browser_session_id: "shared-identity",
+        browser_origin: "https://one.example.com",
+        access_token: "",
+      }],
+      "https://two.example.com": [{
+        ...makeSession("account-b", "账号"),
+        base_url: "https://two.example.com",
+        auth_kind: "browser_session",
+        browser_session_id: "shared-identity",
+        browser_origin: "https://two.example.com",
+        access_token: "",
+      }],
+    });
+
+    const reconciled = reconcileBrowserIdentitySlots(sessions, []);
+
+    expect(reconciled.slots).toEqual([
+      { slot: 1, browser_session_id: "shared-identity" },
+    ]);
+    expect(Object.values(reconciled.sessionsByBaseUrl).flat().map((item) => item.browser_slot))
+      .toEqual([1, 1]);
+  });
+
+  it("allocates the lowest empty browser identity slot", () => {
+    expect(allocateBrowserSlot([
+      { slot: 2 },
+      { slot: 3 },
+    ])).toBe(1);
+  });
+
+  it("keeps sparse browser account labels stable after an earlier slot is removed", () => {
+    const sessions = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://two.example.com": [{
+        ...makeSession("account-b", "旧账号"),
+        base_url: "https://two.example.com",
+        auth_kind: "browser_session",
+        browser_session_id: "identity-b",
+        browser_slot: 2,
+        browser_origin: "https://two.example.com",
+        access_token: "",
+      }],
+    });
+
+    const reconciled = reconcileBrowserIdentitySlots(sessions, [
+      { slot: 2, browser_session_id: "identity-b" },
+    ]);
+
+    expect(reconciled.sessionsByBaseUrl["https://two.example.com"][0].label).toBe("账号2");
+  });
+
+  it("moves a conflicting binding to another slot without changing its partition identity", () => {
+    const sessions = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://two.example.com": [{
+        ...makeSession("account-b", "冲突账号"),
+        base_url: "https://two.example.com",
+        auth_kind: "browser_session",
+        browser_session_id: "identity-b",
+        browser_slot: 1,
+        browser_origin: "https://two.example.com",
+        access_token: "",
+      }],
+    });
+
+    const reconciled = reconcileBrowserIdentitySlots(sessions, [
+      { slot: 1, browser_session_id: "identity-a" },
+    ]);
+
+    expect(reconciled.slots).toEqual([
+      { slot: 1, browser_session_id: "identity-a" },
+      { slot: 2, browser_session_id: "identity-b" },
+    ]);
+    expect(reconciled.sessionsByBaseUrl["https://two.example.com"][0]).toEqual(
+      expect.objectContaining({
+        browser_slot: 2,
+        browser_session_id: "identity-b",
+        label: "账号2",
+      }),
+    );
   });
 
   it("preserves optional Sub2API refresh credentials while normalizing sessions", () => {

@@ -37,4 +37,20 @@ describe("normalizeCheckinStatesByAccount", () => {
     expect(JSON.stringify(normalized)).not.toContain("secret-cookie");
     expect(JSON.stringify(normalized)).not.toContain("secret-token");
   });
+
+  it("preserves login_required distinctly from CAPTCHA manual_required", () => {
+    expect(normalizeCheckinStatesByAccount({
+      account: {
+        status: "login_required",
+        trigger: "automatic",
+        message: "浏览器登录已失效，请重新登录",
+        last_auto_attempt_local_date: "2026-08-10",
+      },
+    }).account).toEqual({
+      status: "login_required",
+      trigger: "automatic",
+      message: "浏览器登录已失效，请重新登录",
+      last_auto_attempt_local_date: "2026-08-10",
+    });
+  });
 });

@@ -51,6 +51,25 @@ function makeResolvedSession(overrides: Partial<SiteBalanceSession> = {}): SiteB
 }
 
 describe("BalanceService", () => {
+  it("does not retry an explicit access-token account as Cookie", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      success: false,
+      message: "invalid access token",
+    }, 401));
+    const service = new BalanceService(fetchMock as typeof fetch);
+
+    await service.query(
+      makeProfile("https://new-api.example.com/v1"),
+      8000,
+      makeResolvedSession({ auth_kind: "access_token" }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const headers = (fetchMock.mock.calls[0][1]?.headers ?? {}) as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer access-token-a");
+    expect(headers.Cookie).toBeUndefined();
+  });
+
   it("uses a learned platform family without probing management endpoints first", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
       code: 0,
@@ -197,6 +216,27 @@ describe("BalanceService", () => {
     );
     expect(result.success).toBe(true);
     expect(result.items[0].remaining).toBe(3);
+  });
+
+  it("does not blame the profile API key when a saved session token is rejected", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        success: false,
+        message: "Unauthorized, invalid access token",
+      }, 401),
+    );
+    const service = new BalanceService(fetchMock as unknown as typeof fetch);
+
+    const result = await service.query(
+      makeProfile("https://new-api.example.com/v1"),
+      8000,
+      makeResolvedSession({ access_token: "session-token-a" }),
+    );
+
+    expect(result.supported).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.message).not.toContain("API Key");
+    expect(result.message).toContain("后台 Session");
   });
 
   it("retries resolved New API sessions as a session cookie when bearer auth is rejected", async () => {

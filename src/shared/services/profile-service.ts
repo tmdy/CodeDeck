@@ -12,10 +12,15 @@ import {
   isOfficialNativeProfile,
 } from "../profile/types.js";
 import {
+  allocateBrowserSlot,
   cloneSiteBalanceSessionsByBaseUrl,
   normalizeBalanceBaseUrl,
+  normalizeBrowserIdentitySlots,
+  normalizeBrowserSlot,
+  reconcileBrowserIdentitySlots,
   normalizeSiteBalanceSessionDraft,
   normalizeSiteBalanceSessionsByBaseUrl,
+  type BrowserIdentitySlot,
   type EncryptedProfileConfig,
   type SiteBalanceSession,
   type SiteBalanceSessionDraft,
@@ -26,6 +31,7 @@ import {
   normalizeKeyWithFallback,
   itemKey,
 } from "../profile/keys-internal.js";
+import { buildCheckinAccountKey } from "../checkin/types.js";
 import type { LocalState } from "../state/local-state.js";
 import { normalizeWorkingDirectoryFavorites } from "../state/local-state.js";
 import { cloneLocalState } from "../state/store.js";
@@ -54,6 +60,7 @@ export interface SyncProfileStore {
 export class ProfileService {
   private profiles: Profile[];
   private siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+  private browserIdentitySlots: BrowserIdentitySlot[];
   private stateAccessor: LocalStateAccessor;
   private syncStore: SyncProfileStore | null;
 
@@ -62,11 +69,15 @@ export class ProfileService {
     stateAccessor: LocalStateAccessor,
     syncStore: SyncProfileStore | null = null,
     siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl = {},
+    browserIdentitySlots: BrowserIdentitySlot[] = [],
   ) {
     this.profiles = profiles.map((p) => normalizeProfile(p));
-    this.siteBalanceSessionsByBaseUrl = normalizeSiteBalanceSessionsByBaseUrl(
-      siteBalanceSessionsByBaseUrl,
+    const reconciled = reconcileBrowserIdentitySlots(
+      normalizeSiteBalanceSessionsByBaseUrl(siteBalanceSessionsByBaseUrl),
+      normalizeBrowserIdentitySlots(browserIdentitySlots),
     );
+    this.siteBalanceSessionsByBaseUrl = reconciled.sessionsByBaseUrl;
+    this.browserIdentitySlots = reconciled.slots;
     this.stateAccessor = stateAccessor;
     this.syncStore = syncStore;
   }
@@ -78,6 +89,43 @@ export class ProfileService {
 
   getSiteBalanceSessionsByBaseUrl(): SiteBalanceSessionsByBaseUrl {
     return cloneSiteBalanceSessionsByBaseUrl(this.siteBalanceSessionsByBaseUrl);
+  }
+
+  getBrowserIdentitySlots(): BrowserIdentitySlot[] {
+    return this.browserIdentitySlots.map((slot) => ({ ...slot }));
+  }
+
+  async ensureBrowserIdentitySlot(
+    browserSessionId: string,
+    requestedSlot?: number,
+  ): Promise<BrowserIdentitySlot> {
+    const existingById = this.browserIdentitySlots.find(
+      (slot) => slot.browser_session_id === browserSessionId,
+    );
+    if (existingById) return { ...existingById };
+    const requested = normalizeBrowserSlot(requestedSlot);
+    const slotNumber = requested
+      && !this.browserIdentitySlots.some((slot) => slot.slot === requested)
+      ? requested
+      : allocateBrowserSlot(this.browserIdentitySlots);
+    const slot = { slot: slotNumber, browser_session_id: browserSessionId };
+    const nextSlots = [...this.browserIdentitySlots, slot]
+      .sort((left, right) => left.slot - right.slot);
+    await this.saveConfig(this.profiles, this.siteBalanceSessionsByBaseUrl, undefined, nextSlots);
+    this.browserIdentitySlots = nextSlots;
+    return { ...slot };
+  }
+
+  async deleteBrowserIdentitySlot(slotNumber: number): Promise<void> {
+    const slot = normalizeBrowserSlot(slotNumber);
+    if (!slot) throw new Error("浏览器账号槽位无效");
+    const referenced = Object.values(this.siteBalanceSessionsByBaseUrl)
+      .flat()
+      .some((account) => account.auth_kind === "browser_session" && account.browser_slot === slot);
+    if (referenced) throw new Error("浏览器账号槽位仍被后台账号使用");
+    const nextSlots = this.browserIdentitySlots.filter((item) => item.slot !== slot);
+    await this.saveConfig(this.profiles, this.siteBalanceSessionsByBaseUrl, undefined, nextSlots);
+    this.browserIdentitySlots = nextSlots;
   }
 
   /** 获取当前状态 */
@@ -356,6 +404,14 @@ export class ProfileService {
     st.selected_profile_key = newKey;
     st.selected_profile_key_by_provider[nProv] = newKey;
 
+    if (previous && balanceAuthChanged(previous, nd)) {
+      delete st.balance_checks_by_profile[newKey];
+      delete st.site_capability_cache.balance_by_target[`profile:${newKey}`];
+      if (nTargetKey && nTargetKey !== newKey) {
+        delete st.site_capability_cache.balance_by_target[`profile:${nTargetKey}`];
+      }
+    }
+
     await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl, st);
     this.profiles = nextProfiles;
     await this.stateAccessor.save(st);
@@ -492,29 +548,76 @@ export class ProfileService {
     }
 
     const normalizedDraft = normalizeSiteBalanceSessionDraft(draft);
-    if (!normalizedDraft.access_token) {
+    const authKind = normalizedDraft.auth_kind ?? "access_token";
+    if (authKind !== "browser_session" && !normalizedDraft.access_token) {
       throw new Error("Access Token 不能为空");
     }
+    if (
+      authKind === "browser_session"
+      && (!normalizedDraft.browser_session_id
+        || !normalizedDraft.browser_slot
+        || !normalizedDraft.browser_origin
+        || !normalizedDraft.user_id)
+    ) {
+      throw new Error("浏览器登录会话尚未完成验证");
+    }
     const nextSessionsByBaseUrl = this.getSiteBalanceSessionsByBaseUrl();
+    const nextBrowserIdentitySlots = this.getBrowserIdentitySlots();
+    if (authKind === "browser_session") {
+      const slotNumber = normalizedDraft.browser_slot!;
+      const existingSlot = nextBrowserIdentitySlots.find((slot) => slot.slot === slotNumber);
+      if (existingSlot && existingSlot.browser_session_id !== normalizedDraft.browser_session_id) {
+        throw new Error(`浏览器账号${slotNumber}已绑定其他登录身份`);
+      }
+      if (!existingSlot) {
+        nextBrowserIdentitySlots.push({
+          slot: slotNumber,
+          browser_session_id: normalizedDraft.browser_session_id!,
+        });
+        nextBrowserIdentitySlots.sort((left, right) => left.slot - right.slot);
+      }
+    }
     const currentSessions = nextSessionsByBaseUrl[baseUrl] ?? [];
     const sessionId = normalizedDraft.id ?? allocateSessionId();
     const existingSession = normalizedDraft.id
       ? currentSessions.find((session) => session.id === normalizedDraft.id)
       : undefined;
-    const label = normalizedDraft.label
-      || existingSession?.label
-      || `账号${currentSessions.length + 1}`;
+    const label = authKind === "browser_session" && normalizedDraft.browser_slot
+      ? `账号${normalizedDraft.browser_slot}`
+      : normalizedDraft.label || existingSession?.label || `账号${currentSessions.length + 1}`;
     const nextSession: SiteBalanceSession = {
       id: sessionId,
       label,
       base_url: baseUrl,
-      access_token: normalizedDraft.access_token,
-      ...(normalizedDraft.refresh_token ? { refresh_token: normalizedDraft.refresh_token } : {}),
-      ...(normalizedDraft.token_expires_at ? { token_expires_at: normalizedDraft.token_expires_at } : {}),
+      access_token: authKind === "browser_session" ? "" : normalizedDraft.access_token,
+      auth_kind: authKind,
+      ...(authKind === "browser_session" && normalizedDraft.browser_session_id
+        ? { browser_session_id: normalizedDraft.browser_session_id }
+        : {}),
+      ...(authKind === "browser_session" && normalizedDraft.browser_slot
+        ? { browser_slot: normalizedDraft.browser_slot }
+        : {}),
+      ...(authKind === "browser_session" && normalizedDraft.browser_origin
+        ? { browser_origin: normalizedDraft.browser_origin }
+        : {}),
+      ...(authKind !== "browser_session" && normalizedDraft.refresh_token
+        ? { refresh_token: normalizedDraft.refresh_token }
+        : {}),
+      ...(authKind !== "browser_session" && normalizedDraft.token_expires_at
+        ? { token_expires_at: normalizedDraft.token_expires_at }
+        : {}),
       user_id: normalizedDraft.user_id,
       auto_checkin_enabled: existingSession?.auto_checkin_enabled ?? false,
       updated_at: new Date().toISOString(),
     };
+    const credentialsChanged = !existingSession
+      || existingSession.access_token !== nextSession.access_token
+      || existingSession.auth_kind !== nextSession.auth_kind
+      || (existingSession.browser_session_id ?? "") !== (nextSession.browser_session_id ?? "")
+      || (existingSession.browser_slot ?? 0) !== (nextSession.browser_slot ?? 0)
+      || (existingSession.browser_origin ?? "") !== (nextSession.browser_origin ?? "")
+      || (existingSession.refresh_token ?? "") !== (nextSession.refresh_token ?? "")
+      || existingSession.user_id !== nextSession.user_id;
 
     const index = currentSessions.findIndex((session) => session.id === sessionId);
     const nextSessions = currentSessions.map((session) => ({ ...session }));
@@ -525,8 +628,28 @@ export class ProfileService {
     }
     nextSessionsByBaseUrl[baseUrl] = nextSessions;
 
-    await this.saveConfig(this.profiles, nextSessionsByBaseUrl);
+    const state = this.getState();
+    if (credentialsChanged) {
+      const accountKey = buildCheckinAccountKey(baseUrl, sessionId);
+      delete state.checkin_states_by_account[accountKey];
+      delete state.site_capability_cache.checkin_by_account[accountKey];
+      delete state.site_capability_cache.balance_by_target[`session:${accountKey}`];
+      for (const profile of this.profiles) {
+        if (
+          normalizeBalanceBaseUrl(profile.url) === baseUrl
+          && profile.balance_session_id === sessionId
+        ) {
+          delete state.balance_checks_by_profile[itemKey(profile)];
+        }
+      }
+    }
+
+    await this.saveConfig(this.profiles, nextSessionsByBaseUrl, state, nextBrowserIdentitySlots);
     this.siteBalanceSessionsByBaseUrl = nextSessionsByBaseUrl;
+    this.browserIdentitySlots = nextBrowserIdentitySlots;
+    if (credentialsChanged) {
+      await this.stateAccessor.save(state);
+    }
 
     return { ...nextSession };
   }
@@ -581,7 +704,7 @@ export class ProfileService {
     });
 
     const state = this.getState();
-    const deletedAccountKey = `${baseUrl}::${sessionId}`;
+    const deletedAccountKey = buildCheckinAccountKey(baseUrl, sessionId);
     delete state.checkin_states_by_account[deletedAccountKey];
     delete state.site_capability_cache.checkin_by_account[deletedAccountKey];
     delete state.site_capability_cache.balance_by_target[`session:${deletedAccountKey}`];
@@ -622,11 +745,13 @@ export class ProfileService {
   private async saveConfig(
     profiles: Profile[],
     siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl,
-    state: LocalState = this.stateAccessor.get(),
+    state: LocalState | undefined = this.stateAccessor.get(),
+    browserIdentitySlots: BrowserIdentitySlot[] = this.browserIdentitySlots,
   ): Promise<void> {
     if (!this.syncStore) return;
+    const resolvedState = state ?? this.stateAccessor.get();
     const runtimeEnvByProfile = Object.fromEntries(
-      Object.entries(state.runtime_by_profile)
+      Object.entries(resolvedState.runtime_by_profile)
         .filter(([, runtime]) => Object.keys(runtime.extra_env ?? {}).length > 0)
         .map(([key, runtime]) => [key, { ...runtime.extra_env }]),
     );
@@ -635,6 +760,7 @@ export class ProfileService {
       site_balance_sessions_by_base_url: cloneSiteBalanceSessionsByBaseUrl(
         siteBalanceSessionsByBaseUrl,
       ),
+      browser_identity_slots: normalizeBrowserIdentitySlots(browserIdentitySlots),
       runtime_env_by_profile: runtimeEnvByProfile,
     });
   }
@@ -950,6 +1076,12 @@ function sanitizeProviderSelectionState(profiles: Profile[], state: LocalState):
   }
 
   return next;
+}
+
+function balanceAuthChanged(previous: Profile, next: Profile): boolean {
+  return normalizeBalanceBaseUrl(previous.url) !== normalizeBalanceBaseUrl(next.url)
+    || (previous.balance_session_id ?? "") !== (next.balance_session_id ?? "")
+    || previous.key !== next.key;
 }
 
 function migrateProfileStateKey(

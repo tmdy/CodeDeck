@@ -19,6 +19,14 @@ export interface SiteBalanceSession {
   label: string;
   base_url: string;
   access_token: string;
+  /** How access_token is transported to management endpoints. */
+  auth_kind?: SiteBalanceAuthKind;
+  /** Opaque local reference to an Electron-owned persistent partition. */
+  browser_session_id?: string;
+  /** Stable global browser identity slot shared across Profiles. */
+  browser_slot?: number;
+  /** Exact origin bound to browser_session_id. */
+  browser_origin?: string;
   refresh_token?: string;
   token_expires_at?: number;
   user_id: string;
@@ -31,9 +39,49 @@ export interface SiteBalanceSessionDraft {
   id?: string;
   label: string;
   access_token: string;
+  auth_kind?: SiteBalanceAuthKind;
+  browser_session_id?: string;
+  browser_slot?: number;
+  browser_origin?: string;
   refresh_token?: string;
   token_expires_at?: number;
   user_id: string;
+}
+
+export type SiteBalanceAuthKind = "access_token" | "session_cookie" | "browser_session";
+
+export interface BrowserIdentitySlot {
+  slot: number;
+  browser_session_id: string;
+}
+
+export function normalizeSiteBalanceAuthKind(value: unknown): SiteBalanceAuthKind {
+  if (value === "session_cookie" || value === "browser_session") {
+    return value;
+  }
+  return "access_token";
+}
+
+export function normalizeBrowserOrigin(value: string): string {
+  const parsed = new URL(value.trim());
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("浏览器登录地址必须以 http:// 或 https:// 开头");
+  }
+  return parsed.origin;
+}
+
+export function normalizeBrowserSessionId(value: string): string {
+  const normalized = value.trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(normalized)) {
+    throw new Error("浏览器会话引用无效");
+  }
+  return normalized;
+}
+
+export function normalizeBrowserSlot(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
 }
 
 export type SiteBalanceSessionsByBaseUrl = Record<string, SiteBalanceSession[]>;
@@ -41,6 +89,7 @@ export type SiteBalanceSessionsByBaseUrl = Record<string, SiteBalanceSession[]>;
 export interface EncryptedProfileConfig {
   profiles: Profile[];
   site_balance_sessions_by_base_url: SiteBalanceSessionsByBaseUrl;
+  browser_identity_slots?: BrowserIdentitySlot[];
   runtime_env_by_profile?: Record<ProfileKey, Record<string, string>>;
   global_proxy?: string;
   protected_settings_version?: 1;
@@ -94,6 +143,7 @@ export function emptyEncryptedProfileConfig(): EncryptedProfileConfig {
   return {
     profiles: [],
     site_balance_sessions_by_base_url: {},
+    browser_identity_slots: [],
     runtime_env_by_profile: {},
     global_proxy: "",
     protected_settings_version: 1,
@@ -116,6 +166,7 @@ export function normalizeEncryptedProfileConfig(value: unknown): EncryptedProfil
     return {
       profiles: value.map((profile) => normalizeProfile(profile as Profile)),
       site_balance_sessions_by_base_url: {},
+      browser_identity_slots: [],
       runtime_env_by_profile: {},
       global_proxy: "",
     };
@@ -128,18 +179,22 @@ export function normalizeEncryptedProfileConfig(value: unknown): EncryptedProfil
   const record = value as {
     profiles?: unknown;
     site_balance_sessions_by_base_url?: unknown;
+    browser_identity_slots?: unknown;
     runtime_env_by_profile?: unknown;
     global_proxy?: unknown;
     protected_settings_version?: unknown;
   };
 
+  const reconciled = reconcileBrowserIdentitySlots(
+    normalizeSiteBalanceSessionsByBaseUrl(record.site_balance_sessions_by_base_url),
+    normalizeBrowserIdentitySlots(record.browser_identity_slots),
+  );
   return {
     profiles: Array.isArray(record.profiles)
       ? record.profiles.map((profile) => normalizeProfile(profile as Profile))
       : [],
-    site_balance_sessions_by_base_url: normalizeSiteBalanceSessionsByBaseUrl(
-      record.site_balance_sessions_by_base_url,
-    ),
+    site_balance_sessions_by_base_url: reconciled.sessionsByBaseUrl,
+    browser_identity_slots: reconciled.slots,
     runtime_env_by_profile: normalizeRuntimeEnvByProfile(record.runtime_env_by_profile),
     global_proxy: typeof record.global_proxy === "string" ? record.global_proxy.trim() : "",
     protected_settings_version: record.protected_settings_version === 1 ? 1 : undefined,
@@ -194,12 +249,27 @@ export function normalizeSiteBalanceSessionsByBaseUrl(value: unknown): SiteBalan
 export function normalizeSiteBalanceSessionDraft(
   draft: SiteBalanceSessionDraft,
 ): SiteBalanceSessionDraft {
+  const authKind = normalizeSiteBalanceAuthKind(draft.auth_kind);
+  const browserSessionId = draft.browser_session_id?.trim()
+    ? normalizeBrowserSessionId(draft.browser_session_id)
+    : undefined;
+  const browserOrigin = draft.browser_origin?.trim()
+    ? normalizeBrowserOrigin(draft.browser_origin)
+    : undefined;
+  const browserSlot = normalizeBrowserSlot(draft.browser_slot);
   return {
     id: draft.id?.trim() || undefined,
     label: draft.label.trim(),
-    access_token: draft.access_token.trim(),
-    refresh_token: draft.refresh_token?.trim() || undefined,
-    token_expires_at: Number.isFinite(draft.token_expires_at) && (draft.token_expires_at ?? 0) > 0
+    access_token: authKind === "browser_session" ? "" : draft.access_token.trim(),
+    auth_kind: authKind,
+    ...(browserSessionId
+      ? { browser_session_id: browserSessionId }
+      : {}),
+    ...(browserSlot ? { browser_slot: browserSlot } : {}),
+    ...(browserOrigin ? { browser_origin: browserOrigin } : {}),
+    refresh_token: authKind === "browser_session" ? undefined : draft.refresh_token?.trim() || undefined,
+    token_expires_at: authKind !== "browser_session"
+      && Number.isFinite(draft.token_expires_at) && (draft.token_expires_at ?? 0) > 0
       ? draft.token_expires_at
       : undefined,
     user_id: draft.user_id.trim(),
@@ -314,6 +384,20 @@ function normalizeSiteBalanceSession(
   const id = record.id?.trim();
   const label = record.label?.trim();
   const accessToken = record.access_token?.trim();
+  const authKind = normalizeSiteBalanceAuthKind(record.auth_kind);
+  let browserSessionId: string | undefined;
+  let browserOrigin: string | undefined;
+  const browserSlot = normalizeBrowserSlot(record.browser_slot);
+  try {
+    browserSessionId = record.browser_session_id?.trim()
+      ? normalizeBrowserSessionId(record.browser_session_id)
+      : undefined;
+    browserOrigin = record.browser_origin?.trim()
+      ? normalizeBrowserOrigin(record.browser_origin)
+      : undefined;
+  } catch {
+    return null;
+  }
   const refreshToken = record.refresh_token?.trim() || undefined;
   const tokenExpiresAt = typeof record.token_expires_at === "number"
     && Number.isFinite(record.token_expires_at)
@@ -323,7 +407,14 @@ function normalizeSiteBalanceSession(
   const userId = record.user_id?.trim() ?? "";
   const baseUrl = normalizeBalanceBaseUrl(record.base_url ?? fallbackBaseUrl);
 
-  if (!id || !label || !accessToken || !baseUrl) {
+  if (
+    !id
+    || !label
+    || !baseUrl
+    || (authKind === "browser_session"
+      ? !browserSessionId || !browserOrigin || !userId
+      : !accessToken)
+  ) {
     return null;
   }
 
@@ -331,9 +422,19 @@ function normalizeSiteBalanceSession(
     id,
     label,
     base_url: baseUrl,
-    access_token: accessToken,
-    ...(refreshToken ? { refresh_token: refreshToken } : {}),
-    ...(tokenExpiresAt ? { token_expires_at: tokenExpiresAt } : {}),
+    access_token: authKind === "browser_session" ? "" : accessToken ?? "",
+    auth_kind: authKind,
+    ...(authKind === "browser_session" && browserSessionId
+      ? { browser_session_id: browserSessionId }
+      : {}),
+    ...(authKind === "browser_session" && browserSlot
+      ? { browser_slot: browserSlot }
+      : {}),
+    ...(authKind === "browser_session" && browserOrigin
+      ? { browser_origin: browserOrigin }
+      : {}),
+    ...(authKind !== "browser_session" && refreshToken ? { refresh_token: refreshToken } : {}),
+    ...(authKind !== "browser_session" && tokenExpiresAt ? { token_expires_at: tokenExpiresAt } : {}),
     user_id: userId,
     auto_checkin_enabled: record.auto_checkin_enabled === true,
     updated_at: record.updated_at?.trim() || "",
@@ -343,8 +444,77 @@ function normalizeSiteBalanceSession(
 function withSequentialAccountLabels(sessions: SiteBalanceSession[]): SiteBalanceSession[] {
   return sessions.map((session, index) => ({
     ...session,
-    label: `账号${index + 1}`,
+    label: session.auth_kind === "browser_session" && session.browser_slot
+      ? `账号${session.browser_slot}`
+      : `账号${index + 1}`,
   }));
+}
+
+export function normalizeBrowserIdentitySlots(value: unknown): BrowserIdentitySlot[] {
+  if (!Array.isArray(value)) return [];
+  const bySlot = new Map<number, BrowserIdentitySlot>();
+  const usedSessionIds = new Set<string>();
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const record = candidate as Partial<BrowserIdentitySlot>;
+    const slot = normalizeBrowserSlot(record.slot);
+    let browserSessionId: string;
+    try {
+      browserSessionId = typeof record.browser_session_id === "string"
+        ? normalizeBrowserSessionId(record.browser_session_id)
+        : "";
+    } catch {
+      continue;
+    }
+    if (!slot || !browserSessionId || bySlot.has(slot) || usedSessionIds.has(browserSessionId)) {
+      continue;
+    }
+    bySlot.set(slot, { slot, browser_session_id: browserSessionId });
+    usedSessionIds.add(browserSessionId);
+  }
+  return [...bySlot.values()].sort((left, right) => left.slot - right.slot);
+}
+
+export function allocateBrowserSlot(slots: ReadonlyArray<Pick<BrowserIdentitySlot, "slot">>): number {
+  const used = new Set(slots.map((slot) => slot.slot));
+  let candidate = 1;
+  while (used.has(candidate)) candidate += 1;
+  return candidate;
+}
+
+export function reconcileBrowserIdentitySlots(
+  sessionsByBaseUrl: SiteBalanceSessionsByBaseUrl,
+  configuredSlots: BrowserIdentitySlot[],
+): { sessionsByBaseUrl: SiteBalanceSessionsByBaseUrl; slots: BrowserIdentitySlot[] } {
+  const slots = normalizeBrowserIdentitySlots(configuredSlots);
+  const slotByNumber = new Map(slots.map((slot) => [slot.slot, slot]));
+  const slotBySessionId = new Map(slots.map((slot) => [slot.browser_session_id, slot]));
+  const sessions = cloneSiteBalanceSessionsByBaseUrl(sessionsByBaseUrl);
+
+  for (const account of Object.values(sessions).flat()) {
+    if (account.auth_kind !== "browser_session" || !account.browser_session_id) continue;
+    const requestedSlot = normalizeBrowserSlot(account.browser_slot);
+    let identitySlot = requestedSlot ? slotByNumber.get(requestedSlot) : undefined;
+    if (identitySlot && identitySlot.browser_session_id !== account.browser_session_id) {
+      identitySlot = undefined;
+    }
+    identitySlot ??= slotBySessionId.get(account.browser_session_id);
+    if (!identitySlot) {
+      const slot = requestedSlot && !slotByNumber.has(requestedSlot)
+        ? requestedSlot
+        : allocateBrowserSlot(slots);
+      identitySlot = { slot, browser_session_id: account.browser_session_id };
+      slots.push(identitySlot);
+      slots.sort((left, right) => left.slot - right.slot);
+      slotByNumber.set(slot, identitySlot);
+      slotBySessionId.set(identitySlot.browser_session_id, identitySlot);
+    }
+    account.browser_slot = identitySlot.slot;
+    account.browser_session_id = identitySlot.browser_session_id;
+    account.label = `账号${identitySlot.slot}`;
+  }
+
+  return { sessionsByBaseUrl: sessions, slots };
 }
 
 function resolveShareableBalanceScope(

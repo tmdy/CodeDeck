@@ -9,7 +9,10 @@ import type { ParameterSettings } from "../parameter/types.js";
 import { defaultParameterSettings, normalizeParameterSettings } from "../parameter/types.js";
 import type { CodexSessionSourceKind, SessionConversationExcerpt, SessionListScope, SessionSummary } from "../services/session-service.js";
 import type { Profile } from "../profile/types.js";
-import type { SiteBalanceSessionsByBaseUrl } from "../balance/site-balance-sessions.js";
+import type {
+  BrowserIdentitySlot,
+  SiteBalanceSessionsByBaseUrl,
+} from "../balance/site-balance-sessions.js";
 import {
   normalizeCheckinStatesByAccount,
   type CheckinStatesByAccount,
@@ -78,6 +81,7 @@ export interface BootstrapResult {
   profiles: Profile[];
   state: BootstrapLocalState;
   siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+  browserIdentitySlots: BrowserIdentitySlot[];
   defaultWorkingDirectory: string;
 }
 

@@ -12,6 +12,7 @@ import {
 } from "../checkin/types.js";
 import {
   buildManagementCookieCandidates,
+  type ManagementRequestContext,
   type ManagementCookieCandidate,
 } from "../services/management-auth.js";
 
@@ -37,6 +38,8 @@ export interface OpenCheckinVerificationOptions {
   trigger: CheckinTrigger;
   runId: string;
   preferredCookieMode?: CheckinVerificationCookieMode;
+  browserSessionPartition?: string;
+  managementRequestContext?: ManagementRequestContext;
 }
 
 export interface CheckinVerificationServiceDependencies {
@@ -183,7 +186,8 @@ export class CheckinVerificationService {
     const { account } = task.options;
     try {
       task.startupStage = "session_setup";
-      const partition = `checkin-verification-${this.randomId()}`;
+      const partition = task.options.browserSessionPartition
+        ?? `checkin-verification-${this.randomId()}`;
       const verificationSession = this.dependencies.createSession(partition);
       task.session = verificationSession;
       this.configureSessionSecurity(verificationSession);
@@ -192,7 +196,12 @@ export class CheckinVerificationService {
       }, this.timeoutMs);
 
       task.startupStage = "credential_probe";
-      const selection = await this.selectCookieCandidate(task, verificationSession);
+      const selection = task.options.browserSessionPartition
+        ? {
+            candidate: { mode: "raw" as const, headerValue: "" },
+            identityVerified: true,
+          }
+        : await this.selectCookieCandidate(task, verificationSession);
       if (task.finished) {
         return;
       }
@@ -233,16 +242,18 @@ export class CheckinVerificationService {
       });
 
       task.startupStage = "page_load";
-      await browserWindow.loadURL(`${account.base_url}/`);
-      if (task.finished) {
-        return;
+      if (!task.options.browserSessionPartition) {
+        await browserWindow.loadURL(`${account.base_url}/`);
+        if (task.finished) {
+          return;
+        }
+        await browserWindow.webContents.executeJavaScript(
+          buildBrowserUserBootstrapScript(
+            selection.browserUser
+              ?? buildVerificationBrowserUserSnapshot(null, account.user_id),
+          ),
+        );
       }
-      await browserWindow.webContents.executeJavaScript(
-        buildBrowserUserBootstrapScript(
-          selection.browserUser
-            ?? buildVerificationBrowserUserSnapshot(null, account.user_id),
-        ),
-      );
       browserStateReady = true;
       await browserWindow.loadURL(buildManualUrl(account.base_url));
       if (task.finished) {
@@ -402,8 +413,18 @@ export class CheckinVerificationService {
     }
     const { account } = task.options;
     const [identityResponse, statusResponse] = await Promise.all([
-      fetchIdentity(task.session, account.base_url, account.user_id),
-      fetchJson(task.session, buildStatusEndpoint(account.base_url), account.user_id),
+      fetchIdentity(
+        task.session,
+        account.base_url,
+        account.user_id,
+        task.options.managementRequestContext,
+      ),
+      fetchJson(
+        task.session,
+        buildStatusEndpoint(account.base_url),
+        account.user_id,
+        task.options.managementRequestContext,
+      ),
     ]);
     if (task.finished) {
       return;
@@ -466,7 +487,7 @@ export class CheckinVerificationService {
     if (task.window && !task.window.isDestroyed()) {
       task.window.close();
     }
-    if (task.session) {
+    if (task.session && !task.options.browserSessionPartition) {
       try {
         await task.session.clearStorageData();
         await task.session.clearCache();
@@ -632,16 +653,20 @@ async function fetchJson(
   verificationSession: Session,
   endpoint: string,
   userId?: string,
+  requestContext?: ManagementRequestContext,
 ): Promise<VerificationFetchResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    const response = await verificationSession.fetch(endpoint, {
+    const response = await (requestContext?.fetch ?? verificationSession.fetch.bind(verificationSession))(endpoint, {
       method: "GET",
       headers: {
         Accept: "application/json",
         "Cache-Control": "no-cache",
-        ...(userId ? { "New-API-User": userId } : {}),
+        ...requestContext?.headers,
+        ...(userId && requestContext?.userIdHeaderPolicy !== "omit"
+          ? { "New-API-User": userId }
+          : {}),
       },
       credentials: "include",
       cache: "no-store",
@@ -671,13 +696,19 @@ async function fetchIdentity(
   verificationSession: Session,
   baseUrl: string,
   targetUserId: string,
+  requestContext?: ManagementRequestContext,
 ): Promise<VerificationFetchResult> {
   const endpoint = `${normalizeBaseUrl(baseUrl)}/api/user/self`;
-  const anonymousHeaderResponse = await fetchJson(verificationSession, endpoint);
+  const anonymousHeaderResponse = await fetchJson(
+    verificationSession,
+    endpoint,
+    undefined,
+    requestContext,
+  );
   if (extractVerificationUserId(anonymousHeaderResponse.payload)) {
     return anonymousHeaderResponse;
   }
-  return fetchJson(verificationSession, endpoint, targetUserId);
+  return fetchJson(verificationSession, endpoint, targetUserId, requestContext);
 }
 
 function isCredentialRejected(response: VerificationFetchResult): boolean {

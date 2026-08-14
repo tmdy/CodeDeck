@@ -6,7 +6,10 @@ import { defaultLocalState, type LocalState } from "../../state/local-state.js";
 import { cloneLocalState } from "../../state/store.js";
 import { createOfficialNativeProfile, normalizeProfile, type Profile, type RuntimeSettings } from "../../profile/types.js";
 import { itemKey } from "../../profile/keys-internal.js";
-import type { SiteBalanceSession } from "../../balance/site-balance-sessions.js";
+import type {
+  EncryptedProfileConfig,
+  SiteBalanceSession,
+} from "../../balance/site-balance-sessions.js";
 
 // 内存状态存储（测试用）
 class MemoryStateAccessor implements LocalStateAccessor {
@@ -293,6 +296,55 @@ describe("ProfileService", () => {
       }, makeRuntime());
       expect(moved.balance_session_id).toBeUndefined();
     });
+
+    it("should clear a stale API-key balance result when binding a backend account", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const key = itemKey(profile);
+      const accessor = new MemoryStateAccessor({
+        balance_checks_by_profile: {
+          [key]: {
+            provider: "codex",
+            profile_name: "Relay",
+            base_url: "https://new-api.example.com",
+            running: false,
+            supported: true,
+            success: false,
+            message: "余额接口鉴权失败，请检查 API Key",
+            items: [],
+            endpoint: "https://new-api.example.com/api/user/self",
+            finished_at_display: "2026/08/04 19:28:51",
+          },
+        },
+        site_capability_cache: {
+          checkin_by_account: {},
+          balance_by_target: {
+            [`profile:${key}`]: {
+              family: "new_api_family",
+              auth_mode: "bearer",
+              learned_at: "2026-08-04T11:28:51.000Z",
+              credential_updated_at: "2026-08-04T11:28:51.000Z",
+              base_url: "https://new-api.example.com",
+            },
+          },
+        },
+      });
+      const localService = new ProfileService([profile], accessor, null, {
+        "https://new-api.example.com": [makeSiteSession("sess-a", "账号1")],
+      });
+
+      await localService.saveProfile(key, {
+        ...profile,
+        balance_session_id: "sess-a",
+      }, makeRuntime());
+
+      expect(accessor.get().balance_checks_by_profile[key]).toBeUndefined();
+      expect(accessor.get().site_capability_cache.balance_by_target[`profile:${key}`]).toBeUndefined();
+    });
   });
 
   describe("deleteProfile", () => {
@@ -493,6 +545,190 @@ describe("ProfileService", () => {
 
       expect(updated.label).toBe("账号1");
       expect(updated.access_token).toBe("token-updated");
+    });
+
+    it("should upgrade a deprecated cookie account in place without persisting browser secrets", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const legacy = {
+        ...makeSiteSession("sess-a", "账号1"),
+        auth_kind: "session_cookie" as const,
+        access_token: "legacy-cookie-secret",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), null, {
+        "https://new-api.example.com": [legacy],
+      });
+
+      const updated = await localService.saveSiteBalanceSession(profile.url, {
+        id: "sess-a",
+        label: "",
+        access_token: "must-not-persist",
+        auth_kind: "browser_session",
+        browser_session_id: "opaque-local-reference",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com/console/personal",
+        refresh_token: "must-not-persist",
+        user_id: "42",
+      });
+
+      expect(updated).toEqual(expect.objectContaining({
+        id: "sess-a",
+        auth_kind: "browser_session",
+        access_token: "",
+        browser_session_id: "opaque-local-reference",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+        user_id: "42",
+      }));
+      expect(updated.refresh_token).toBeUndefined();
+      expect(localService.getSiteBalanceSessionsByBaseUrl()["https://new-api.example.com"])
+        .toHaveLength(1);
+    });
+
+    it("persists the browser identity slot registry with a browser account", async () => {
+      const savedConfigs: EncryptedProfileConfig[] = [];
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), {
+        async saveConfig(config) {
+          savedConfigs.push(config);
+        },
+      });
+
+      await localService.saveSiteBalanceSession(profile.url, {
+        label: "",
+        access_token: "",
+        auth_kind: "browser_session",
+        browser_session_id: "shared-identity",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+        user_id: "42",
+      });
+
+      expect(localService.getBrowserIdentitySlots()).toEqual([
+        { slot: 1, browser_session_id: "shared-identity" },
+      ]);
+      expect(savedConfigs.at(-1)?.browser_identity_slots).toEqual([
+        { slot: 1, browser_session_id: "shared-identity" },
+      ]);
+    });
+
+    it("rejects deleting a browser identity slot that still has a binding", async () => {
+      const account: SiteBalanceSession = {
+        ...makeSiteSession("browser-a", "账号1"),
+        access_token: "",
+        auth_kind: "browser_session",
+        browser_session_id: "shared-identity",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+        user_id: "42",
+      };
+      const localService = new ProfileService([], new MemoryStateAccessor(), null, {
+        "https://new-api.example.com": [account],
+      }, [{ slot: 1, browser_session_id: "shared-identity" }]);
+
+      await expect(localService.deleteBrowserIdentitySlot(1))
+        .rejects.toThrow("浏览器账号槽位仍被后台账号使用");
+    });
+
+    it("rejects binding another partition identity to an occupied browser slot", async () => {
+      const localService = new ProfileService([], new MemoryStateAccessor(), null, {}, [
+        { slot: 1, browser_session_id: "identity-a" },
+      ]);
+
+      await expect(localService.saveSiteBalanceSession("https://new-api.example.com", {
+        label: "",
+        access_token: "",
+        auth_kind: "browser_session",
+        browser_session_id: "identity-b",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+        user_id: "42",
+      })).rejects.toThrow("浏览器账号1已绑定其他登录身份");
+    });
+
+    it("should clear cached results and learned paths when account credentials change", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+        balance_session_id: "sess-a",
+      };
+      const profileKey = itemKey(profile);
+      const accountKey = "https://new-api.example.com::sess-a";
+      const accessor = new MemoryStateAccessor({
+        balance_checks_by_profile: {
+          [profileKey]: {
+            provider: "codex",
+            profile_name: "Relay",
+            base_url: "https://new-api.example.com",
+            running: false,
+            supported: true,
+            success: false,
+            message: "旧余额结果",
+            items: [],
+            endpoint: "https://new-api.example.com/api/user/self",
+            finished_at_display: "2026/08/04 19:28:51",
+          },
+        },
+        checkin_states_by_account: {
+          [accountKey]: {
+            status: "failed",
+            trigger: "manual",
+            message: "旧签到结果",
+            endpoint: "https://new-api.example.com/api/user/checkin",
+            last_attempt_at: "2026-08-04T11:28:51.000Z",
+          },
+        },
+        site_capability_cache: {
+          checkin_by_account: {
+            [accountKey]: {
+              platform: "management",
+              endpoint_path: "/api/user/checkin",
+              method: "POST",
+              authorization_mode: "raw",
+              cookie_mode: "none",
+              requires_user_id: true,
+              learned_at: new Date().toISOString(),
+              credential_updated_at: "2026-05-05T09:00:00.000Z",
+            },
+          },
+          balance_by_target: {
+            [`session:${accountKey}`]: {
+              family: "new_api_family",
+              auth_mode: "bearer",
+              learned_at: new Date().toISOString(),
+              credential_updated_at: "2026-05-05T09:00:00.000Z",
+              base_url: "https://new-api.example.com",
+            },
+          },
+        },
+      });
+      const localService = new ProfileService([profile], accessor, null, {
+        "https://new-api.example.com": [makeSiteSession("sess-a", "账号1")],
+      });
+
+      await localService.saveSiteBalanceSession(profile.url, {
+        id: "sess-a",
+        label: "",
+        access_token: "token-updated",
+        user_id: "3142",
+      });
+
+      const state = accessor.get();
+      expect(state.balance_checks_by_profile[profileKey]).toBeUndefined();
+      expect(state.checkin_states_by_account[accountKey]).toBeUndefined();
+      expect(state.site_capability_cache.checkin_by_account[accountKey]).toBeUndefined();
+      expect(state.site_capability_cache.balance_by_target[`session:${accountKey}`]).toBeUndefined();
     });
 
     it("should toggle automatic check-in without replacing account credentials", async () => {

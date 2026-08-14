@@ -21,6 +21,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
 | [Codex Log Maintenance](./codex-log-maintenance.md) | SQLite backup, trigger, and WAL verification contract | Active |
+| [Management Authentication](./management-auth-contract.md) | Explicit backend-account auth and check-in nonce contract | Active |
 | [Session Discovery](./session-discovery-contract.md) | Codex sub-agent classification, request caching, and catalog pagination contract | Active |
 | [Persistent Agent Bridge](./agent-bridge-contract.md) | Parent-bound delegation, scoped capabilities, automatic return, and interrupt contract | Active |
 

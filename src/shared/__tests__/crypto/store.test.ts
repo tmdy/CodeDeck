@@ -43,6 +43,7 @@ describe("EncryptedConfigStore", () => {
           label: "主账号",
           base_url: "https://new-api.example.com",
           access_token: "token-a",
+          auth_kind: "access_token",
           auto_checkin_enabled: false,
           user_id: "42",
           updated_at: "2026-05-05T09:30:00.000Z",
@@ -127,6 +128,7 @@ describe("EncryptedConfigStore", () => {
     expect(loaded).toEqual({
       profiles: [],
       site_balance_sessions_by_base_url: {},
+      browser_identity_slots: [],
       runtime_env_by_profile: {},
       global_proxy: "",
       protected_settings_version: 1,

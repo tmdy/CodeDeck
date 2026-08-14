@@ -2,6 +2,7 @@ export type CheckinResultStatus =
   | "success"
   | "already_checked"
   | "manual_required"
+  | "login_required"
   | "unsupported"
   | "failed";
 
@@ -81,6 +82,7 @@ export interface CheckinBatchSummary {
   success: number;
   already_checked: number;
   manual_required: number;
+  login_required: number;
   unsupported: number;
   failed: number;
 }
@@ -105,6 +107,7 @@ export function normalizeCheckinStatesByAccount(value: unknown): CheckinStatesBy
     "success",
     "already_checked",
     "manual_required",
+    "login_required",
     "unsupported",
     "failed",
     "scheduled",

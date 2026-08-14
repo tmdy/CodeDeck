@@ -65,6 +65,7 @@ import {
 } from "./shared/profile-editor-state.js";
 import { APP_NAME } from "./shared/branding.js";
 import type { EncryptionSetupStatus } from "./shared/encryption-status.js";
+import type { BrowserAccountStatusSnapshot } from "./shared/electron/browser-account-session-manager.js";
 import {
   shouldReconcileAfterHidden,
   type AppReactivationEvent,
@@ -79,7 +80,9 @@ import {
   describeBalanceSessionHint,
   getSiteBalanceSessionsForBaseUrl,
   normalizeBalanceBaseUrl,
+  type BrowserIdentitySlot,
   type SiteBalanceSessionsByBaseUrl,
+  type SiteBalanceAuthKind,
 } from "./shared/balance/site-balance-sessions.js";
 import { normalizeThemeMode, resolveEffectiveTheme } from "./shared/theme.js";
 import { toggleSavedArgText } from "./shared/provider/cli-args.js";
@@ -90,6 +93,9 @@ type SettingsSubTab = "global" | "parameters";
 type BalanceSessionDraftState = {
   label: string;
   access_token: string;
+  auth_kind: SiteBalanceAuthKind;
+  browser_session_id?: string;
+  browser_origin?: string;
   refresh_token: string;
   token_expires_at?: number;
   user_id: string;
@@ -98,6 +104,7 @@ type HydratedProfilesResult = {
   profiles: Profile[];
   state: LocalState;
   siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+  browserIdentitySlots: BrowserIdentitySlot[];
   defaultWorkingDirectory: string;
 };
 type ModelCatalogCacheEntry = {
@@ -280,10 +287,13 @@ function useEventCallback<T extends (...args: never[]) => unknown>(callback: T):
   return useCallback(((...args: Parameters<T>) => callbackRef.current(...args)) as T, []);
 }
 
-function emptyBalanceSessionDraft(): BalanceSessionDraftState {
+function emptyBalanceSessionDraft(
+  authKind: SiteBalanceAuthKind = "browser_session",
+): BalanceSessionDraftState {
   return {
     label: "",
     access_token: "",
+    auth_kind: authKind,
     refresh_token: "",
     user_id: "",
   };
@@ -306,7 +316,7 @@ function normalizeEmptyNewBalanceSessionDraft(draft: ProfileEditorDraft): Profil
   return {
     ...draft,
     balanceSessionSelection: "auto",
-    balanceSessionDraft: emptyBalanceSessionDraft(),
+    balanceSessionDraft: emptyBalanceSessionDraft("access_token"),
   };
 }
 
@@ -383,6 +393,9 @@ function normalizeBalanceSessionDraftState(
   return {
     label: draft.label ?? "",
     access_token: draft.access_token ?? "",
+    auth_kind: draft.auth_kind ?? "access_token",
+    browser_session_id: draft.browser_session_id,
+    browser_origin: draft.browser_origin,
     refresh_token: draft.refresh_token ?? "",
     token_expires_at: draft.token_expires_at,
     user_id: draft.user_id ?? "",
@@ -544,6 +557,7 @@ function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [state, setState] = useState<LocalState | null>(null);
   const [siteBalanceSessionsByBaseUrl, setSiteBalanceSessionsByBaseUrl] = useState<SiteBalanceSessionsByBaseUrl>({});
+  const [browserIdentitySlots, setBrowserIdentitySlots] = useState<BrowserIdentitySlot[]>([]);
   const [defaultWorkingDirectory, setDefaultWorkingDirectory] = useState("");
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [startupPhase, setStartupPhase] = useState<StartupPhase>("checking");
@@ -569,7 +583,10 @@ function App() {
   const [draftAdvancedModelMapping, setDraftAdvancedModelMapping] = useState(buildNewProfileDraft(PROVIDER_CLAUDE).advancedModelMapping);
   const [draftPermissions, setDraftPermissions] = useState<ProfilePermissions | null>(null);
   const [draftBalanceSessionSelection, setDraftBalanceSessionSelection] = useState("auto");
-  const [draftBalanceSession, setDraftBalanceSession] = useState<BalanceSessionDraftState>(emptyBalanceSessionDraft());
+  const [draftBalanceSession, setDraftBalanceSession] = useState<BalanceSessionDraftState>(
+    emptyBalanceSessionDraft("access_token"),
+  );
+  const [draftBrowserSlotSelection, setDraftBrowserSlotSelection] = useState("new");
   const [draftCwd, setDraftCwd] = useState("");
   const [draftCommandBase, setDraftCommandBase] = useState("");
   const [draftSettingsFile, setDraftSettingsFile] = useState("");
@@ -588,6 +605,9 @@ function App() {
   const [balanceKey, setBalanceKey] = useState<ProfileKey>("");
   const [checkinActionBusy, setCheckinActionBusy] = useState(false);
   const [checkinBatchBusy, setCheckinBatchBusy] = useState(false);
+  const [browserAuthStatusByAccount, setBrowserAuthStatusByAccount] = useState<
+    Record<string, BrowserAccountStatusSnapshot>
+  >({});
 
   // 会话
   const [profilesSessions, setProfilesSessions] = useState<SessionSummary[]>([]);
@@ -736,6 +756,11 @@ function App() {
   const currentCheckinState = currentCheckinAccountKey
     ? state?.checkin_states_by_account[currentCheckinAccountKey] ?? null
     : null;
+  const currentBrowserAuthStatus = currentCheckinState?.status === "login_required"
+    ? "login_required"
+    : currentCheckinAccount?.auth_kind === "browser_session"
+      ? browserAuthStatusByAccount[currentCheckinAccountKey]?.status ?? "unknown"
+      : "unknown";
   const anyCheckinRunning = Object.values(state?.checkin_states_by_account ?? {})
     .some((checkinState) => (
       checkinState.status === "running" || checkinState.status === "verifying"
@@ -891,6 +916,42 @@ function App() {
     const unsub = window.profileManager.onStateChanged(stableHandleProfileStateChanged);
     return unsub;
   }, [isUnlocked, stableHandleProfileStateChanged]);
+
+  useEffect(() => {
+    if (!window.profileManager?.onBrowserAccountStatus) return;
+    return window.profileManager.onBrowserAccountStatus((snapshot) => {
+      if (!snapshot.accountKey) return;
+      setBrowserAuthStatusByAccount((current) => ({
+        ...current,
+        [snapshot.accountKey]: snapshot,
+      }));
+    });
+  }, []);
+
+  useEffect(() => {
+    if (
+      !window.profileManager?.getBrowserAccountStatus
+      || !currentCheckinAccount
+      || currentCheckinAccount.auth_kind !== "browser_session"
+      || !currentCheckinAccountKey
+    ) {
+      return;
+    }
+    let cancelled = false;
+    void window.profileManager.getBrowserAccountStatus(
+      currentCheckinAccount.base_url,
+      currentCheckinAccount.id,
+    ).then((snapshot) => {
+      if (cancelled || snapshot.accountKey !== currentCheckinAccountKey) return;
+      setBrowserAuthStatusByAccount((current) => ({
+        ...current,
+        [snapshot.accountKey]: snapshot,
+      }));
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [currentCheckinAccount, currentCheckinAccountKey]);
 
   useEffect(() => {
     if (!window.profileManager) return;
@@ -1136,6 +1197,7 @@ function App() {
     profiles: Profile[];
     state: LocalState;
     siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+    browserIdentitySlots: BrowserIdentitySlot[];
     defaultWorkingDirectory?: string;
   }): HydratedProfilesResult {
     return {
@@ -1159,6 +1221,7 @@ function App() {
     setProfiles(data.profiles);
     setState(data.state);
     setSiteBalanceSessionsByBaseUrl(data.siteBalanceSessionsByBaseUrl);
+    setBrowserIdentitySlots(data.browserIdentitySlots);
     setDefaultWorkingDirectory(data.defaultWorkingDirectory);
     setHasHydratedParameterSettings(options.parameterSettingsHydrated);
     return data;
@@ -1188,6 +1251,7 @@ function App() {
       profiles: Profile[];
       state: LocalState;
       siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+      browserIdentitySlots: BrowserIdentitySlot[];
       defaultWorkingDirectory?: string;
     });
   }
@@ -1404,20 +1468,21 @@ function App() {
       return;
     }
     if (draftBalanceSessionSelection === "auto") {
-      setDraftBalanceSession(emptyBalanceSessionDraft());
+      setDraftBalanceSession(emptyBalanceSessionDraft("access_token"));
       return;
     }
 
     const matched = draftSiteBalanceSessions.find((session) => session.id === draftBalanceSessionSelection);
     if (!matched) {
       setDraftBalanceSessionSelection("auto");
-      setDraftBalanceSession(emptyBalanceSessionDraft());
+      setDraftBalanceSession(emptyBalanceSessionDraft("access_token"));
       return;
     }
 
     const nextDraft = {
       label: matched.label,
       access_token: matched.access_token,
+      auth_kind: matched.auth_kind ?? "access_token",
       refresh_token: matched.refresh_token ?? "",
       token_expires_at: matched.token_expires_at,
       user_id: matched.user_id,
@@ -1562,6 +1627,7 @@ function App() {
         }
         if (
           existingSession.access_token !== snapshot.balanceSessionDraft.access_token
+          || existingSession.auth_kind !== snapshot.balanceSessionDraft.auth_kind
           || (existingSession.refresh_token ?? "") !== (snapshot.balanceSessionDraft.refresh_token ?? "")
           || (existingSession.token_expires_at ?? 0) !== (snapshot.balanceSessionDraft.token_expires_at ?? 0)
           || existingSession.user_id !== snapshot.balanceSessionDraft.user_id
@@ -1914,6 +1980,54 @@ function App() {
   async function handleReorder(orderedKeys: ProfileKey[]) {
     if (!window.profileManager || !state) return;
     await window.profileManager.reorderProfiles(state.selected_provider, orderedKeys);
+  }
+
+  async function handleBrowserBalanceSessionLogin() {
+    const login = draftBalanceSessionSelection !== "auto"
+      && draftBalanceSessionSelection !== "new"
+      ? window.profileManager?.reloginBrowserAccount
+      : window.profileManager?.loginBrowserAccount;
+    if (!login) {
+      setErrorMessage("当前环境不支持浏览器登录");
+      return;
+    }
+    setIsBusy(true);
+    setErrorMessage(null);
+    try {
+      const requestedBrowserSlot = draftBrowserSlotSelection.startsWith("slot:")
+        ? Number(draftBrowserSlotSelection.slice("slot:".length))
+        : undefined;
+      const saved = draftBalanceSessionSelection !== "auto"
+        && draftBalanceSessionSelection !== "new"
+        ? await window.profileManager!.reloginBrowserAccount!(draftUrl, draftBalanceSessionSelection)
+        : await window.profileManager!.loginBrowserAccount!(draftUrl, requestedBrowserSlot);
+      await refreshAll(true);
+      setDraftBalanceSessionSelection(saved.id);
+      setDraftBalanceSession(normalizeBalanceSessionDraftState(saved));
+      setDraftBrowserSlotSelection("new");
+      setSuccessMessage("浏览器登录成功");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "浏览器登录失败");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleBrowserBalanceSessionLogout() {
+    if (
+      !window.profileManager?.logoutBrowserAccount
+      || draftBalanceSessionSelection === "auto"
+      || draftBalanceSessionSelection === "new"
+    ) return;
+    setIsBusy(true);
+    try {
+      await window.profileManager.logoutBrowserAccount(draftUrl, draftBalanceSessionSelection);
+      setSuccessMessage("已退出浏览器登录");
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "退出浏览器登录失败");
+    } finally {
+      setIsBusy(false);
+    }
   }
 
   async function handleSelectProfileChannel(channelId: string) {
@@ -2351,8 +2465,8 @@ function App() {
     setCheckinBatchBusy(true);
     try {
       const summary = await window.profileManager.runEnabledCheckins() as CheckinBatchSummary;
-      const message = `批量签到完成：成功 ${summary.success + summary.already_checked}，需处理 ${summary.manual_required}，失败 ${summary.failed + summary.unsupported}`;
-      if (summary.failed || summary.manual_required) {
+      const message = `批量签到完成：成功 ${summary.success + summary.already_checked}，需验证 ${summary.manual_required}，需登录 ${summary.login_required}，失败 ${summary.failed + summary.unsupported}`;
+      if (summary.failed || summary.manual_required || summary.login_required) {
         setErrorMessage(message);
       } else {
         setSuccessMessage(message);
@@ -3460,19 +3574,25 @@ function App() {
   const handleBalanceSessionSelectionChange = useCallback((value: string) => {
     setDraftBalanceSessionSelection(value);
     if (value === "auto" || value === "new") {
-      setDraftBalanceSession(emptyBalanceSessionDraft());
+      setDraftBrowserSlotSelection("new");
+      setDraftBalanceSession(emptyBalanceSessionDraft(
+        value === "new" ? "browser_session" : "access_token",
+      ));
       return;
     }
     const matched = draftSiteBalanceSessions.find((session) => session.id === value);
     setDraftBalanceSession(matched ? {
       label: matched.label,
       access_token: matched.access_token,
+      auth_kind: matched.auth_kind ?? "access_token",
+      browser_session_id: matched.browser_session_id,
+      browser_origin: matched.browser_origin,
       refresh_token: matched.refresh_token ?? "",
       token_expires_at: matched.token_expires_at,
       user_id: matched.user_id,
     } : emptyBalanceSessionDraft());
   }, [draftSiteBalanceSessions]);
-  const handleBalanceSessionDraftChange = useCallback((field: "label" | "access_token" | "refresh_token" | "user_id", value: string) => {
+  const handleBalanceSessionDraftChange = useCallback((field: "label" | "access_token" | "auth_kind" | "refresh_token" | "user_id", value: string) => {
     setDraftBalanceSession((current) => ({
       ...current,
       [field]: value,
@@ -3578,7 +3698,7 @@ function App() {
       return;
     }
     setDraftBalanceSessionSelection("auto");
-    setDraftBalanceSession(emptyBalanceSessionDraft());
+    setDraftBalanceSession(emptyBalanceSessionDraft("access_token"));
     setErrorMessage(null);
   }, [draftBalanceSession, draftBalanceSessionSelection]);
 
@@ -3612,6 +3732,8 @@ function App() {
   const stableHandleOpenManualCheckin = useEventCallback(handleOpenManualCheckin);
   const stableHandleProfilesLaunchMonitorModeChange = useEventCallback(handleProfilesLaunchMonitorModeChange);
   const stableHandleSaveBalanceSession = useEventCallback(handleSaveBalanceSession);
+  const stableHandleBrowserBalanceSessionLogin = useEventCallback(handleBrowserBalanceSessionLogin);
+  const stableHandleBrowserBalanceSessionLogout = useEventCallback(handleBrowserBalanceSessionLogout);
   const stableHandleDeleteSiteBalanceSession = useEventCallback(handleDeleteSiteBalanceSession);
   const stableHandleDraftCommit = useEventCallback(handleDraftCommit);
   const stableHandleRuntimeCommit = useEventCallback(handleRuntimeCommit);
@@ -3915,6 +4037,12 @@ function App() {
               onBalanceSessionSelectionChange: handleBalanceSessionSelectionChange,
               onBalanceSessionDraftChange: handleBalanceSessionDraftChange,
               onSaveBalanceSession: stableSaveBalanceSessionAction,
+              onBrowserLogin: stableHandleBrowserBalanceSessionLogin,
+              onBrowserLogout: stableHandleBrowserBalanceSessionLogout,
+              browserIdentitySlots,
+              browserSlotSelection: draftBrowserSlotSelection,
+              onBrowserSlotSelectionChange: setDraftBrowserSlotSelection,
+              browserAuthStatus: currentBrowserAuthStatus,
               onDeleteSiteBalanceSession: stableDeleteSiteBalanceSessionAction,
               disabled: isBusy,
             }}

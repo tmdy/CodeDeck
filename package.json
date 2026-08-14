@@ -45,6 +45,7 @@
     "dist:win:zip": "npm run build && npm run prepare:package && electron-builder --win zip --x64 --publish never",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:electron-auth": "node ./scripts/test-browser-auth-smoke.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

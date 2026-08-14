@@ -4,7 +4,11 @@ import {
   normalizeBalanceBaseUrl,
   type SiteBalanceSession,
 } from "../balance/site-balance-sessions.js";
-import { buildManagementCookieCandidates } from "./management-auth.js";
+import {
+  buildManagementCookieCandidates,
+  resolveManagementAuth,
+  type ManagementRequestContext,
+} from "./management-auth.js";
 import type {
   LearnedBalanceFamily,
   LearnedBalancePath,
@@ -52,6 +56,7 @@ interface RequestJsonOptions {
   method?: "GET" | "POST";
   body?: unknown;
   deadline?: number;
+  requestContext?: ManagementRequestContext;
 }
 
 export interface BalanceQueryOptions {
@@ -59,6 +64,7 @@ export interface BalanceQueryOptions {
   learnedPath?: LearnedBalancePath;
   onPathLearned?: (path: LearnedBalancePath) => void;
   onPathInvalidated?: () => void;
+  managementRequestContext?: ManagementRequestContext;
 }
 
 interface ManagementInspectionResult {
@@ -416,6 +422,10 @@ function formatManagementFailureMessage(
   const normalizedUserId = normalizeNeedUserIdMessage(trimmed);
   if (normalizedUserId !== trimmed) {
     return normalizedUserId;
+  }
+
+  if ((preferSessionMessage || authMode === "session_cookie") && looksLikeAuthFailureMessage(trimmed)) {
+    return SESSION_EXPIRED_MESSAGE;
   }
 
   const specificMessage = explainSkApiKeyMismatch(apiKey, trimmed);
@@ -1089,18 +1099,6 @@ function parseSharedChatBalanceState(
   );
 }
 
-function shouldRetryWithManagementSessionCookie(
-  response: RequestResult,
-  authToken: string,
-  resolvedSession: SiteBalanceSession | null,
-): boolean {
-  const rawMessage = extractResponseMessage(response.payload) || response.bodyText;
-  if (!/invalid access token|未提供 access token|not logged in|access token 无效/i.test(rawMessage)) {
-    return false;
-  }
-  return !!resolvedSession || !authToken.trim().startsWith("sk-");
-}
-
 async function readResponseBody(response: Response): Promise<string> {
   try {
     return (await response.text()).trim();
@@ -1134,10 +1132,6 @@ function isDeterministicBalancePathFailure(state: BalanceCheckState): boolean {
     /HTTP\s+(?:404|405)/i.test(state.message)
     || /暂未适配|不支持.*接口|非预期格式/.test(state.message)
   );
-}
-
-function isTransientBalanceFailure(state: BalanceCheckState): boolean {
-  return !state.success && /网络|超时|TLS|HTTP\s+(?:429|5\d\d)/i.test(state.message);
 }
 
 function isBalanceAuthFailure(state: BalanceCheckState): boolean {
@@ -1229,6 +1223,7 @@ export class BalanceService {
           assumeFamily,
           deadline,
           learned,
+          options.managementRequestContext,
           (mode, cookieMode) => {
             learnedAuth.value = { mode, ...(cookieMode ? { cookieMode } : {}) };
           },
@@ -1279,6 +1274,7 @@ export class BalanceService {
       false,
       discoveryDeadline,
       undefined,
+      options.managementRequestContext,
       (mode, cookieMode, family) => {
         if (family) learn(family, mode, cookieMode);
       },
@@ -1314,6 +1310,7 @@ export class BalanceService {
     try {
       const headers: Record<string, string> = {
         Accept: "application/json",
+        ...options.requestContext?.headers,
         ...extraHeaders,
       };
       if (options.method === "POST") {
@@ -1322,7 +1319,7 @@ export class BalanceService {
       if (options.includeAuthorization !== false) {
         headers.Authorization = `Bearer ${apiKey}`;
       }
-      const response = await this.fetchImpl(endpoint, {
+      const response = await (options.requestContext?.fetch ?? this.fetchImpl)(endpoint, {
         method: options.method ?? "GET",
         headers,
         ...(options.method === "POST"
@@ -1685,6 +1682,7 @@ export class BalanceService {
     assumeFamily: boolean,
     deadline: number,
     learnedPath?: LearnedBalancePath,
+    requestContext?: ManagementRequestContext,
     onAuthenticated?: (
       mode: "bearer" | "session_cookie",
       cookieMode?: LearnedBalancePath["cookie_mode"],
@@ -1693,7 +1691,7 @@ export class BalanceService {
   ): Promise<BalanceCheckState | null> {
     const endpoint = `${context.base_url}/api/user/self`;
     const authToken = (resolvedSession?.access_token ?? apiKey).trim();
-    if (!authToken) {
+    if (!authToken && !requestContext) {
       return familyHint ? supportedFailureState(context, endpoint, AUTH_FAILURE_MESSAGE) : null;
     }
 
@@ -1704,75 +1702,70 @@ export class BalanceService {
       ? familyHint
       : detectManagementFamilyByUrl(context.base_url);
     const explicitUserId = normalizeUserIdValue(resolvedSession?.user_id);
-    const userIdCandidates = buildUserIdProbeCandidates(authToken, explicitUserId);
+    const userIdCandidates = requestContext?.userIdHeaderPolicy === "omit"
+      ? []
+      : buildUserIdProbeCandidates(authToken, explicitUserId);
     const preferNewApi = !!resolvedSession;
-
     let lastState: BalanceCheckState | null = null;
+    let lastResponse: RequestResult | null = null;
     const rememberState = (state: BalanceCheckState | null) => {
       if (state) {
         lastState = state;
       }
     };
 
-    if (learnedPath?.auth_mode === "session_cookie" && learnedPath.cookie_mode) {
-      const learnedCookie = buildManagementCookieCandidates(authToken)
-        .find((candidate) => candidate.mode === learnedPath.cookie_mode);
-      if (learnedCookie) {
-        const learnedResponse = await this.requestJson(
-          endpoint,
-          authToken,
-          timeoutMs,
-          {
-            ...buildNewApiUserHeadersFromValue(explicitUserId),
-            Cookie: learnedCookie.headerValue,
-          },
-          { includeAuthorization: false, deadline },
-        );
-        const learnedInspection = this.inspectManagementResponse(
-          context,
-          endpoint,
-          authToken,
-          learnedResponse,
-          hintedManagementFamily ?? "new_api_family",
-          true,
-          "session_cookie",
-          true,
-        );
-        rememberState(learnedInspection.state);
-        if (learnedInspection.state?.success) {
-          onAuthenticated?.(
-            "session_cookie",
-            learnedCookie.mode,
-            learnedInspection.family,
-          );
-          return learnedInspection.state;
+    const authKind = resolvedSession?.auth_kind === "session_cookie" ? "session_cookie" : "access_token";
+    const auth = requestContext
+      ? {
+          headers: { ...requestContext.headers },
+          authorizationMode: requestContext.authMode === "browser_bearer" ? "bearer" as const : "none" as const,
+          cookieMode: "none" as const,
         }
-        if (learnedInspection.state && isTransientBalanceFailure(learnedInspection.state)) {
-          return learnedInspection.state;
-        }
-      }
+      : resolveManagementAuth(authToken, authKind);
+    if (!auth) {
+      return familyHint ? supportedFailureState(context, endpoint, AUTH_FAILURE_MESSAGE) : null;
     }
+    const authMode: ManagementAuthMode = requestContext?.authMode === "browser_cookie"
+      ? "session_cookie"
+      : authKind === "session_cookie"
+      ? "session_cookie"
+      : "bearer";
+    if (learnedPath && (
+      learnedPath.auth_mode !== authMode
+      || (authMode === "session_cookie" && learnedPath.cookie_mode !== auth.cookieMode)
+    )) {
+      learnedPath = undefined;
+    }
+    const inspectForUserId = async (userId: string | null): Promise<ManagementInspectionResult> => {
+      const response = await this.requestJson(
+        endpoint,
+        authToken,
+        timeoutMs,
+        {
+          ...auth.headers,
+          ...(requestContext?.userIdHeaderPolicy === "omit"
+            ? {}
+            : buildNewApiUserHeadersFromValue(userId)),
+        },
+        { includeAuthorization: false, deadline, requestContext },
+      );
+      lastResponse = response;
+      return this.inspectManagementResponse(
+        context,
+        endpoint,
+        authToken,
+        response,
+        hintedManagementFamily,
+        assumeFamily,
+        authMode,
+        preferNewApi,
+      );
+    };
 
-    const bearerResponse = await this.requestJson(
-      endpoint,
-      authToken,
-      timeoutMs,
-      buildNewApiUserHeadersFromValue(explicitUserId),
-      { deadline },
-    );
-    const firstInspection = this.inspectManagementResponse(
-      context,
-      endpoint,
-      authToken,
-      bearerResponse,
-      hintedManagementFamily,
-      assumeFamily,
-      "bearer",
-      preferNewApi,
-    );
+    const firstInspection = await inspectForUserId(explicitUserId);
     rememberState(firstInspection.state);
     if (firstInspection.state?.success) {
-      onAuthenticated?.("bearer", undefined, firstInspection.family);
+      onAuthenticated?.(authMode, auth.cookieMode === "none" ? undefined : auth.cookieMode, firstInspection.family);
       return firstInspection.state;
     }
 
@@ -1788,26 +1781,10 @@ export class BalanceService {
         }
         triedUserIds.add(userId);
 
-        const retryResponse = await this.requestJson(
-          endpoint,
-          authToken,
-          timeoutMs,
-          buildNewApiUserHeadersFromValue(userId),
-          { deadline },
-        );
-        const retryInspection = this.inspectManagementResponse(
-          context,
-          endpoint,
-          authToken,
-          retryResponse,
-          hintedManagementFamily,
-          assumeFamily,
-          "bearer",
-          preferNewApi,
-        );
+        const retryInspection = await inspectForUserId(userId);
         rememberState(retryInspection.state);
         if (retryInspection.state?.success) {
-          onAuthenticated?.("bearer", undefined, retryInspection.family);
+          onAuthenticated?.(authMode, auth.cookieMode === "none" ? undefined : auth.cookieMode, retryInspection.family);
           return retryInspection.state;
         }
         if (!retryInspection.shouldRetryWithUserId) {
@@ -1816,23 +1793,17 @@ export class BalanceService {
       }
     }
 
-    if (shouldRetryWithManagementSessionCookie(bearerResponse, authToken, resolvedSession)) {
-      const cookieCandidates = prioritizeBalanceCookieCandidates(
-        buildManagementCookieCandidates(authToken),
-        learnedPath?.auth_mode === "session_cookie" ? learnedPath.cookie_mode : undefined,
-      );
-      for (const cookieCandidate of cookieCandidates) {
-        const cookieHeader = cookieCandidate.headerValue;
+    // Unnormalized in-memory sessions retain the legacy cookie compatibility path.
+    // Persisted sessions are normalized with auth_kind and never enter this branch.
+    if (!requestContext && resolvedSession && resolvedSession.auth_kind === undefined && lastResponse) {
+      for (const candidate of buildManagementCookieCandidates(authToken)) {
         const triedUserIds = new Set<string>();
-        const tryCookieProbe = async (userId: string | null): Promise<ManagementInspectionResult> => {
+        const tryCookie = async (userId: string | null): Promise<ManagementInspectionResult> => {
           const response = await this.requestJson(
             endpoint,
             authToken,
             timeoutMs,
-            {
-              ...buildNewApiUserHeadersFromValue(userId),
-              Cookie: cookieHeader,
-            },
+            { Cookie: candidate.headerValue, ...buildNewApiUserHeadersFromValue(userId) },
             { includeAuthorization: false, deadline },
           );
           return this.inspectManagementResponse(
@@ -1846,33 +1817,24 @@ export class BalanceService {
             true,
           );
         };
-
-        const firstCookieInspection = await tryCookieProbe(explicitUserId);
-        rememberState(firstCookieInspection.state);
-        if (firstCookieInspection.state?.success) {
-          onAuthenticated?.("session_cookie", cookieCandidate.mode, firstCookieInspection.family);
-          return firstCookieInspection.state;
+        const cookieInspection = await tryCookie(explicitUserId);
+        rememberState(cookieInspection.state);
+        if (cookieInspection.state?.success) {
+          onAuthenticated?.("session_cookie", candidate.mode, cookieInspection.family);
+          return cookieInspection.state;
         }
-        if (explicitUserId) {
-          triedUserIds.add(explicitUserId);
-        }
-
-        if (firstCookieInspection.shouldRetryWithUserId) {
+        if (explicitUserId) triedUserIds.add(explicitUserId);
+        if (cookieInspection.shouldRetryWithUserId) {
           for (const userId of userIdCandidates) {
-            if (triedUserIds.has(userId)) {
-              continue;
-            }
+            if (triedUserIds.has(userId)) continue;
             triedUserIds.add(userId);
-
-            const retryInspection = await tryCookieProbe(userId);
+            const retryInspection = await tryCookie(userId);
             rememberState(retryInspection.state);
             if (retryInspection.state?.success) {
-              onAuthenticated?.("session_cookie", cookieCandidate.mode, retryInspection.family);
+              onAuthenticated?.("session_cookie", candidate.mode, retryInspection.family);
               return retryInspection.state;
             }
-            if (!retryInspection.shouldRetryWithUserId) {
-              break;
-            }
+            if (!retryInspection.shouldRetryWithUserId) break;
           }
         }
       }
@@ -1892,6 +1854,7 @@ export class BalanceService {
     preferNewApi: boolean,
   ): ManagementInspectionResult {
     const bodyMessage = extractResponseMessage(response.payload) || response.bodyText;
+    const messageCredential = preferNewApi ? "" : apiKey;
     const responseFamilyHint = familyHint ?? detectManagementFamilyByHeaders(response.headers);
     const family = resolveManagementFamily(
       response.payload,
@@ -1927,7 +1890,7 @@ export class BalanceService {
 
       if (response.status === 401 || response.status === 403) {
         const message = bodyMessage
-          ? formatManagementFailureMessage(bodyMessage, apiKey, authMode, preferNewApi)
+          ? formatManagementFailureMessage(bodyMessage, messageCredential, authMode, preferNewApi)
           : (authMode === "session_cookie" || preferNewApi ? SESSION_EXPIRED_MESSAGE : AUTH_FAILURE_MESSAGE);
         return {
           family: family ?? responseFamilyHint,
@@ -1951,7 +1914,7 @@ export class BalanceService {
       }
 
       const message = bodyMessage
-        ? formatManagementFailureMessage(bodyMessage, apiKey, authMode, preferNewApi)
+        ? formatManagementFailureMessage(bodyMessage, messageCredential, authMode, preferNewApi)
         : `余额接口请求失败（HTTP ${response.status}）`;
       return {
         family: family ?? responseFamilyHint,
@@ -1961,7 +1924,7 @@ export class BalanceService {
     }
 
     if (payloadSignalsFailure(response.payload)) {
-      const message = formatManagementFailureMessage(bodyMessage, apiKey, authMode, preferNewApi);
+      const message = formatManagementFailureMessage(bodyMessage, messageCredential, authMode, preferNewApi);
       if (!family && !assumeFamily) {
         return { family: null, state: null, shouldRetryWithUserId: false };
       }

@@ -8,8 +8,11 @@ import type {
 import {
   buildManagementAuthorizationCandidates,
   buildManagementCookieCandidates,
+  resolveManagementAuth,
   type ManagementAuthorizationMode,
+  type ManagementAuthKind,
   type ManagementCookieMode,
+  type ManagementRequestContext,
 } from "./management-auth.js";
 import type { LearnedCheckinPath } from "../site-capability-cache.js";
 
@@ -89,6 +92,7 @@ export interface CheckinDiagnosticsOptions {
   learnedPath?: LearnedCheckinPath;
   onPathLearned?: (path: LearnedCheckinPath) => void;
   onPathInvalidated?: () => void;
+  managementRequestContext?: ManagementRequestContext;
 }
 
 const ALREADY_CHECKED_PATTERN = /今天?已(?:经)?签到|今日已(?:经)?签到|已经签到|已签到|already\s+(?:checked|signed|check(?:ed)?\s*in)|already\s+sign(?:ed)?\s+in|checked[_\s-]*in[_\s-]*today/i;
@@ -109,12 +113,24 @@ export class CheckinService {
   ): Promise<CheckinResult> {
     const baseUrl = session.base_url.trim().replace(/\/+$/, "");
     const accessToken = session.access_token.trim();
+    const requestContext = diagnostics?.managementRequestContext;
     const savedUserId = session.user_id.trim() || null;
     const checkinEndpoint = `${baseUrl}/api/user/checkin`;
     const failures: CheckinResult[] = [];
     const deadline = Date.now() + Math.max(1, timeoutMs);
     const requestTimeout = (capMs: number = 5_000): number => (
       Math.max(1, Math.min(capMs, deadline - Date.now()))
+    );
+    const request = (
+      endpoint: string,
+      timeout: number,
+      headers: Record<string, string>,
+      options: CheckinRequestOptions = {},
+    ) => this.request(endpoint, timeout, headers, options, requestContext);
+    const userIdHeaders = (userId: string | null): Record<string, string> => (
+      userId && requestContext?.userIdHeaderPolicy !== "omit"
+        ? buildUserIdHeaders(userId)
+        : {}
     );
     const knownUserIds = new Set<string>(savedUserId ? [savedUserId] : []);
 
@@ -161,7 +177,7 @@ export class CheckinService {
       ));
     }
 
-    if (!baseUrl || !accessToken) {
+    if (!baseUrl || (!accessToken && !requestContext)) {
       return finish(failedResult(
         checkinEndpoint,
         "后台账号缺少站点地址或 Access Token / Session",
@@ -232,16 +248,17 @@ export class CheckinService {
       userId: string | null,
       userIdSource: CheckinUserIdSource,
       method: "GET" | "POST" = "POST",
+      body?: string,
     ): Promise<CheckinAttemptExecution> => {
       const endpoint = `${baseUrl}${endpointPath}`;
-      const response = await this.request(
+      const response = await request(
         endpoint,
         requestTimeout(),
         {
           ...transport.headers,
-          ...(userId ? buildUserIdHeaders(userId) : {}),
+          ...userIdHeaders(userId),
         },
-        { method },
+        { method, ...(body ? { body } : {}) },
       );
       const classifiedResult = method === "GET" && payloadLooksLikeCheckinStatus(response.payload)
         ? unsupportedResult(endpoint, baseUrl, "站点仅返回了签到状态，未执行签到")
@@ -266,6 +283,7 @@ export class CheckinService {
       stage: CheckinDiagnosticStage,
       userId: string | null,
       userIdSource: CheckinUserIdSource,
+      body?: string,
     ): Promise<CheckinAttemptExecution> => {
       const postAttempt = await runActionAttempt(
         endpointPath,
@@ -274,6 +292,7 @@ export class CheckinService {
         userId,
         userIdSource,
         "POST",
+        body,
       );
       return postAttempt.response.status === 405
         ? runActionAttempt(endpointPath, transport, stage, userId, userIdSource, "GET")
@@ -285,7 +304,7 @@ export class CheckinService {
     ): Promise<string | null> => {
       const endpointPath = "/api/user/self";
       const endpoint = `${baseUrl}${endpointPath}`;
-      const response = await this.request(
+      const response = await request(
         endpoint,
         requestTimeout(),
         transport.headers,
@@ -325,12 +344,12 @@ export class CheckinService {
     ): Promise<{ response: CheckinResponse; inspection: CheckinStatusInspection }> => {
       const endpointPath = `/api/user/checkin?month=${currentMonthKey()}`;
       const endpoint = `${baseUrl}${endpointPath}`;
-      const response = await this.request(
+      const response = await request(
         endpoint,
         requestTimeout(),
         {
           ...transport.headers,
-          ...buildUserIdHeaders(userId),
+          ...userIdHeaders(userId),
         },
         { method: "GET" },
       );
@@ -401,13 +420,16 @@ export class CheckinService {
       userId: string,
       userIdSource: CheckinUserIdSource,
       defaultStage: "checkin_direct" | "checkin_cookie",
+      checkinNonce?: string,
     ): Promise<CheckinAttemptExecution> => {
+      const body = checkinNonce ? JSON.stringify({ checkin_nonce: checkinNonce }) : undefined;
       let attempt = await runCompatibleActionAttempt(
         "/api/user/checkin",
         transport,
         userIdSource === "discovered" ? "checkin_discovered_user" : defaultStage,
         userId,
         userIdSource,
+        body,
       );
       if (
         userIdSource === "saved"
@@ -422,24 +444,40 @@ export class CheckinService {
             "checkin_discovered_user",
             discoveredUserId,
             "discovered",
+            body,
           );
         }
       }
       return attempt;
     };
 
-    const transports: CheckinAuthTransport[] = [
-      ...buildManagementAuthorizationCandidates(accessToken).map((candidate) => ({
-        headers: { Authorization: candidate.headerValue },
-        authorizationMode: candidate.mode,
-        cookieMode: "none" as const,
-      })),
-      ...buildManagementCookieCandidates(accessToken).map((candidate) => ({
-        headers: { Cookie: candidate.headerValue },
-        authorizationMode: "none" as const,
-        cookieMode: candidate.mode,
-      })),
-    ];
+    const isExplicitAuthKind = session.auth_kind !== undefined;
+    const authKind: ManagementAuthKind = session.auth_kind === "session_cookie"
+      ? "session_cookie"
+      : "access_token";
+    const resolvedAuth = requestContext
+      ? {
+          headers: { ...requestContext.headers },
+          authorizationMode: requestContext.authMode === "browser_bearer" ? "bearer" as const : "none" as const,
+          cookieMode: "none" as const,
+        }
+      : resolveManagementAuth(accessToken, authKind);
+    const transports: CheckinAuthTransport[] = requestContext
+      ? (resolvedAuth ? [resolvedAuth] : [])
+      : isExplicitAuthKind
+      ? (resolvedAuth ? [resolvedAuth] : [])
+      : [
+          ...buildManagementAuthorizationCandidates(accessToken).map((candidate) => ({
+            headers: { Authorization: candidate.headerValue },
+            authorizationMode: candidate.mode,
+            cookieMode: "none" as const,
+          })),
+          ...buildManagementCookieCandidates(accessToken).map((candidate) => ({
+            headers: { Cookie: candidate.headerValue },
+            authorizationMode: "none" as const,
+            cookieMode: candidate.mode,
+          })),
+        ];
 
     const learnedPath = diagnostics?.learnedPath;
     if (learnedPath?.platform === "voapi_v2") {
@@ -457,7 +495,11 @@ export class CheckinService {
       }
       diagnostics?.onPathInvalidated?.();
     } else if (learnedPath?.platform === "management") {
-      const learnedTransport = buildLearnedTransport(accessToken, learnedPath);
+      const learnedTransport = requestContext
+        ? resolvedAuth
+        : buildLearnedTransport(accessToken, session.auth_kind === "browser_session"
+          ? undefined
+          : session.auth_kind, learnedPath);
       const learnedUserId = learnedPath.requires_user_id ? savedUserId : null;
       if (learnedTransport && (!learnedPath.requires_user_id || learnedUserId)) {
         if (learnedUserId) {
@@ -479,6 +521,9 @@ export class CheckinService {
               learnedUserId,
               "saved",
               learnedPath.method,
+              extractCheckinNonce(statusAttempt.response.payload)
+                ? JSON.stringify({ checkin_nonce: extractCheckinNonce(statusAttempt.response.payload) })
+                : undefined,
             );
             if (!isDeterministicPathFailure(attempt.result)) {
               learnPath(attempt.result, {
@@ -544,6 +589,7 @@ export class CheckinService {
           userId,
           userIdSource,
           transport.cookieMode === "none" ? "checkin_direct" : "checkin_cookie",
+          extractCheckinNonce(response.payload) ?? undefined,
         );
         failures.push(actionAttempt.result);
         learnPath(actionAttempt.result, {
@@ -563,6 +609,7 @@ export class CheckinService {
           userId,
           userIdSource,
           transport.cookieMode === "none" ? "checkin_direct" : "checkin_cookie",
+          extractCheckinNonce(response.payload) ?? undefined,
         );
         failures.push(legacyAction.result);
         if (responseShowsEndpointExists(legacyAction.response)) {
@@ -592,54 +639,39 @@ export class CheckinService {
       }
     }
 
-    if (!checkinEndpointObserved) {
-      for (const candidate of buildManagementCookieCandidates(accessToken)) {
-        const transport: CheckinAuthTransport = {
-          headers: {
-            Cookie: candidate.headerValue,
-            "X-Requested-With": "XMLHttpRequest",
-          },
-          authorizationMode: "none",
-          cookieMode: candidate.mode,
-        };
+    if (
+      !requestContext
+      && !checkinEndpointObserved
+      && (!isExplicitAuthKind || authKind === "session_cookie")
+      && resolvedAuth
+    ) {
+      const signInTransports: CheckinAuthTransport[] = isExplicitAuthKind
+        ? [{ ...resolvedAuth, headers: { ...resolvedAuth.headers, "X-Requested-With": "XMLHttpRequest" } }]
+        : buildManagementCookieCandidates(accessToken).map((candidate) => ({
+            headers: { Cookie: candidate.headerValue, "X-Requested-With": "XMLHttpRequest" },
+            authorizationMode: "none",
+            cookieMode: candidate.mode,
+          }));
+      for (const signInTransport of signInTransports) {
         const signInAttempt = await runCompatibleActionAttempt(
           "/api/user/sign_in",
-          transport,
+          signInTransport,
           "sign_in_cookie",
           null,
           "none",
         );
         failures.push(signInAttempt.result);
-        if (
-          isTerminalResult(signInAttempt.result)
-          || signInAttempt.result.error_code === "business_rejected"
-          || shouldStopTryingAuthCandidates(signInAttempt.result)
-        ) {
+        if (!isDeterministicPathFailure(signInAttempt.result)) {
           learnPath(signInAttempt.result, {
             platform: "management",
             endpoint_path: "/api/user/sign_in",
             method: signInAttempt.method,
             authorization_mode: "none",
-            cookie_mode: candidate.mode,
+            cookie_mode: signInTransport.cookieMode,
             requires_user_id: false,
           });
           return finish(signInAttempt.result);
         }
-      }
-    }
-
-    if (!checkinEndpointObserved) {
-      const voApiV2Result = await this.tryVoApiV2Checkin(baseUrl, accessToken, deadline);
-      if (voApiV2Result) {
-        learnPath(voApiV2Result, {
-          platform: "voapi_v2",
-          endpoint_path: "/api/check_in",
-          method: "POST",
-          authorization_mode: "raw",
-          cookie_mode: "none",
-          requires_user_id: false,
-        });
-        return finish(voApiV2Result);
       }
     }
 
@@ -744,17 +776,19 @@ export class CheckinService {
     timeoutMs: number,
     headers: Record<string, string>,
     options: CheckinRequestOptions = {},
+    requestContext?: ManagementRequestContext,
   ): Promise<CheckinResponse> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const startedAt = Date.now();
     try {
       const method = options.method ?? "POST";
-      const response = await this.fetchImpl(endpoint, {
+      const response = await (requestContext?.fetch ?? this.fetchImpl)(endpoint, {
         method,
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
+          ...requestContext?.headers,
           ...headers,
         },
         ...(method === "POST" ? { body: options.body ?? "{}" } : {}),
@@ -969,32 +1003,41 @@ function isDeterministicPathFailure(result: CheckinResult): boolean {
 
 function buildLearnedTransport(
   accessToken: string,
+  authKind: ManagementAuthKind | undefined,
   path: LearnedCheckinPath,
 ): CheckinAuthTransport | null {
-  if (path.authorization_mode !== "none") {
-    const candidate = buildManagementAuthorizationCandidates(accessToken)
-      .find((item) => item.mode === path.authorization_mode);
-    return candidate ? {
-      headers: { Authorization: candidate.headerValue },
-      authorizationMode: candidate.mode,
-      cookieMode: "none",
-    } : null;
-  }
-  if (path.cookie_mode !== "none") {
+  if (!authKind) {
+    if (path.authorization_mode !== "none") {
+      const candidate = buildManagementAuthorizationCandidates(accessToken)
+        .find((item) => item.mode === path.authorization_mode);
+      return candidate ? {
+        headers: { Authorization: candidate.headerValue },
+        authorizationMode: candidate.mode,
+        cookieMode: "none",
+      } : null;
+    }
     const candidate = buildManagementCookieCandidates(accessToken)
       .find((item) => item.mode === path.cookie_mode);
     return candidate ? {
-      headers: {
-        Cookie: candidate.headerValue,
-        ...(path.endpoint_path === "/api/user/sign_in"
-          ? { "X-Requested-With": "XMLHttpRequest" }
-          : {}),
-      },
+      headers: { Cookie: candidate.headerValue },
       authorizationMode: "none",
       cookieMode: candidate.mode,
     } : null;
   }
-  return null;
+  const resolved = resolveManagementAuth(accessToken, authKind);
+  if (!resolved) return null;
+  const compatible = authKind === "access_token"
+    ? path.authorization_mode === "bearer" && path.cookie_mode === "none"
+    : path.authorization_mode === "none" && path.cookie_mode === resolved.cookieMode;
+  return compatible ? {
+    ...resolved,
+    headers: {
+      ...resolved.headers,
+      ...(path.endpoint_path === "/api/user/sign_in"
+        ? { "X-Requested-With": "XMLHttpRequest" }
+        : {}),
+    },
+  } : null;
 }
 
 function isAuthErrorCode(errorCode: CheckinErrorCode | undefined): boolean {
@@ -1266,6 +1309,12 @@ function extractPayloadData(payload: unknown): Record<string, unknown> | null {
   return root.data && typeof root.data === "object" && !Array.isArray(root.data)
     ? root.data as Record<string, unknown>
     : root;
+}
+
+function extractCheckinNonce(payload: unknown): string | null {
+  const data = extractPayloadData(payload);
+  const value = data?.checkin_nonce ?? data?.checkinNonce;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function readBoolean(value: unknown): boolean | null {

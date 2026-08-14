@@ -1,5 +1,20 @@
 export type ManagementAuthorizationMode = "raw" | "bearer";
 export type ManagementCookieMode = "raw" | "session_wrapped" | "token_wrapped";
+export type ManagementAuthKind = "access_token" | "session_cookie";
+
+export interface ManagementRequestContext {
+  fetch: typeof fetch;
+  headers: Readonly<Record<string, string>>;
+  userIdHeaderPolicy: "omit" | "legacy_if_required";
+  authMode: "browser_bearer" | "browser_cookie";
+}
+
+export interface ResolvedManagementAuth {
+  kind: ManagementAuthKind;
+  headers: Record<string, string>;
+  authorizationMode: ManagementAuthorizationMode | "none";
+  cookieMode: ManagementCookieMode | "none";
+}
 
 export interface ManagementAuthorizationCandidate {
   mode: ManagementAuthorizationMode;
@@ -9,6 +24,33 @@ export interface ManagementAuthorizationCandidate {
 export interface ManagementCookieCandidate {
   mode: ManagementCookieMode;
   headerValue: string;
+}
+
+/** Build exactly one transport for an explicitly selected account kind. */
+export function resolveManagementAuth(
+  token: string,
+  kind: ManagementAuthKind,
+): ResolvedManagementAuth | null {
+  const raw = stripBearerPrefix(token).raw;
+  if (!raw) return null;
+  if (kind === "session_cookie") {
+    return {
+      kind,
+      headers: { Cookie: raw.includes("=") || raw.includes(";") ? raw : `session=${raw}` },
+      authorizationMode: "none",
+      cookieMode: raw.includes("=") || raw.includes(";") ? "raw" : "session_wrapped",
+    };
+  }
+  return {
+    kind,
+    headers: {
+      Authorization: `Bearer ${raw}`,
+      "All-API-Hub": "true",
+      "All-API-Hub-Cookie-Auth": "token",
+    },
+    authorizationMode: "bearer",
+    cookieMode: "none",
+  };
 }
 
 function stripBearerPrefix(value: string): { raw: string; hadBearerPrefix: boolean } {

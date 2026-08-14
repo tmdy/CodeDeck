@@ -91,6 +91,7 @@ function createProfileManagerFixture(options: { initialCwd?: string; profile?: P
       profiles: [{ ...currentProfile }],
       state: createBootstrapState(state),
       siteBalanceSessionsByBaseUrl: {},
+      browserIdentitySlots: [],
       defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
     })),
     listProfiles: vi.fn(async () => ({
@@ -105,6 +106,7 @@ function createProfileManagerFixture(options: { initialCwd?: string; profile?: P
         sessions_tab_restore_profile_key_by_provider: { ...state.sessions_tab_restore_profile_key_by_provider },
       },
       siteBalanceSessionsByBaseUrl: {},
+      browserIdentitySlots: [],
       defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
     })),
     saveProfile: vi.fn(async (_targetKey, draft, runtimeDraft) => {
@@ -286,12 +288,14 @@ function createProfileSessionSwitchFixture(options: {
       profiles: [alphaProfile, betaProfile].map((profile) => ({ ...profile })),
       state: createBootstrapState(state),
       siteBalanceSessionsByBaseUrl: {},
+      browserIdentitySlots: [],
       defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
     })),
     listProfiles: vi.fn(async () => ({
       profiles: [alphaProfile, betaProfile].map((profile) => ({ ...profile })),
       state: cloneLocalStateForTest(state),
       siteBalanceSessionsByBaseUrl: {},
+      browserIdentitySlots: [],
       defaultWorkingDirectory: DEFAULT_DOWNLOADS_CWD,
     })),
     saveProfile: vi.fn(async (targetKey, draft, runtimeDraft) => {

@@ -14,6 +14,7 @@ import {
   shouldRecommendClaudeSingleModelCompatibility,
 } from "./profile/types.js";
 import { normalizeProfilePermissions, type ProfilePermissions } from "./profile/permissions.js";
+import type { SiteBalanceAuthKind } from "./balance/site-balance-sessions.js";
 
 export interface ProfileEditorDraft {
   name: string;
@@ -28,6 +29,9 @@ export interface ProfileEditorDraft {
   balanceSessionDraft: {
     label: string;
     access_token: string;
+    auth_kind?: SiteBalanceAuthKind;
+    browser_session_id?: string;
+    browser_origin?: string;
     refresh_token?: string;
     token_expires_at?: number;
     user_id: string;
@@ -49,6 +53,9 @@ export function buildSelectedProfileDraft(
   balanceSessionDraft?: {
     label?: string;
     access_token?: string;
+    auth_kind?: SiteBalanceAuthKind;
+    browser_session_id?: string;
+    browser_origin?: string;
     refresh_token?: string;
     token_expires_at?: number;
     user_id?: string;
@@ -70,6 +77,13 @@ export function buildSelectedProfileDraft(
     balanceSessionDraft: {
       label: balanceSessionDraft?.label ?? "",
       access_token: balanceSessionDraft?.access_token ?? "",
+      ...(balanceSessionDraft?.auth_kind ? { auth_kind: balanceSessionDraft.auth_kind } : {}),
+      ...(balanceSessionDraft?.browser_session_id
+        ? { browser_session_id: balanceSessionDraft.browser_session_id }
+        : {}),
+      ...(balanceSessionDraft?.browser_origin
+        ? { browser_origin: balanceSessionDraft.browser_origin }
+        : {}),
       ...(balanceSessionDraft?.refresh_token
         ? { refresh_token: balanceSessionDraft.refresh_token }
         : {}),
@@ -118,6 +132,7 @@ export function buildNewProfileDraft(provider: string, initial?: { url?: string;
     balanceSessionDraft: {
       label: "",
       access_token: "",
+      auth_kind: "browser_session",
       user_id: "",
     },
     cwd: runtime.cwd,
@@ -392,6 +407,9 @@ export function balanceSessionDraftsEqual(
 ): boolean {
   return (left.label ?? "") === (right.label ?? "")
     && (left.access_token ?? "") === (right.access_token ?? "")
+    && (left.auth_kind ?? "access_token") === (right.auth_kind ?? "access_token")
+    && (left.browser_session_id ?? "") === (right.browser_session_id ?? "")
+    && (left.browser_origin ?? "") === (right.browser_origin ?? "")
     && (left.refresh_token ?? "") === (right.refresh_token ?? "")
     && (left.token_expires_at ?? 0) === (right.token_expires_at ?? 0)
     && (left.user_id ?? "") === (right.user_id ?? "");

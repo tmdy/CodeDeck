@@ -54,19 +54,29 @@ import {
   type CheckinDiagnosticAttempt,
 } from "../src/shared/services/checkin-service.js";
 import { CheckinScheduler } from "../src/shared/services/checkin-scheduler.js";
+import type { ManagementRequestContext } from "../src/shared/services/management-auth.js";
 import {
   CheckinVerificationService,
   type CheckinVerificationDiagnosticEvent,
 } from "../src/shared/electron/checkin-verification-service.js";
 import {
+  BrowserAccountSessionManager,
+  BrowserLoginRequiredError,
+  type BrowserAccountStatusSnapshot,
+} from "../src/shared/electron/browser-account-session-manager.js";
+import { PendingBrowserAccountReferenceRegistry } from "../src/shared/electron/browser-account-pending-references.js";
+import {
+  allocateBrowserSlot,
   buildProfileBalanceCheckState,
   resolveBalanceAuth,
   resolveSharedBalanceProfileKeys,
   type SiteBalanceSessionDraft,
   type SiteBalanceSession,
   type SiteBalanceSessionsByBaseUrl,
+  type BrowserIdentitySlot,
   type EncryptedProfileConfig,
   normalizeEncryptedProfileConfig,
+  normalizeBrowserSlot,
 } from "../src/shared/balance/site-balance-sessions.js";
 import {
   buildCheckinAccountKey,
@@ -194,6 +204,10 @@ let balanceService: BalanceService | null = null;
 let checkinService: CheckinService | null = null;
 let checkinScheduler: CheckinScheduler | null = null;
 let checkinVerificationService: CheckinVerificationService | null = null;
+let browserAccountSessionManager: BrowserAccountSessionManager | null = null;
+let pendingBrowserAccountReferences: PendingBrowserAccountReferenceRegistry | null = null;
+let browserAccountRuntimeShutdownPromise: Promise<void> | null = null;
+let browserAccountRuntimeCleanupCompletedForQuit = false;
 let modelMappingsStateCache: ModelMappingsState | null = null;
 let encryptedStore: EncryptedConfigStore | null = null;
 let autoUnlockKeyStore: AutoUnlockKeyStore | null = null;
@@ -914,6 +928,81 @@ function getCheckinVerificationService(): CheckinVerificationService {
   return checkinVerificationService;
 }
 
+function getBrowserAccountSessionManager(): BrowserAccountSessionManager {
+  if (!browserAccountSessionManager) {
+    browserAccountSessionManager = new BrowserAccountSessionManager({
+      createSession: (partition) => electronSession.fromPartition(partition, { cache: false }),
+      createWindow: (options) => new BrowserWindow(options),
+      getParentWindow: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+      windowIcon: resolveWindowIconPath(),
+      onStatusChange: emitBrowserAccountStatus,
+    });
+  }
+  return browserAccountSessionManager;
+}
+
+function getPendingBrowserAccountReferences(): PendingBrowserAccountReferenceRegistry {
+  if (!pendingBrowserAccountReferences) {
+    const manager = getBrowserAccountSessionManager();
+    pendingBrowserAccountReferences = new PendingBrowserAccountReferenceRegistry({
+      createReference: (baseUrl) => manager.createReference(baseUrl),
+      createSessionId: () => `session-${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+      buildAccountKey: buildCheckinAccountKey,
+      discardReference: (accountKey, browserSessionId) => (
+        manager.discardReference(accountKey, browserSessionId)
+      ),
+      onDiscardError: (error) => {
+        appLogger.error(
+          "browser-auth",
+          "pending_reference_cleanup_failed",
+          "Pending browser account partition cleanup failed",
+          { error },
+        );
+      },
+    });
+  }
+  return pendingBrowserAccountReferences;
+}
+
+function shutdownBrowserAccountRuntime(): Promise<void> {
+  if (browserAccountRuntimeShutdownPromise) {
+    return browserAccountRuntimeShutdownPromise;
+  }
+  const operation = (async () => {
+    try {
+      await browserAccountSessionManager?.shutdown();
+    } catch (error) {
+      appLogger.error(
+        "browser-auth",
+        "runtime_shutdown_failed",
+        "Browser account runtime shutdown failed",
+        { error },
+      );
+    }
+    await pendingBrowserAccountReferences?.shutdown();
+  })();
+  browserAccountRuntimeShutdownPromise = operation;
+  operation.then(
+    () => {
+      if (browserAccountRuntimeShutdownPromise === operation) {
+        browserAccountRuntimeShutdownPromise = null;
+      }
+    },
+    () => {
+      if (browserAccountRuntimeShutdownPromise === operation) {
+        browserAccountRuntimeShutdownPromise = null;
+      }
+    },
+  );
+  return operation;
+}
+
+function emitBrowserAccountStatus(snapshot: BrowserAccountStatusSnapshot): void {
+  for (const win of getCodeDeckWindows()) {
+    win.webContents.send("browser-auth:status", snapshot);
+  }
+}
+
 function logCheckinVerificationDiagnostic(event: CheckinVerificationDiagnosticEvent): void {
   const { duration_ms: durationMs, ...context } = event;
   appLogger.info("checkin_verification", event.event, "Check-in verification state changed", {
@@ -1391,7 +1480,16 @@ async function activateProfileServices(
     stateAccessor,
     syncStore,
     config.site_balance_sessions_by_base_url,
+    config.browser_identity_slots ?? [],
   );
+  for (const account of Object.values(config.site_balance_sessions_by_base_url).flat()) {
+    if (account.auth_kind === "browser_session") {
+      getBrowserAccountSessionManager().registerAccount(buildCheckinAccountKey(
+        normalizeBalanceBaseUrl(account.base_url),
+        account.id,
+      ));
+    }
+  }
   launchService = new LaunchService(profileService, {
     getModelMappingsState: () => currentModelMappingsState(),
     codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
@@ -1423,6 +1521,7 @@ function buildProfileBootstrapPayload(): BootstrapResult {
       session_favorites: state.session_favorites,
     },
     siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
+    browserIdentitySlots: svc.getBrowserIdentitySlots(),
     defaultWorkingDirectory: getDefaultWorkingDirectory(),
   };
 }
@@ -1681,6 +1780,10 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
   const capabilityTargetKey = resolvedAuth.kind === "explicit_session"
     ? `session:${buildCheckinAccountKey(resolvedAuth.base_url, resolvedAuth.session.id)}`
     : `profile:${profileKey}`;
+  const browserAccountKey = resolvedAuth.kind === "explicit_session"
+    && resolvedAuth.session.auth_kind === "browser_session"
+    ? buildCheckinAccountKey(resolvedAuth.base_url, resolvedAuth.session.id)
+    : null;
   const credentialUpdatedAt = resolvedAuth.kind === "explicit_session"
     ? resolvedAuth.session.updated_at
     : "";
@@ -1733,7 +1836,30 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
         message: "所绑定的后台会话已被删除，请重新选择",
         endpoint: `${resolvedAuth.base_url}/api/user/self`,
       };
+    } else if (
+      resolvedAuth.kind === "explicit_session"
+      && resolvedAuth.session.auth_kind === "session_cookie"
+    ) {
+      delete getProfileStateAccessor().get().site_capability_cache
+        .balance_by_target[capabilityTargetKey];
+      finalState = {
+        ...defaultBalanceCheckState(),
+        provider: profile.provider,
+        profile_name: profile.name,
+        base_url: normalizeBalanceBaseUrl(profile.url),
+        supported: true,
+        success: false,
+        message: "该账号使用已停用的手工 Cookie，请通过浏览器重新登录",
+        endpoint: `${resolvedAuth.base_url}/api/user/self`,
+      };
     } else {
+      const managementRequestContext = browserAccountKey
+        && resolvedAuth.kind === "explicit_session"
+        ? await getBrowserAccountSessionManager().getRequestContext(
+            browserAccountKey,
+            resolvedAuth.session,
+          )
+        : undefined;
       finalState = await getBalanceService().query(
         profile,
         timeoutMs,
@@ -1742,6 +1868,7 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
           : null,
         {
           learnedPath: learnedBalancePath,
+          managementRequestContext,
           onPathLearned: (path: LearnedBalancePath) => {
             getProfileStateAccessor().get().site_capability_cache
               .balance_by_target[capabilityTargetKey] = path;
@@ -1764,6 +1891,12 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
             : undefined,
         },
       );
+      if (
+        browserAccountKey
+        && getBrowserAccountSessionManager().getStatus(browserAccountKey).status === "login_required"
+      ) {
+        throw new BrowserLoginRequiredError();
+      }
     }
     await saveAndEmitBalanceState(sharedProfileKeys, {
       ...finalState,
@@ -1785,6 +1918,18 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
       },
     });
   } catch (error) {
+    if (error instanceof BrowserLoginRequiredError) {
+      delete getProfileStateAccessor().get().site_capability_cache
+        .balance_by_target[capabilityTargetKey];
+      if (browserAccountKey) {
+        const current = getProfileService().getState().checkin_states_by_account[browserAccountKey];
+        await persistCheckinAccountState(browserAccountKey, {
+          ...current,
+          status: "login_required",
+          message: error.message,
+        });
+      }
+    }
     await saveAndEmitBalanceState(sharedProfileKeys, {
       ...defaultBalanceCheckState(),
       provider: profile.provider,
@@ -1824,6 +1969,179 @@ function findCheckinAccount(rawBaseUrl: string, sessionId: string): SiteBalanceS
     throw new Error("后台账号不存在");
   }
   return account;
+}
+
+function allocateBrowserAccountSessionId(): string {
+  return `session-${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+function referenceForBrowserSlot(
+  baseUrl: string,
+  slot: BrowserIdentitySlot,
+): { browserSessionId: string; browserOrigin: string } {
+  return {
+    browserSessionId: slot.browser_session_id,
+    browserOrigin: new URL(baseUrl).origin,
+  };
+}
+
+async function loginBrowserAccount(
+  rawBaseUrl: string,
+  existingSessionId?: string,
+  requestedBrowserSlot?: number,
+): Promise<SiteBalanceSession> {
+  const baseUrl = normalizeBalanceBaseUrl(rawBaseUrl);
+  if (!baseUrl) throw new Error("Base URL 不能为空");
+  const existing = existingSessionId
+    ? findCheckinAccount(baseUrl, existingSessionId)
+    : undefined;
+  if (!existing) {
+    const normalizedRequestedSlot = normalizeBrowserSlot(requestedBrowserSlot);
+    if (requestedBrowserSlot !== undefined && !normalizedRequestedSlot) {
+      throw new Error("浏览器账号槽位无效");
+    }
+    const identitySlots = getProfileService().getBrowserIdentitySlots();
+    const sharedSlot = normalizedRequestedSlot
+      ? identitySlots.find((slot) => slot.slot === normalizedRequestedSlot)
+      : undefined;
+    if (normalizedRequestedSlot && !sharedSlot) {
+      throw new Error(`浏览器账号${normalizedRequestedSlot}不存在`);
+    }
+    if (sharedSlot) {
+      const sessionId = allocateBrowserAccountSessionId();
+      return completeBrowserAccountLogin(
+        baseUrl,
+        sessionId,
+        buildCheckinAccountKey(baseUrl, sessionId),
+        referenceForBrowserSlot(baseUrl, sharedSlot),
+        sharedSlot.slot,
+      );
+    }
+    const browserSlot = allocateBrowserSlot(identitySlots);
+    return getPendingBrowserAccountReferences().run(baseUrl, async (pending) => (
+      completeBrowserAccountLogin(
+        baseUrl,
+        pending.sessionId,
+        pending.accountKey,
+        pending.reference,
+        browserSlot,
+      )
+    ));
+  }
+
+  const sessionId = existing.id;
+  const reusableReference = existing?.auth_kind === "browser_session"
+    && existing.browser_session_id
+    && existing.browser_origin
+    ? {
+        browserSessionId: existing.browser_session_id,
+        browserOrigin: existing.browser_origin,
+      }
+    : null;
+  const reference = reusableReference
+    ?? getBrowserAccountSessionManager().createReference(baseUrl);
+  const accountKey = buildCheckinAccountKey(baseUrl, sessionId);
+  const browserSlot = existing.browser_slot
+    ?? allocateBrowserSlot(getProfileService().getBrowserIdentitySlots());
+  return completeBrowserAccountLogin(
+    baseUrl,
+    sessionId,
+    accountKey,
+    reference,
+    browserSlot,
+    existing,
+    !reusableReference,
+  );
+}
+
+async function completeBrowserAccountLogin(
+  baseUrl: string,
+  sessionId: string,
+  accountKey: string,
+  reference: { browserSessionId: string; browserOrigin: string },
+  browserSlot: number,
+  existing?: SiteBalanceSession,
+  discardReferenceOnRejected: boolean = false,
+): Promise<SiteBalanceSession> {
+  const loginResult = await getBrowserAccountSessionManager().openLogin({
+    accountKey,
+    browserSessionId: reference.browserSessionId,
+    browserOrigin: reference.browserOrigin,
+    ...(existing?.user_id ? { expectedUserId: existing.user_id } : {}),
+  });
+  if (loginResult.status !== "ready" || !loginResult.userId) {
+    if (discardReferenceOnRejected) {
+      await getBrowserAccountSessionManager().discardReference(
+        accountKey,
+        reference.browserSessionId,
+      );
+    }
+    throw new Error(loginResult.message);
+  }
+  let saved: SiteBalanceSession;
+  try {
+    saved = await getProfileService().saveSiteBalanceSession(baseUrl, {
+      id: sessionId,
+      label: existing?.label ?? "",
+      access_token: "",
+      auth_kind: "browser_session",
+      browser_session_id: reference.browserSessionId,
+      browser_slot: browserSlot,
+      browser_origin: reference.browserOrigin,
+      user_id: loginResult.userId,
+    });
+  } catch (error) {
+    if (discardReferenceOnRejected) {
+      await getBrowserAccountSessionManager().discardReference(
+        accountKey,
+        reference.browserSessionId,
+      );
+    }
+    throw error;
+  }
+  getBrowserAccountSessionManager().registerAccount(accountKey);
+  const state = getProfileService().getState();
+  delete state.checkin_states_by_account[accountKey];
+  delete state.site_capability_cache.checkin_by_account[accountKey];
+  delete state.site_capability_cache.balance_by_target[`session:${accountKey}`];
+  await getProfileStateAccessor().save(state);
+  return saved;
+}
+
+function browserLoginRequiredResult(baseUrl: string): CheckinResult {
+  return {
+    status: "login_required",
+    success: false,
+    message: "浏览器登录已失效，请重新登录",
+    endpoint: `${baseUrl}/api/user/self`,
+    error_code: "auth_not_logged_in",
+  };
+}
+
+async function persistBrowserVerificationLoginRequired(
+  accountKey: string,
+  baseUrl: string,
+  current: CheckinAccountState | undefined,
+  runId: string,
+): Promise<CheckinVerificationResult> {
+  const result: CheckinVerificationResult = {
+    status: "failed",
+    success: false,
+    message: "浏览器登录已失效，请重新登录",
+    endpoint: `${baseUrl}/api/user/self`,
+    error_code: "auth_not_logged_in",
+  };
+  await persistCheckinAccountState(accountKey, {
+    ...current,
+    status: "login_required",
+    trigger: "manual",
+    message: result.message,
+    endpoint: result.endpoint,
+    error_code: result.error_code,
+    diagnostic_run_id: runId,
+    last_attempt_at: new Date().toISOString(),
+  });
+  return result;
 }
 
 function getCodeDeckWindows(): BrowserWindow[] {
@@ -1966,7 +2284,8 @@ function isAutomaticCheckinEligible(account: SiteBalanceSession, today: string):
     account.id,
   );
   const current = getProfileService().getState().checkin_states_by_account[accountKey];
-  return current?.last_auto_attempt_local_date !== today
+  return current?.status !== "login_required"
+    && current?.last_auto_attempt_local_date !== today
     && current?.satisfied_local_date !== today;
 }
 
@@ -2100,37 +2419,82 @@ async function executeCheckinAccountOnce(
     if (deferStateSave) deferredCheckinCapabilityPaths.set(accountKey, null);
   };
 
-  let result = await getCheckinService().checkin(
-    { ...account, base_url: baseUrl },
-    12_000,
-    {
-      runId,
-      trigger,
-      learnedPath,
-      onPathLearned: updateLearnedPath,
-      onPathInvalidated: invalidateLearnedPath,
-      onDiagnostic: (event) => {
-        const { duration_ms: durationMs, ...context } = event;
-        diagnosticAttempts.push({
-          stage: event.stage,
-          authorization_mode: event.authorization_mode,
-          cookie_mode: event.cookie_mode,
-          user_id_source: event.user_id_source,
-          method: event.method,
-          endpoint_path: event.endpoint_path,
-          http_status: event.http_status,
-          message_code: event.message_code,
-          ...(event.message_preview
-            ? { message_preview: event.message_preview }
-            : {}),
-        });
-        appLogger.debug("checkin_auth", "auth_attempt", "Check-in authentication attempt", {
-          durationMs,
-          context,
-        });
-      },
-    },
-  );
+  let managementRequestContext: ManagementRequestContext | undefined;
+  let preflightResult: CheckinResult | null = null;
+  if (account.auth_kind === "session_cookie") {
+    invalidateLearnedPath();
+    preflightResult = {
+      ...browserLoginRequiredResult(baseUrl),
+      message: "该账号使用已停用的手工 Cookie，请通过浏览器重新登录",
+    };
+  } else if (account.auth_kind === "browser_session") {
+    try {
+      managementRequestContext = await getBrowserAccountSessionManager().getRequestContext(
+        accountKey,
+        account,
+      );
+    } catch (error) {
+      if (error instanceof BrowserLoginRequiredError) {
+        invalidateLearnedPath();
+        preflightResult = browserLoginRequiredResult(baseUrl);
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  let result: CheckinResult;
+  if (preflightResult) {
+    result = preflightResult;
+  } else {
+    try {
+      result = await getCheckinService().checkin(
+        { ...account, base_url: baseUrl },
+        12_000,
+        {
+          runId,
+          trigger,
+          learnedPath,
+          onPathLearned: updateLearnedPath,
+          onPathInvalidated: invalidateLearnedPath,
+          managementRequestContext,
+          onDiagnostic: (event) => {
+            const { duration_ms: durationMs, ...context } = event;
+            diagnosticAttempts.push({
+              stage: event.stage,
+              authorization_mode: event.authorization_mode,
+              cookie_mode: event.cookie_mode,
+              user_id_source: event.user_id_source,
+              method: event.method,
+              endpoint_path: event.endpoint_path,
+              http_status: event.http_status,
+              message_code: event.message_code,
+              ...(event.message_preview
+                ? { message_preview: event.message_preview }
+                : {}),
+            });
+            appLogger.debug("checkin_auth", "auth_attempt", "Check-in authentication attempt", {
+              durationMs,
+              context,
+            });
+          },
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof BrowserLoginRequiredError) || account.auth_kind !== "browser_session") {
+        throw error;
+      }
+      invalidateLearnedPath();
+      result = browserLoginRequiredResult(baseUrl);
+    }
+    if (
+      account.auth_kind === "browser_session"
+      && getBrowserAccountSessionManager().getStatus(accountKey).status === "login_required"
+    ) {
+      invalidateLearnedPath();
+      result = browserLoginRequiredResult(baseUrl);
+    }
+  }
   if (result.status === "manual_required" && verificationPolicy === "open") {
     await persistCheckinAccountState(accountKey, {
       ...current,
@@ -2150,8 +2514,21 @@ async function executeCheckinAccountOnce(
       trigger,
       runId,
       preferredCookieMode: result.verification?.cookie_mode,
+      ...(account.auth_kind === "browser_session" && managementRequestContext
+        ? {
+            browserSessionPartition: getBrowserAccountSessionManager().getPartitionName(account),
+            managementRequestContext,
+          }
+        : {}),
     });
     result = mergeCheckinVerificationResult(result, verificationResult);
+  }
+  if (
+    account.auth_kind === "browser_session"
+    && getBrowserAccountSessionManager().getStatus(accountKey).status === "login_required"
+  ) {
+    invalidateLearnedPath();
+    result = browserLoginRequiredResult(baseUrl);
   }
   const now = new Date();
   const today = localDateKey(now);
@@ -2230,6 +2607,18 @@ async function reopenCheckinVerification(
   const runId = current?.diagnostic_run_id
     || randomUUID().replace(/-/g, "").slice(0, 12);
   const manualUrl = current?.manual_url || `${baseUrl}/console/personal`;
+  let managementRequestContext: ManagementRequestContext | undefined;
+  if (account.auth_kind === "browser_session") {
+    try {
+      managementRequestContext = await getBrowserAccountSessionManager().getRequestContext(
+        accountKey,
+        account,
+      );
+    } catch (error) {
+      if (!(error instanceof BrowserLoginRequiredError)) throw error;
+      return persistBrowserVerificationLoginRequired(accountKey, baseUrl, current, runId);
+    }
+  }
   await persistCheckinAccountState(accountKey, {
     ...current,
     status: "verifying",
@@ -2243,7 +2632,19 @@ async function reopenCheckinVerification(
     trigger: "manual",
     runId,
     preferredCookieMode: current?.verification?.cookie_mode,
+    ...(account.auth_kind === "browser_session" && managementRequestContext
+      ? {
+          browserSessionPartition: getBrowserAccountSessionManager().getPartitionName(account),
+          managementRequestContext,
+        }
+      : {}),
   });
+  if (
+    account.auth_kind === "browser_session"
+    && getBrowserAccountSessionManager().getStatus(accountKey).status === "login_required"
+  ) {
+    return persistBrowserVerificationLoginRequired(accountKey, baseUrl, current, runId);
+  }
   const mergedResult = mergeCheckinVerificationResult({
     status: "manual_required",
     success: false,
@@ -2327,6 +2728,7 @@ async function runCheckinBatch(
     success: 0,
     already_checked: 0,
     manual_required: 0,
+    login_required: 0,
     unsupported: 0,
     failed: 0,
   });
@@ -2682,6 +3084,7 @@ async function createMainWindow(): Promise<void> {
     if (mainWindow === browserWindow) {
       mainWindow = null;
       void checkinVerificationService?.cancelAll();
+      void shutdownBrowserAccountRuntime();
     }
   });
 
@@ -3115,6 +3518,7 @@ function registerAllIpcHandlers(): void {
       profiles: svc.getProfiles(),
       state: svc.getState(),
       siteBalanceSessionsByBaseUrl: svc.getSiteBalanceSessionsByBaseUrl(),
+      browserIdentitySlots: svc.getBrowserIdentitySlots(),
       defaultWorkingDirectory: getDefaultWorkingDirectory(),
     };
   }, { level: "debug" });
@@ -3220,12 +3624,73 @@ function registerAllIpcHandlers(): void {
     },
   );
   handleIpc(
+    "browser-auth:login",
+    async (_event, baseUrl: string, browserSlot?: number): Promise<SiteBalanceSession> => (
+      loginBrowserAccount(baseUrl, undefined, browserSlot)
+    ),
+  );
+  handleIpc(
+    "browser-auth:relogin",
+    async (_event, baseUrl: string, sessionId: string): Promise<SiteBalanceSession> => (
+      loginBrowserAccount(baseUrl, sessionId)
+    ),
+  );
+  handleIpc(
+    "browser-auth:logout",
+    async (_event, baseUrl: string, sessionId: string): Promise<void> => {
+      const account = findCheckinAccount(baseUrl, sessionId);
+      if (account.auth_kind !== "browser_session") {
+        throw new Error("账号不是浏览器登录类型");
+      }
+      const accountKey = buildCheckinAccountKey(normalizeBalanceBaseUrl(baseUrl), sessionId);
+      await checkinVerificationService?.cancelAccount(accountKey);
+      await getBrowserAccountSessionManager().logout(accountKey, account);
+      const state = getProfileStateAccessor().get();
+      delete state.site_capability_cache.checkin_by_account[accountKey];
+      delete state.site_capability_cache.balance_by_target[`session:${accountKey}`];
+      await persistCheckinAccountState(accountKey, {
+        status: "login_required",
+        message: "已退出浏览器登录，请重新登录",
+      });
+    },
+  );
+  handleIpc(
+    "browser-auth:get-status",
+    async (_event, baseUrl: string, sessionId: string): Promise<BrowserAccountStatusSnapshot> => {
+      const accountKey = buildCheckinAccountKey(normalizeBalanceBaseUrl(baseUrl), sessionId);
+      return getBrowserAccountSessionManager().getStatus(accountKey);
+    },
+  );
+  handleIpc(
     "profile:delete-site-balance-session",
     async (_event, baseUrl: string, sessionId: string) => {
-      await checkinVerificationService?.cancelAccount(buildCheckinAccountKey(
-        normalizeBalanceBaseUrl(baseUrl),
-        sessionId,
-      ));
+      const normalizedBaseUrl = normalizeBalanceBaseUrl(baseUrl);
+      const account = findCheckinAccount(baseUrl, sessionId);
+      const accountKey = buildCheckinAccountKey(normalizedBaseUrl, sessionId);
+      await checkinVerificationService?.cancelAccount(accountKey);
+      if (account.auth_kind === "browser_session") {
+        const remainingSlotReferences = listCheckinAccounts().filter((item) => (
+          buildCheckinAccountKey(normalizeBalanceBaseUrl(item.base_url), item.id) !== accountKey
+          && item.auth_kind === "browser_session"
+          && item.browser_session_id === account.browser_session_id
+        ));
+        const clearWholePartition = remainingSlotReferences.length === 0;
+        const identitySlot = clearWholePartition
+          ? getProfileService().getBrowserIdentitySlots().find(
+              (slot) => slot.browser_session_id === account.browser_session_id,
+            )
+          : undefined;
+        await getBrowserAccountSessionManager().deleteAccount(
+          accountKey,
+          account,
+          clearWholePartition,
+        );
+        await getProfileService().deleteSiteBalanceSession(baseUrl, sessionId);
+        if (identitySlot) {
+          await getProfileService().deleteBrowserIdentitySlot(identitySlot.slot);
+        }
+        return;
+      }
       await getProfileService().deleteSiteBalanceSession(baseUrl, sessionId);
     },
   );
@@ -3677,11 +4142,21 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   checkinScheduler?.stop();
   void checkinVerificationService?.cancelAll();
   void agentTaskManager?.shutdown();
   void agentBridgeServer?.stop();
+  if (
+    !browserAccountRuntimeCleanupCompletedForQuit
+    && (browserAccountSessionManager || pendingBrowserAccountReferences)
+  ) {
+    event.preventDefault();
+    void shutdownBrowserAccountRuntime().finally(() => {
+      browserAccountRuntimeCleanupCompletedForQuit = true;
+      app.quit();
+    });
+  }
 });
 
 app.on("window-all-closed", () => {

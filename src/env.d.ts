@@ -32,6 +32,7 @@ import type {
 import type { TerminalSessionSnapshot } from "./shared/electron/terminal-session-manager.js";
 import type { TerminalAutoContinueConfigPatch } from "./shared/electron/terminal-auto-continue.js";
 import type {
+  BrowserIdentitySlot,
   SiteBalanceSession,
   SiteBalanceSessionDraft,
   SiteBalanceSessionsByBaseUrl,
@@ -45,6 +46,7 @@ import type {
 } from "./shared/checkin/types.js";
 import type { AppReactivationEvent } from "./shared/app-reactivation.js";
 import type { ProfileOrganization } from "./shared/profile/organization.js";
+import type { BrowserAccountStatusSnapshot } from "./shared/electron/browser-account-session-manager.js";
 
 declare global {
   interface CodeDeckStartupTheme {
@@ -112,6 +114,7 @@ declare global {
         profiles: Profile[];
         state: LocalState;
         siteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl;
+        browserIdentitySlots: BrowserIdentitySlot[];
         defaultWorkingDirectory: string;
       }>;
       saveProfile: (targetKey: ProfileKey, draft: Profile, runtime: RuntimeSettings) => Promise<Profile>;
@@ -135,6 +138,13 @@ declare global {
       ) => Promise<RuntimeSettings>;
       updateWorkingDirectoryFavorites?: (favorites: string[]) => Promise<string[]>;
       saveSiteBalanceSession: (baseUrl: string, draft: SiteBalanceSessionDraft) => Promise<SiteBalanceSession>;
+      loginBrowserAccount?: (baseUrl: string, browserSlot?: number) => Promise<SiteBalanceSession>;
+      reloginBrowserAccount?: (baseUrl: string, sessionId: string) => Promise<SiteBalanceSession>;
+      logoutBrowserAccount?: (baseUrl: string, sessionId: string) => Promise<void>;
+      getBrowserAccountStatus?: (
+        baseUrl: string,
+        sessionId: string,
+      ) => Promise<BrowserAccountStatusSnapshot>;
       deleteSiteBalanceSession: (baseUrl: string, sessionId: string) => Promise<void>;
       updateSiteBalanceSessionAutoCheckin?: (
         baseUrl: string,
@@ -204,6 +214,9 @@ declare global {
         callback: (accountKey: string, state: CheckinAccountState) => void,
       ) => () => void;
       onCheckinScheduleChanged?: (callback: (nextScheduledAt: string) => void) => () => void;
+      onBrowserAccountStatus?: (
+        callback: (snapshot: BrowserAccountStatusSnapshot) => void,
+      ) => () => void;
       onUnlockError: (callback: (message: string) => void) => () => void;
       logRendererEvent?: (event: string, message: string, context?: unknown) => void;
     };

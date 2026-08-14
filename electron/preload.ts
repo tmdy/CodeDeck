@@ -149,6 +149,14 @@ const profileApi = {
     ipcRenderer.invoke("profile:update-working-directory-favorites", favorites),
   saveSiteBalanceSession: (baseUrl: string, draft: unknown): Promise<unknown> =>
     ipcRenderer.invoke("profile:save-site-balance-session", baseUrl, draft),
+  loginBrowserAccount: (baseUrl: string, browserSlot?: number): Promise<unknown> =>
+    ipcRenderer.invoke("browser-auth:login", baseUrl, browserSlot),
+  reloginBrowserAccount: (baseUrl: string, sessionId: string): Promise<unknown> =>
+    ipcRenderer.invoke("browser-auth:relogin", baseUrl, sessionId),
+  logoutBrowserAccount: (baseUrl: string, sessionId: string): Promise<void> =>
+    ipcRenderer.invoke("browser-auth:logout", baseUrl, sessionId),
+  getBrowserAccountStatus: (baseUrl: string, sessionId: string): Promise<unknown> =>
+    ipcRenderer.invoke("browser-auth:get-status", baseUrl, sessionId),
   deleteSiteBalanceSession: (baseUrl: string, sessionId: string): Promise<void> =>
     ipcRenderer.invoke("profile:delete-site-balance-session", baseUrl, sessionId),
   updateSiteBalanceSessionAutoCheckin: (
@@ -277,6 +285,11 @@ const profileApi = {
     return () => {
       ipcRenderer.removeListener("checkin:schedule-changed", handler);
     };
+  },
+  onBrowserAccountStatus: (callback: (snapshot: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, snapshot: unknown) => callback(snapshot);
+    ipcRenderer.on("browser-auth:status", handler);
+    return () => ipcRenderer.removeListener("browser-auth:status", handler);
   },
   onUnlockError: (callback: (message: string) => void): (() => void) => {
     const handler = (_event: unknown, message: string) => callback(message);

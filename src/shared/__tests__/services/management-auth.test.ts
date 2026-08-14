@@ -2,9 +2,32 @@ import { describe, expect, it } from "vitest";
 import {
   buildManagementAuthorizationCandidates,
   buildManagementCookieCandidates,
+  resolveManagementAuth,
 } from "../../services/management-auth.js";
 
 describe("management auth candidates", () => {
+  it("resolves explicit access-token auth to one AllApiHub-compatible Bearer transport", () => {
+    expect(resolveManagementAuth("Bearer access-token", "access_token")).toEqual({
+      kind: "access_token",
+      headers: {
+        Authorization: "Bearer access-token",
+        "All-API-Hub": "true",
+        "All-API-Hub-Cookie-Auth": "token",
+      },
+      authorizationMode: "bearer",
+      cookieMode: "none",
+    });
+  });
+
+  it("resolves explicit session auth without an Authorization header", () => {
+    expect(resolveManagementAuth("cookie-value", "session_cookie")).toEqual({
+      kind: "session_cookie",
+      headers: { Cookie: "session=cookie-value" },
+      authorizationMode: "none",
+      cookieMode: "session_wrapped",
+    });
+  });
+
   it("builds raw and Bearer authorization variants", () => {
     expect(buildManagementAuthorizationCandidates("access-token")).toEqual([
       { mode: "raw", headerValue: "access-token" },

@@ -46,6 +46,41 @@ function statusPayload(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe("CheckinService", () => {
+  it("never falls back to Cookie for an explicit access-token account", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      success: false,
+      message: "access token invalid",
+    }, 401));
+
+    await new CheckinService(fetchMock as unknown as typeof fetch).checkin(
+      makeSession({ auth_kind: "access_token" }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const headers = requestHeaders(fetchMock.mock.calls[0][1]);
+    expect(headers.Authorization).toBe("Bearer access-token-a");
+    expect(headers.Cookie).toBeUndefined();
+    expect(headers["All-API-Hub"]).toBe("true");
+  });
+
+  it("never sends Authorization for an explicit session-cookie account", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+      success: false,
+      message: "not logged in",
+    }, 401));
+
+    await new CheckinService(fetchMock as unknown as typeof fetch).checkin(
+      makeSession({ auth_kind: "session_cookie", access_token: "cookie-value" }),
+    );
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    for (const call of fetchMock.mock.calls) {
+      const headers = requestHeaders(call[1]);
+      expect(headers.Authorization).toBeUndefined();
+      expect(headers.Cookie).toBe("session=cookie-value");
+    }
+  });
+
   it("uses a learned bearer path without retrying raw authorization", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
       isStatusRequest(input, init)
@@ -141,6 +176,21 @@ describe("CheckinService", () => {
       }));
     }
     expect(result).toMatchObject({ status: "success", success: true, reward: "12" });
+  });
+
+  it("returns the AllApiHub check-in nonce in the action body", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+      isStatusRequest(input, init)
+        ? jsonResponse(statusPayload({ checkin_nonce: "nonce-123" }))
+        : jsonResponse({ success: true, message: "签到成功" })
+    ));
+
+    const result = await new CheckinService(fetchMock as unknown as typeof fetch).checkin(
+      makeSession({ auth_kind: "access_token" }),
+    );
+
+    expect(result.status).toBe("success");
+    expect(fetchMock.mock.calls[1][1]?.body).toBe(JSON.stringify({ checkin_nonce: "nonce-123" }));
   });
 
   it("falls back from raw authorization to Bearer before performing the action", async () => {
