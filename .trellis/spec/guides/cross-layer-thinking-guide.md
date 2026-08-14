@@ -120,6 +120,9 @@ After implementation:
       casting payload fields locally
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
+- [ ] When multiple layers report the same state, ranked signals by authority
+      (source lifecycle > derived UI heuristic), documented the fallback boundary,
+      and tested conflicting signals in their real arrival order
 
 ---
 
@@ -296,6 +299,31 @@ Create detailed flow docs when:
 - Multiple teams are involved
 - Data format is complex
 - Feature has caused bugs before
+
+---
+
+## Filesystem Paths Used As Identity Keys
+
+When a filesystem path becomes a configuration key, cache key, or policy key,
+parser acceptance is not enough. The serialized path must match the canonical
+representation used by the runtime lookup.
+
+### Checklist
+
+- [ ] Identify whether the lookup uses native separators, resolved paths, case
+      folding, or trailing-separator removal.
+- [ ] Normalize at the boundary that owns serialization; do not change the
+      saved/displayed path merely to satisfy one consumer.
+- [ ] Test alternate input representations such as Windows forward slashes and
+      native backslashes.
+- [ ] Add a lifecycle or integration probe that proves the key is actually
+      selected. A parser-only command proves syntax, not semantic identity.
+
+**Real example**: Codex 0.147.0 accepted
+`projects.D:/CodeDeck.trust_level=trusted`, but its Windows trust lookup used
+`D:\CodeDeck`; the TUI still asked for directory trust. The command builder now
+emits a native Windows path, and packaged Agent Bridge verification is the
+acceptance gate.
 
 ---
 
