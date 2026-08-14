@@ -365,6 +365,7 @@ export class LaunchService {
       sessionId,
       baseUrl: "",
       modelOverride: runOverrides?.model,
+      trustedProjectPath: runtime.cwd,
     };
     return {
       commandExecutable: commandBase,
@@ -493,22 +494,17 @@ export class LaunchService {
     const commandBase = normalizeCommandExecutable(runtime.command_base, DEFAULT_CODEX_COMMAND);
     const codexSettings = this.getParameterSettings().cli_settings.codex;
     const wireApi = codexSettings.wire_api.trim() || "responses";
-    const commandArgs = buildCodexArgs({
-      commandBase: runtime.command_base,
-      launchMode: runtime.launch_mode,
-      extraArgs,
-      sessionId,
-      baseUrl: profile.url,
-      wireApi,
-    });
-    const command = buildCodexCommand({
+    const commandOptions = {
       commandBase,
       launchMode: runtime.launch_mode,
       extraArgs,
       sessionId,
       baseUrl: profile.url,
       wireApi,
-    });
+      trustedProjectPath: runtime.cwd,
+    };
+    const commandArgs = buildCodexArgs(commandOptions);
+    const command = buildCodexCommand(commandOptions);
 
     return {
       commandExecutable: commandBase,

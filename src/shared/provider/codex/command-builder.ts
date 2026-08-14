@@ -12,6 +12,13 @@ export interface CodexCommandOptions {
   model?: string;
   modelOverride?: string;
   wireApi?: string;
+  trustedProjectPath?: string;
+}
+
+function buildTrustedProjectOverride(projectPath: string): string {
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(projectPath) || /^[\\/]{2}/.test(projectPath);
+  const trustedProjectPath = isWindowsPath ? projectPath.replace(/\//g, "\\") : projectPath;
+  return `projects.${trustedProjectPath}.trust_level=trusted`;
 }
 
 export function buildCodexArgs(options: CodexCommandOptions): string[] {
@@ -46,6 +53,10 @@ export function buildCodexArgs(options: CodexCommandOptions): string[] {
   }
 
   parts.push(...parseCliArgs(options.extraArgs));
+  if (options.trustedProjectPath) {
+    parts.push("-c", buildTrustedProjectOverride(options.trustedProjectPath));
+  }
+  parts.push("--disable", "hooks");
 
   return parts;
 }

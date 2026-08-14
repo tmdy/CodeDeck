@@ -1,7 +1,7 @@
 // Codex 命令构建器测试 — 翻译自 Go internal/provider/codex/command_builder_test.go
 
 import { describe, it, expect } from "vitest";
-import { buildCodexCommand } from "../../../provider/codex/command-builder.js";
+import { buildCodexArgs, buildCodexCommand } from "../../../provider/codex/command-builder.js";
 
 describe("buildCodexCommand", () => {
   it("should build a continue_last command without changing the resume subcommand structure", () => {
@@ -13,7 +13,7 @@ describe("buildCodexCommand", () => {
       model: "gpt-5.4",
     });
 
-    expect(cmd).toBe("codex resume --last --search");
+    expect(cmd).toBe("codex resume --last --search --disable hooks");
   });
 
   it("should omit the model flag because config.toml carries the selected model", () => {
@@ -25,7 +25,7 @@ describe("buildCodexCommand", () => {
       model: "gpt-5.4",
     });
 
-    expect(cmd).toBe("codex");
+    expect(cmd).toBe("codex --disable hooks");
   });
 
   it("should include an explicit one-run model override", () => {
@@ -37,7 +37,7 @@ describe("buildCodexCommand", () => {
       modelOverride: "gpt-5.4",
     });
 
-    expect(cmd).toBe("codex --model gpt-5.4");
+    expect(cmd).toBe("codex --model gpt-5.4 --disable hooks");
   });
 
   it("should handle new launch mode", () => {
@@ -48,8 +48,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com",
     });
 
-    expect(cmd).not.toContain("resume");
-    expect(cmd).not.toContain("--continue");
+    expect(cmd).toBe("codex --disable hooks");
   });
 
   it("should handle resume_picker mode", () => {
@@ -60,7 +59,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com/v1",
     });
 
-    expect(cmd).toBe("codex resume");
+    expect(cmd).toBe("codex resume --disable hooks");
   });
 
   it("should handle resume_picker_all mode", () => {
@@ -71,7 +70,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com/v1",
     });
 
-    expect(cmd).toBe("codex resume --all");
+    expect(cmd).toBe("codex resume --all --disable hooks");
   });
 
   it("should handle resume_selected mode with a quoted session id", () => {
@@ -83,7 +82,83 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com/v1",
     });
 
-    expect(cmd).toBe('codex resume "session-456"');
+    expect(cmd).toBe('codex resume "session-456" --disable hooks');
+  });
+
+  it("should force hooks disabled after user feature arguments", () => {
+    const cmd = buildCodexCommand({
+      commandBase: "codex",
+      launchMode: "new",
+      extraArgs: "--enable hooks --search",
+      baseUrl: "https://example.com/v1",
+    });
+
+    expect(cmd).toBe("codex --enable hooks --search --disable hooks");
+  });
+
+  it.each([
+    ["new", []],
+    ["continue_last", ["resume", "--last"]],
+    ["resume_picker", ["resume"]],
+    ["resume_picker_all", ["resume", "--all"]],
+    ["resume_selected", ["resume", "session-456"]],
+  ])("should add the trusted project override for %s mode", (launchMode, resumeArgs) => {
+    const trustedProjectPath = "D:\\项目\\My Project";
+    const trustedProjectOverride = "projects.D:\\项目\\My Project.trust_level=trusted";
+    const args = buildCodexArgs({
+      commandBase: "codex",
+      launchMode,
+      extraArgs: "-c projects.other.trust_level=untrusted --enable hooks",
+      sessionId: "session-456",
+      baseUrl: "https://example.com/v1",
+      trustedProjectPath,
+    });
+
+    expect(args).toEqual([
+      ...resumeArgs,
+      "-c",
+      "projects.other.trust_level=untrusted",
+      "--enable",
+      "hooks",
+      "-c",
+      trustedProjectOverride,
+      "--disable",
+      "hooks",
+    ]);
+    expect(args.at(-4)).toBe("-c");
+    expect(args.at(-3)).toBe(trustedProjectOverride);
+    expect(args.at(-3)).not.toContain('"');
+  });
+
+  it("should render the same trusted Windows path in the command preview", () => {
+    const trustedProjectOverride = "projects.D:\\项目\\My Project.trust_level=trusted";
+    const command = buildCodexCommand({
+      commandBase: "codex",
+      launchMode: "new",
+      extraArgs: "",
+      baseUrl: "https://example.com/v1",
+      trustedProjectPath: "D:\\项目\\My Project",
+    });
+
+    expect(command).toContain(trustedProjectOverride);
+    expect(command).toBe(`codex -c "${trustedProjectOverride}" --disable hooks`);
+  });
+
+  it("should use native separators for a Windows trusted project key", () => {
+    const args = buildCodexArgs({
+      commandBase: "codex",
+      launchMode: "new",
+      extraArgs: "",
+      baseUrl: "https://example.com/v1",
+      trustedProjectPath: "D:/CodeDeck",
+    });
+
+    expect(args).toEqual([
+      "-c",
+      "projects.D:\\CodeDeck.trust_level=trusted",
+      "--disable",
+      "hooks",
+    ]);
   });
 
   it("should default to codex when empty command base", () => {
@@ -94,7 +169,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com",
     });
 
-    expect(cmd.startsWith("codex")).toBe(true);
+    expect(cmd).toBe("codex --disable hooks");
   });
 
   it("should normalize base URL for command", () => {
