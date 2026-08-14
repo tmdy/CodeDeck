@@ -195,6 +195,7 @@ function createProfileSessionSwitchFixture(options: {
   delayAlphaAfterFirst?: boolean;
   delayBeta?: boolean;
   sameCwd?: boolean;
+  savedExtraArgs?: string[];
 } = {}) {
   let appReactivatedCallback: ((event: { reason: "second_instance"; reactivated_at: string }) => void) | null = null;
   let alphaProfile: Profile = {
@@ -242,6 +243,20 @@ function createProfileSessionSwitchFixture(options: {
     runtime_by_profile: {
       [alphaKey]: alphaRuntime,
       [betaKey]: betaRuntime,
+    },
+    parameter_settings: {
+      ...defaultLocalState().parameter_settings,
+      cli_settings: {
+        ...defaultLocalState().parameter_settings.cli_settings,
+        claude: {
+          ...defaultLocalState().parameter_settings.cli_settings.claude,
+          saved_extra_args: (options.savedExtraArgs ?? []).map((value, index) => ({
+            id: `saved-${index + 1}`,
+            value,
+            enabled: true,
+          })),
+        },
+      },
     },
   };
 
@@ -744,6 +759,93 @@ describe("App command preview", () => {
       root.unmount();
     });
     container.remove();
+  });
+
+  it("persists a saved argument toggle immediately without saving unrelated Profile fields", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ savedExtraArgs: ["--review fast"] });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+    expect(fixture.manager.getParameterSettings).toHaveBeenCalled();
+
+    const savedArgChip = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "--review fast",
+    );
+    expect(savedArgChip).toBeDefined();
+    await act(async () => {
+      savedArgChip?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.manager.updateProfileRuntimeSettings).toHaveBeenCalledWith(
+      fixture.alphaKey,
+      { extra_args: "--review fast" },
+    );
+    expect(fixture.manager.saveProfile).not.toHaveBeenCalled();
+    expect(savedArgChip?.classList.contains("active")).toBe(true);
+
+    const betaButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Beta"),
+    );
+    await act(async () => {
+      betaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+    const alphaButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.includes("Alpha"),
+    );
+    await act(async () => {
+      alphaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    const restoredChip = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "--review fast",
+    );
+    expect(restoredChip?.classList.contains("active")).toBe(true);
+
+    await act(async () => {
+      root.unmount();
+    });
+    vi.useRealTimers();
+  });
+
+  it("restores the handwritten argument draft when immediate saved-argument persistence fails", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ savedExtraArgs: ["--review fast"] });
+    fixture.manager.updateProfileRuntimeSettings = vi.fn(async () => {
+      throw new Error("simulated runtime save failure");
+    });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    const manualInput = container.querySelector<HTMLInputElement>(
+      'input[placeholder="其他 CLI 参数"]',
+    );
+    expect(manualInput).toBeInstanceOf(HTMLInputElement);
+    await setInputValue(manualInput!, '--manual "keep this"');
+    const savedArgChip = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "--review fast",
+    );
+    await act(async () => {
+      savedArgChip?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+
+    expect(fixture.manager.updateProfileRuntimeSettings).toHaveBeenCalledWith(
+      fixture.alphaKey,
+      { extra_args: '--manual "keep this" --review fast' },
+    );
+    expect(manualInput?.value).toBe('--manual "keep this"');
+    expect(container.textContent).toContain("simulated runtime save failure");
+
+    await act(async () => root.unmount());
+    container.remove();
+    vi.useRealTimers();
   });
 
   it("silently saves reasoning effort changes before switching profiles", async () => {

@@ -601,7 +601,7 @@ describe("App startup flow", () => {
     });
   });
 
-  it("defers parameter settings loading until the Settings tab is opened", async () => {
+  it("loads parameter settings for saved Profile arguments and reuses them in Settings", async () => {
     installWindowStubs();
     const fixture = createProfileManagerFixture({ hasEncryptedConfig: true });
     window.profileManager = fixture.manager;
@@ -617,7 +617,7 @@ describe("App startup flow", () => {
     });
     await flush();
 
-    expect(fixture.manager.getParameterSettings).not.toHaveBeenCalled();
+    expect(fixture.manager.getParameterSettings).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       getButtonByText(container, "设置").dispatchEvent(new MouseEvent("click", { bubbles: true }));

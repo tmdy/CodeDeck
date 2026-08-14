@@ -30,7 +30,7 @@ import {
   type CheckinResult,
   type CheckinVerificationResult,
 } from "./shared/checkin/types.js";
-import type { ParameterSettings } from "./shared/parameter/types.js";
+import type { ParameterSettings, SavedExtraArg } from "./shared/parameter/types.js";
 import type {
   ListSessionsRequest,
   SessionCatalogState,
@@ -82,6 +82,7 @@ import {
   type SiteBalanceSessionsByBaseUrl,
 } from "./shared/balance/site-balance-sessions.js";
 import { normalizeThemeMode, resolveEffectiveTheme } from "./shared/theme.js";
+import { toggleSavedArgText } from "./shared/provider/cli-args.js";
 
 type TabId = "skills" | "profiles" | "sessions" | "settings";
 type SessionsViewId = "claude" | "codex" | "favorites";
@@ -634,6 +635,7 @@ function App() {
   const reactivationCanonicalDataRef = useRef<HydratedProfilesResult | null>(null);
   const editorDraftRef = useRef<ProfileEditorDraft | null>(null);
   const editorBaselineRef = useRef<ProfileEditorDraft | null>(null);
+  const selectedProfileKeyRef = useRef<ProfileKey>("");
   const [reactivationBlockedMessage, setReactivationBlockedMessage] = useState<string | null>(null);
 
   // 设置
@@ -1235,6 +1237,7 @@ function App() {
 
   editorDraftRef.current = currentDraftSnapshot();
   editorBaselineRef.current = editorBaseline;
+  selectedProfileKeyRef.current = state?.selected_profile_key ?? "";
 
   function handleProfileStateChanged(newState: LocalState): void {
     const currentRequest = buildProfilesSessionsRequest(state, undefined, { preferDraftCwd: false });
@@ -3001,10 +3004,14 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (activeTab === "settings" && !hasHydratedParameterSettings && !isHydratingParameterSettings) {
+    if (
+      (activeTab === "profiles" || activeTab === "settings")
+      && !hasHydratedParameterSettings
+      && !isHydratingParameterSettings
+    ) {
       void hydrateParameterSettings();
     }
-  }, [activeTab, hasHydratedParameterSettings, isHydratingParameterSettings]);
+  }, [activeTab, hasHydratedParameterSettings, isHydratingParameterSettings, state]);
 
   async function hydrateParameterSettings() {
     if (!window.profileManager || !state || hasHydratedParameterSettings || isHydratingParameterSettings) {
@@ -3509,6 +3516,62 @@ function App() {
       case "startup_mode": setDraftStartupMode(val as RuntimeStartupMode); break;
     }
   }, []);
+  const savedExtraArgs = state?.parameter_settings?.cli_settings?.[selectedProvider]?.saved_extra_args ?? [];
+  const handleSavedExtraArgsChange = useCallback((items: SavedExtraArg[]) => {
+    if (!state) return;
+    const currentCli = state.parameter_settings.cli_settings[selectedProvider];
+    void handleParameterSettingsChange({
+      cli_settings: {
+        ...state.parameter_settings.cli_settings,
+        [selectedProvider]: {
+          ...currentCli,
+          saved_extra_args: items,
+        },
+      },
+    });
+  }, [selectedProvider, state]);
+  const handleSavedExtraArgToggle = useCallback(async (value: string) => {
+    if (!state?.selected_profile_key || !editingKey) return;
+    const profileKey = state.selected_profile_key;
+    const provider = state.selected_provider as "claude" | "codex";
+    const previousRuntime = state.runtime_by_profile[profileKey] ?? defaultRuntimeSettings(provider);
+    const previousDraftArgs = draftArgs;
+    const nextExtraArgs = toggleSavedArgText(previousDraftArgs, value);
+    setDraftArgs(nextExtraArgs);
+    setErrorMessage(null);
+    try {
+      const savedRuntime = await window.profileManager?.updateProfileRuntimeSettings?.(
+        profileKey,
+        { extra_args: nextExtraArgs },
+      );
+      if (!savedRuntime) throw new Error("当前环境不支持即时保存参数");
+      setState((current) => current ? {
+        ...current,
+        runtime_by_profile: {
+          ...current.runtime_by_profile,
+          [profileKey]: savedRuntime,
+        },
+      } : current);
+      if (selectedProfileKeyRef.current === profileKey) {
+        setEditorBaseline((current) => current ? {
+          ...current,
+          extra_args: savedRuntime.extra_args,
+        } : current);
+      }
+    } catch (err) {
+      if (selectedProfileKeyRef.current === profileKey) {
+        setDraftArgs((current) => current === nextExtraArgs ? previousDraftArgs : current);
+      }
+      setState((current) => current ? {
+        ...current,
+        runtime_by_profile: {
+          ...current.runtime_by_profile,
+          [profileKey]: previousRuntime,
+        },
+      } : current);
+      setErrorMessage(err instanceof Error ? err.message : "保存额外参数失败");
+    }
+  }, [draftArgs, editingKey, state]);
 
   const resetEmptyNewBalanceSessionDraft = useCallback(() => {
     if (!isEmptyNewBalanceSessionDraft(draftBalanceSessionSelection, draftBalanceSession)) {
@@ -3876,6 +3939,7 @@ function App() {
               draft: profileDraft,
               globalPermissions,
               runtime: profileRuntime,
+              savedExtraArgs,
               provider: selectedProvider,
               modelOptions,
               modelFetchedAt,
@@ -3889,6 +3953,8 @@ function App() {
               onPermissionsChange: setDraftPermissions,
               onDraftCommit: stableDraftCommitAction,
               onRuntimeChange: handleProfileRuntimeChange,
+              onSavedExtraArgToggle: handleSavedExtraArgToggle,
+              onSavedExtraArgsChange: handleSavedExtraArgsChange,
               onRuntimeCommit: stableRuntimeCommitAction,
               onFetchModels: stableFetchModelsAction,
               onOpenBaseUrl: stableOpenBaseUrlAction,

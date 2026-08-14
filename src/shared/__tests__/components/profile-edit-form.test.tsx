@@ -30,6 +30,127 @@ describe("ProfileEditForm", () => {
     };
   }
 
+  it("routes saved-argument chips through the immediate persistence callback only", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onRuntimeChange = vi.fn();
+    const onSavedExtraArgToggle = vi.fn();
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "--manual keep",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          savedExtraArgs={[{ id: "saved-1", value: "--review fast", enabled: true }]}
+          provider="claude"
+          modelOptions={[]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={onRuntimeChange}
+          onSavedExtraArgToggle={onSavedExtraArgToggle}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const chip = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "--review fast",
+    );
+    await act(async () => chip?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onSavedExtraArgToggle).toHaveBeenCalledWith("--review fast");
+    expect(onRuntimeChange).not.toHaveBeenCalledWith("extra_args", expect.anything());
+
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="其他 CLI 参数"]');
+    expect(input).toBeInstanceOf(HTMLInputElement);
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      valueSetter?.call(input, "--typed-only");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(onRuntimeChange).toHaveBeenCalledWith("extra_args", "--typed-only");
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("edits and enables saved arguments through the provider-level settings callback", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onSavedExtraArgsChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{ name: "", url: "", key: "", selectedModelId: "", advancedModelMapping: makeAdvancedMapping() }}
+          runtime={{
+            cwd: "",
+            command_base: "claude",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          savedExtraArgs={[{ id: "saved-1", value: "--review fast", enabled: false }]}
+          provider="claude"
+          modelOptions={[]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={vi.fn()}
+          onRuntimeChange={vi.fn()}
+          onSavedExtraArgsChange={onSavedExtraArgsChange}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const chip = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "--review fast",
+    );
+    expect(chip?.disabled).toBe(true);
+    const enableCheckbox = container.querySelector<HTMLInputElement>(
+      'input[aria-label="启用已保存参数 --review fast"]',
+    );
+    await act(async () => enableCheckbox?.click());
+    expect(onSavedExtraArgsChange).toHaveBeenCalledWith([
+      { id: "saved-1", value: "--review fast", enabled: true },
+    ]);
+
+    const editButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "编辑",
+    );
+    await act(async () => editButton?.click());
+    const editor = container.querySelector<HTMLInputElement>(
+      'input[placeholder="输入要保存的 CLI 参数"]',
+    );
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      valueSetter?.call(editor, "--review thorough");
+      editor?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const updateButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "更新",
+    );
+    await act(async () => updateButton?.click());
+    expect(onSavedExtraArgsChange).toHaveBeenLastCalledWith([
+      { id: "saved-1", value: "--review thorough", enabled: false },
+    ]);
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
   it("renders channel management controls for the active credential", () => {
     const html = renderToStaticMarkup(
       <ProfileEditForm

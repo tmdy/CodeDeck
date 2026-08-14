@@ -7,9 +7,16 @@ export interface ProviderParameterDefaults {
   default_proxy: string;
 }
 
+export interface SavedExtraArg {
+  id: string;
+  value: string;
+  enabled: boolean;
+}
+
 export interface ClaudeCLISettings {
   setting_sources: string;
   max_turns?: number;
+  saved_extra_args: SavedExtraArg[];
 }
 
 export type CodexTerminalMode = "direct" | "monitored";
@@ -19,6 +26,7 @@ export interface CodexCLISettings {
   wire_api: string;
   sandbox_mode?: string;
   skip_git_repo_check: boolean;
+  saved_extra_args: SavedExtraArg[];
 }
 
 export interface TerminalSettings {
@@ -109,6 +117,19 @@ function stripWrappingSingleQuotes(value: string): string {
   return trimmed;
 }
 
+function normalizeSavedExtraArgs(value: unknown): SavedExtraArg[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const raw = item as Partial<SavedExtraArg>;
+    const value = typeof raw.value === "string" ? raw.value : "";
+    const id = typeof raw.id === "string" && raw.id.trim()
+      ? raw.id.trim()
+      : `saved-extra-arg-${index + 1}`;
+    return [{ id, value, enabled: raw.enabled !== false }];
+  });
+}
+
 export function normalizeParameterSettings(settings?: Partial<ParameterSettings> | null): ParameterSettings {
   const defaults = defaultParameterSettings();
   const rawClaude = settings?.cli_settings?.claude;
@@ -141,10 +162,12 @@ export function normalizeParameterSettings(settings?: Partial<ParameterSettings>
       claude: {
         setting_sources: rawClaude?.setting_sources ?? defaults.cli_settings.claude.setting_sources,
         ...(rawClaude?.max_turns !== undefined ? { max_turns: rawClaude.max_turns } : {}),
+        saved_extra_args: normalizeSavedExtraArgs(rawClaude?.saved_extra_args),
       },
       codex: {
         ...defaults.cli_settings.codex,
         ...(rawCodex ?? {}),
+        saved_extra_args: normalizeSavedExtraArgs(rawCodex?.saved_extra_args),
       },
     },
     agent_bridge: normalizeAgentBridgeSettings(settings?.agent_bridge, defaults.agent_bridge),
@@ -227,10 +250,12 @@ export function defaultParameterSettings(): ParameterSettings {
     cli_settings: {
       claude: {
         setting_sources: "project,local",
+        saved_extra_args: [],
       },
       codex: {
         wire_api: "responses",
         skip_git_repo_check: false,
+        saved_extra_args: [],
       },
     },
     agent_bridge: {

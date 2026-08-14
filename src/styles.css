@@ -1264,6 +1264,93 @@ button.profile-group-heading:hover:not(:disabled),
   font-size: 0.76rem;
 }
 
+.profile-saved-extra-args-section {
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.profile-runtime-env-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--app-text);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.profile-saved-extra-args-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.profile-saved-extra-arg-row {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  max-width: 100%;
+}
+
+.saved-extra-arg-editor {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.saved-extra-arg-editor input {
+  min-width: 0;
+  flex: 1;
+}
+
+.saved-extra-arg-chip {
+  min-width: 0;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: var(--app-surface);
+  color: var(--app-text-muted);
+  cursor: pointer;
+}
+
+.saved-extra-arg-chip.active {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+  color: var(--app-text);
+}
+
+.saved-extra-arg-delete {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+}
+
+.saved-extra-arg-delete:hover {
+  color: var(--app-danger-text);
+  border-color: var(--app-danger-text);
+}
+
+.profile-saved-extra-arg-row input[type="text"],
+.profile-saved-extra-arg-row input:not([type]) {
+  min-width: 0;
+}
+
+.muted-text {
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+}
+
 @media (max-width: 680px) {
   .profile-runtime-env-row {
     grid-template-columns: minmax(0, 1fr);
@@ -1271,6 +1358,29 @@ button.profile-group-heading:hover:not(:disabled),
 
   .profile-runtime-env-row button {
     justify-self: start;
+  }
+
+  .profile-runtime-env-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .profile-saved-extra-arg-row {
+    display: inline-flex;
+  }
+
+  .profile-saved-extra-arg-row button {
+    justify-self: start;
+  }
+
+  .profile-saved-extra-arg-row .saved-extra-arg-chip,
+  .profile-saved-extra-arg-row input:not([type="checkbox"]) {
+    min-width: 0;
+  }
+
+  .saved-extra-arg-editor {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

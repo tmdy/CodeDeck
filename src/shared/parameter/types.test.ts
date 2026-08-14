@@ -38,3 +38,26 @@ describe("normalizeParameterSettings auto-continue intervals", () => {
     });
   });
 });
+
+describe("saved extra arguments", () => {
+  it("defaults missing provider lists and normalizes malformed entries", () => {
+    const settings = normalizeParameterSettings({
+      cli_settings: {
+        claude: {
+          setting_sources: "project,local",
+          saved_extra_args: [
+            { id: " keep ", value: " --one ", enabled: false },
+            { value: "--two" },
+            null,
+          ] as never,
+        },
+      } as never,
+    });
+
+    expect(settings.cli_settings.claude.saved_extra_args).toEqual([
+      { id: "keep", value: " --one ", enabled: false },
+      { id: "saved-extra-arg-2", value: "--two", enabled: true },
+    ]);
+    expect(settings.cli_settings.codex.saved_extra_args).toEqual([]);
+  });
+});
