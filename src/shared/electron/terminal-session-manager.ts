@@ -37,6 +37,7 @@ export interface CreatePtyProcessOptions {
 }
 
 export interface CreateTerminalSessionOptions {
+  sessionId?: string;
   provider: string;
   cwd: string;
   commandExecutable: string;
@@ -143,7 +144,7 @@ export class TerminalSessionManager {
   constructor(private readonly dependencies: TerminalSessionManagerDependencies) {}
 
   async createSession(options: CreateTerminalSessionOptions): Promise<TerminalSessionSnapshot> {
-    const sessionId = randomUUID();
+    const sessionId = options.sessionId ?? randomUUID();
     const pty = this.dependencies.createPtyProcess({
       filePath: options.spawnFilePath ?? options.commandExecutable,
       args: options.spawnArgs ?? options.commandArgs,
@@ -359,6 +360,15 @@ export class TerminalSessionManager {
   ): void {
     const previousActivity = session.snapshot.activity;
     if (previousActivity === activity) {
+      if (reason === "process_exit" || reason === "session_closed") {
+        this.dependencies.onActivityChange?.({
+          sessionId: session.snapshot.sessionId,
+          provider: session.snapshot.provider,
+          previousActivity,
+          activity,
+          reason,
+        });
+      }
       return;
     }
     session.snapshot.activity = activity;

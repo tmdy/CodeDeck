@@ -279,6 +279,9 @@ export function ParameterSettingsPanel({
           />
           允许本机 AI 调用 Profile
         </label>
+        <small className="muted-text">
+          命令行可按任务覆盖模型与推理强度，并选择隐藏或显示受监控终端。父会话可异步启动子任务；子终端会独立存活，完成后按 once、continuous 或 manual 策略安全回传，父子双方还可用 ESC 中断对方当前轮次。
+        </small>
         <label>
           最大并发任务
           <input

@@ -1229,4 +1229,108 @@ describe("LaunchService", () => {
     expect(plan.codexConfig?.content).not.toContain("[profiles.");
     expect(plan.codexConfig?.targetModel).toBe("");
   });
+
+  it("applies Claude run overrides without mutating the stored Profile", () => {
+    const profile: Profile = {
+      provider: "claude",
+      name: "Override",
+      url: "https://api.anthropic.com",
+      key: "sk-ant",
+      selectedModelId: "claude-sonnet-original",
+      advancedModelMapping: { enabled: false, claude: { reasoningEffort: "low" } },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "claude",
+      runtime_settings: makeRuntime(),
+      model_override: "claude-opus-run-only",
+      reasoning_effort_override: "high",
+    });
+
+    expect(plan.commandArgs).toEqual(expect.arrayContaining([
+      "--model",
+      "claude-opus-run-only",
+      "--effort",
+      "high",
+    ]));
+    expect(service.getProfiles()[0]).toMatchObject({
+      selectedModelId: "claude-sonnet-original",
+      advancedModelMapping: { claude: { reasoningEffort: "low" } },
+    });
+  });
+
+  it("applies Codex run overrides to the cloned launch input", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "Override",
+      url: "https://api.openai.com/v1",
+      key: "sk-openai",
+      selectedModelId: "gpt-original",
+      advancedModelMapping: { enabled: false, codex: { reasoningEffort: "minimal" } },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "C:/tmp/codex-profiles",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex" }),
+      model_override: "gpt-run-only",
+      reasoning_effort_override: "ultra",
+    });
+
+    expect(plan.codexConfig?.targetModel).toBe("gpt-run-only");
+    expect(plan.command).toContain("model_reasoning_effort=ultra");
+    expect(service.getProfiles()[0]).toMatchObject({
+      selectedModelId: "gpt-original",
+      advancedModelMapping: { enabled: false, codex: { reasoningEffort: "minimal" } },
+    });
+  });
+
+  it("applies Codex run overrides in native startup mode", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "Native Override",
+      url: "",
+      key: "",
+      selectedModelId: "gpt-original",
+      advancedModelMapping: { enabled: false, codex: { reasoningEffort: "minimal" } },
+      channels: [],
+      activeChannelId: "",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: makeMappings,
+      codexProfilesRoot: "C:/profiles",
+      codexRuntimeHome: "C:/runtime/codex",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex", startup_mode: "native" }),
+      model_override: "gpt-run-only",
+      reasoning_effort_override: "ultra",
+    });
+
+    expect(plan.commandArgs).toEqual(expect.arrayContaining([
+      "--model",
+      "gpt-run-only",
+      "-c",
+      "model_reasoning_effort=ultra",
+    ]));
+    expect(service.getProfiles()[0]).toMatchObject({
+      selectedModelId: "gpt-original",
+      advancedModelMapping: { codex: { reasoningEffort: "minimal" } },
+    });
+  });
 });

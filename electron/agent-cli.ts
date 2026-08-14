@@ -2,7 +2,10 @@ import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { sendAgentBridgeRequest } from "../src/shared/agent-bridge/client.js";
+import {
+  sendAgentBridgeRequest,
+  sendAgentScopedRequest,
+} from "../src/shared/agent-bridge/client.js";
 import type { AgentBridgeRequest, AgentBridgeResponse } from "../src/shared/agent-bridge/types.js";
 
 interface ParsedArguments {
@@ -81,6 +84,22 @@ async function buildRequest(parsed: ParsedArguments): Promise<AgentBridgeRequest
       ...(typeof cwd === "string" && cwd.trim() ? { cwd: cwd.trim() } : {}),
       ...(requestedWaitMs !== undefined ? { wait_ms: requestedWaitMs } : {}),
       ...(parsed.options.get("show-terminal") === true ? { show_terminal: true } : {}),
+      ...(typeof parsed.options.get("model") === "string"
+        ? { model: String(parsed.options.get("model")).trim() }
+        : {}),
+      ...(typeof parsed.options.get("reasoning-effort") === "string"
+        ? { reasoning_effort: String(parsed.options.get("reasoning-effort")).trim() }
+        : {}),
+      ...(typeof parsed.options.get("return-policy") === "string"
+        ? { return_policy: requiredReturnPolicy(parsed.options) }
+        : {}),
+      ...(process.env.CODEDECK_TERMINAL_SESSION_ID?.trim()
+        && process.env.CODEDECK_TERMINAL_PARENT_TOKEN?.trim()
+        ? {
+            parent_session_id: process.env.CODEDECK_TERMINAL_SESSION_ID.trim(),
+            parent_token: process.env.CODEDECK_TERMINAL_PARENT_TOKEN.trim(),
+          }
+        : {}),
     };
   }
   if (parsed.command === "continue") {
@@ -91,6 +110,16 @@ async function buildRequest(parsed: ParsedArguments): Promise<AgentBridgeRequest
       session_id: requiredOption(parsed.options, "session"),
       prompt: await readPrompt(),
       ...(requestedWaitMs !== undefined ? { wait_ms: requestedWaitMs } : {}),
+      ...(typeof parsed.options.get("return-policy") === "string"
+        ? { return_policy: requiredReturnPolicy(parsed.options) }
+        : {}),
+      ...(process.env.CODEDECK_TERMINAL_SESSION_ID?.trim()
+        && process.env.CODEDECK_TERMINAL_PARENT_TOKEN?.trim()
+        ? {
+            parent_session_id: process.env.CODEDECK_TERMINAL_SESSION_ID.trim(),
+            parent_token: process.env.CODEDECK_TERMINAL_PARENT_TOKEN.trim(),
+          }
+        : {}),
     };
   }
   if (parsed.command === "status" || parsed.command === "cancel") {
@@ -109,10 +138,33 @@ async function buildRequest(parsed: ParsedArguments): Promise<AgentBridgeRequest
       ...(requestedWaitMs !== undefined ? { wait_ms: requestedWaitMs } : {}),
     };
   }
+  if (parsed.command === "interrupt") {
+    return {
+      command: "interrupt",
+      request_id,
+      session_id: requiredOption(parsed.options, "session"),
+      ...(process.env.CODEDECK_TERMINAL_SESSION_ID?.trim()
+        && process.env.CODEDECK_TERMINAL_PARENT_TOKEN?.trim()
+        ? {
+            parent_session_id: process.env.CODEDECK_TERMINAL_SESSION_ID.trim(),
+            parent_token: process.env.CODEDECK_TERMINAL_PARENT_TOKEN.trim(),
+          }
+        : {}),
+    };
+  }
   throw new Error(
-    "用法：codedeck-agent profiles | run --profile <key> [--cwd <path>] [--wait-ms <ms>] "
-    + "[--show-terminal] | continue/status/wait/cancel --session <id>",
+    "用法：codedeck-agent profiles | run --profile <key> [--cwd <path>] [--model <id>] "
+    + "[--reasoning-effort <level>] [--return-policy once|continuous|manual] [--wait-ms <ms>] "
+    + "[--show-terminal] | continue --session <id> [--return-policy ...] "
+    + "| status/wait/interrupt/cancel --session <id> | policy [--return-policy ...] "
+    + "| interrupt-parent（delegated child 作用域命令）。",
   );
+}
+
+function requiredReturnPolicy(options: Map<string, string | true>): "once" | "continuous" | "manual" {
+  const value = requiredOption(options, "return-policy");
+  if (value === "once" || value === "continuous" || value === "manual") return value;
+  throw new Error("--return-policy 必须是 once、continuous 或 manual。");
 }
 
 async function resolveConnectionFile(): Promise<string> {
@@ -149,6 +201,23 @@ function writeResponse(response: AgentBridgeResponse): void {
 async function main(): Promise<void> {
   try {
     if (process.env.CODEDECK_DELEGATED === "1") {
+      const scopedToken = process.env.CODEDECK_AGENT_SCOPED_TOKEN?.trim();
+      const scopedPipe = process.env.CODEDECK_AGENT_SCOPED_PIPE?.trim();
+      const parsed = parseArguments(process.argv.slice(2));
+      if (
+        scopedToken
+        && scopedPipe
+        && (parsed.command === "policy" || parsed.command === "interrupt-parent")
+      ) {
+        writeResponse(await sendAgentScopedRequest(scopedPipe, scopedToken, {
+          command: parsed.command === "policy" ? "policy" : "interrupt_parent",
+          request_id: randomUUID(),
+          ...(parsed.command === "policy" && parsed.options.has("return-policy")
+            ? { return_policy: requiredReturnPolicy(parsed.options) }
+            : {}),
+        }));
+        return;
+      }
       writeResponse({
         ok: false,
         error: {

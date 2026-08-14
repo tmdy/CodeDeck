@@ -3,9 +3,12 @@ import {
   MAX_AGENT_WAIT_MS,
   type AgentBridgeError,
   type AgentBridgeRequest,
+  type AgentReturnPolicy,
+  type AgentScopedRequest,
 } from "./types.js";
 
 const MAX_PROMPT_CHARS = 1_000_000;
+const MAX_MODEL_CHARS = 256;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -47,6 +50,28 @@ function optionalRequestId(record: Record<string, unknown>): string | undefined 
     : undefined;
 }
 
+function optionalBoundedString(
+  record: Record<string, unknown>,
+  key: string,
+  maxChars: number,
+): string | undefined {
+  if (record[key] === undefined) return undefined;
+  const value = requiredString(record, key);
+  if (value.length > maxChars) {
+    throw new AgentBridgeRequestError("invalid_request", `${key} 超过 ${maxChars} 字符限制。`);
+  }
+  return value;
+}
+
+function optionalReturnPolicy(value: unknown): AgentReturnPolicy | undefined {
+  if (value === undefined) return undefined;
+  if (value === "once" || value === "continuous" || value === "manual") return value;
+  throw new AgentBridgeRequestError(
+    "invalid_request",
+    "return_policy 必须是 once、continuous 或 manual。",
+  );
+}
+
 export function parseAgentBridgeRequest(value: unknown): AgentBridgeRequest {
   const record = asRecord(value);
   const command = requiredString(record, "command");
@@ -60,22 +85,38 @@ export function parseAgentBridgeRequest(value: unknown): AgentBridgeRequest {
     const cwd = typeof record.cwd === "string" && record.cwd.trim()
       ? record.cwd.trim()
       : undefined;
+    const model = optionalBoundedString(record, "model", MAX_MODEL_CHARS);
+    const reasoning_effort = optionalBoundedString(record, "reasoning_effort", 32);
+    const parent_session_id = optionalBoundedString(record, "parent_session_id", 128);
+    const parent_token = optionalBoundedString(record, "parent_token", 256);
+    const return_policy = optionalReturnPolicy(record.return_policy);
     return {
       command,
       profile_key: requiredString(record, "profile_key"),
       prompt: promptString(record),
       ...(cwd ? { cwd } : {}),
       ...(record.show_terminal === true ? { show_terminal: true } : {}),
+      ...(model ? { model } : {}),
+      ...(reasoning_effort ? { reasoning_effort } : {}),
+      ...(parent_session_id ? { parent_session_id } : {}),
+      ...(parent_token ? { parent_token } : {}),
+      ...(return_policy ? { return_policy } : {}),
       ...(wait_ms !== undefined ? { wait_ms } : {}),
       ...(request_id ? { request_id } : {}),
     };
   }
   if (command === "continue") {
+    const return_policy = optionalReturnPolicy(record.return_policy);
+    const parent_session_id = optionalBoundedString(record, "parent_session_id", 128);
+    const parent_token = optionalBoundedString(record, "parent_token", 256);
     return {
       command,
       session_id: requiredString(record, "session_id"),
       prompt: promptString(record),
       ...(wait_ms !== undefined ? { wait_ms } : {}),
+      ...(return_policy ? { return_policy } : {}),
+      ...(parent_session_id ? { parent_session_id } : {}),
+      ...(parent_token ? { parent_token } : {}),
       ...(request_id ? { request_id } : {}),
     };
   }
@@ -94,7 +135,39 @@ export function parseAgentBridgeRequest(value: unknown): AgentBridgeRequest {
       ...(request_id ? { request_id } : {}),
     };
   }
+  if (command === "interrupt") {
+    const parent_session_id = optionalBoundedString(record, "parent_session_id", 128);
+    const parent_token = optionalBoundedString(record, "parent_token", 256);
+    return {
+      command,
+      session_id: requiredString(record, "session_id"),
+      ...(parent_session_id ? { parent_session_id } : {}),
+      ...(parent_token ? { parent_token } : {}),
+      ...(request_id ? { request_id } : {}),
+    };
+  }
   throw new AgentBridgeRequestError("invalid_request", "不支持的 command：" + command + "。");
+}
+
+export function parseAgentScopedRequest(value: unknown): AgentScopedRequest {
+  const record = asRecord(value);
+  const command = requiredString(record, "command");
+  const request_id = optionalRequestId(record);
+  if (command === "interrupt_parent") {
+    return { command, ...(request_id ? { request_id } : {}) };
+  }
+  if (command !== "policy") {
+    throw new AgentBridgeRequestError(
+      "unauthorized",
+      "作用域凭据仅允许管理当前回传策略或中断绑定父会话。",
+    );
+  }
+  const return_policy = optionalReturnPolicy(record.return_policy);
+  return {
+    command,
+    ...(return_policy ? { return_policy } : {}),
+    ...(request_id ? { request_id } : {}),
+  };
 }
 
 export function toAgentBridgeError(error: unknown): AgentBridgeError {

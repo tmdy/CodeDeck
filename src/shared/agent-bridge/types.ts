@@ -11,6 +11,9 @@ export type AgentTaskStatus =
   | "failed"
   | "cancelled";
 
+export type AgentReturnPolicy = "once" | "continuous" | "manual";
+export type AgentDeliveryStatus = "not_requested" | "pending" | "delivered" | "failed";
+
 export interface AgentProfileSummary {
   profile_key: string;
   provider: "claude" | "codex";
@@ -29,6 +32,11 @@ export type AgentBridgeRequest =
       cwd?: string;
       wait_ms?: number;
       show_terminal?: boolean;
+      model?: string;
+      reasoning_effort?: string;
+      parent_session_id?: string;
+      parent_token?: string;
+      return_policy?: AgentReturnPolicy;
     }
   | {
       request_id?: string;
@@ -36,9 +44,19 @@ export type AgentBridgeRequest =
       session_id: string;
       prompt: string;
       wait_ms?: number;
+      return_policy?: AgentReturnPolicy;
+      parent_session_id?: string;
+      parent_token?: string;
     }
   | { request_id?: string; command: "status"; session_id: string }
   | { request_id?: string; command: "wait"; session_id: string; wait_ms?: number }
+  | {
+      request_id?: string;
+      command: "interrupt";
+      session_id: string;
+      parent_session_id?: string;
+      parent_token?: string;
+    }
   | { request_id?: string; command: "cancel"; session_id: string };
 
 export interface AgentBridgeError {
@@ -57,7 +75,19 @@ export interface AgentTaskResponse {
   question: string | null;
   terminal_tail: string;
   error: AgentBridgeError | null;
+  parent_session_id: string | null;
+  return_policy: AgentReturnPolicy;
+  delivery_status: AgentDeliveryStatus;
+  delivery_error: string | null;
 }
+
+export type AgentScopedRequest =
+  | {
+      request_id?: string;
+      command: "policy";
+      return_policy?: AgentReturnPolicy;
+    }
+  | { request_id?: string; command: "interrupt_parent" };
 
 export type AgentBridgeResponse =
   | {

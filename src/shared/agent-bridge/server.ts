@@ -7,12 +7,22 @@ import {
   type AgentBridgeConnectionRecord,
   type AgentBridgeRequest,
   type AgentBridgeResponse,
+  type AgentScopedRequest,
+  type AgentTaskResponse,
 } from "./types.js";
-import { parseAgentBridgeRequest, toAgentBridgeError } from "./protocol.js";
+import {
+  parseAgentBridgeRequest,
+  parseAgentScopedRequest,
+  toAgentBridgeError,
+} from "./protocol.js";
 
 export interface AgentBridgeServerOptions {
   connectionFile: string;
   handleRequest: (request: AgentBridgeRequest) => Promise<AgentBridgeResponse>;
+  handleScopedRequest?: (
+    token: string,
+    request: AgentScopedRequest,
+  ) => Promise<AgentTaskResponse>;
   pipeName?: string;
   token?: string;
 }
@@ -42,6 +52,10 @@ export class AgentBridgeServer {
   private readonly sockets = new Set<Socket>();
 
   constructor(private readonly options: AgentBridgeServerOptions) {}
+
+  getConnection(): AgentBridgeConnectionRecord | null {
+    return this.connection ? { ...this.connection } : null;
+  }
 
   async start(): Promise<AgentBridgeConnectionRecord> {
     if (this.server && this.connection) {
@@ -129,10 +143,24 @@ export class AgentBridgeServer {
     let requestId: string | undefined;
     try {
       const envelope = requestEnvelope(JSON.parse(line));
-      if (envelope.token !== token) {
+      if (typeof envelope.token !== "string") {
         return {
           ok: false,
           error: { code: "unauthorized", message: "代理连接令牌无效。", retryable: false },
+        };
+      }
+      if (envelope.token !== token) {
+        if (!this.options.handleScopedRequest) {
+          return {
+            ok: false,
+            error: { code: "unauthorized", message: "代理连接令牌无效。", retryable: false },
+          };
+        }
+        const scopedRequest = parseAgentScopedRequest(envelope.request);
+        requestId = scopedRequest.request_id;
+        return {
+          ...await this.options.handleScopedRequest(envelope.token, scopedRequest),
+          ...(requestId ? { request_id: requestId } : {}),
         };
       }
       const request = parseAgentBridgeRequest(envelope.request);

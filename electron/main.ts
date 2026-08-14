@@ -14,7 +14,7 @@ import { existsSync, readFileSync, promises as fs } from "node:fs";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   CODEDECK_PROJECT_ROOT_CONFIG_FILE,
   findNearestWorkspaceRoot,
@@ -251,6 +251,7 @@ const terminalSessionManager = new TerminalSessionManager({
   onActivityChange: handleTerminalActivityChange,
 });
 const terminalAttachmentDisposers = new Map<string, () => void>();
+const managedTerminalParentTokens = new Map<string, string>();
 const terminalWindows = new Map<string, BrowserWindow>();
 const terminalFlashTimers = new Map<string, NodeJS.Timeout>();
 const terminalTitlePollTimers = new Map<string, NodeJS.Timeout>();
@@ -645,6 +646,9 @@ function applyTerminalTaskbarActivity(
 
 function handleTerminalActivityChange(event: TerminalSessionActivityEvent): void {
   agentTaskManager?.handleActivityChange(event);
+  if (event.reason === "process_exit" || event.reason === "session_closed") {
+    managedTerminalParentTokens.delete(event.sessionId);
+  }
   applyTerminalTaskbarActivity(event.sessionId, event);
   appLogger.info("terminal", "activity_changed", "Monitored terminal activity changed", {
     context: {
@@ -1110,17 +1114,22 @@ async function launchMonitoredTerminalSession(
   await ensureNodePtyLoaded();
   const startedAt = new Date();
   const spec = buildWindowsPtyLaunchSpec(plan);
+  const managedSessionId = randomUUID();
+  const managedParentToken = randomBytes(32).toString("base64url");
   const mergedEnv = Object.fromEntries(
     Object.entries({
       ...process.env,
       ...plan.env,
       ...options.additionalEnv,
+      CODEDECK_TERMINAL_SESSION_ID: managedSessionId,
+      CODEDECK_TERMINAL_PARENT_TOKEN: managedParentToken,
     }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
   if (mergedEnv.PATH && !mergedEnv.Path) {
     mergedEnv.Path = mergedEnv.PATH;
   }
   const snapshot = await terminalSessionManager.createSession({
+    sessionId: managedSessionId,
     provider: plan.provider,
     cwd: plan.cwd,
     commandExecutable: plan.commandExecutable,
@@ -1138,6 +1147,7 @@ async function launchMonitoredTerminalSession(
       intervalStdDevMs: 1_000,
     },
   });
+  managedTerminalParentTokens.set(snapshot.sessionId, managedParentToken);
   if (options.showWindow !== false) {
     try {
       await createTerminalWindow(snapshot);
@@ -1476,6 +1486,8 @@ async function launchAgentTask(
     provider: profile.provider,
     runtime_settings: runtime,
     terminal_mode: "monitored",
+    ...(options.model ? { model_override: options.model } : {}),
+    ...(options.reasoningEffort ? { reasoning_effort_override: options.reasoningEffort } : {}),
   };
   const { plan } = await prepareLaunchExecution(request);
   const initialPromptBase64 = Buffer.from(options.initialPrompt, "utf8").toString("base64");
@@ -1489,6 +1501,12 @@ async function launchAgentTask(
     showWindow: options.showTerminal,
     additionalEnv: {
       CODEDECK_DELEGATED: "1",
+      ...(options.callbackToken
+        ? {
+            CODEDECK_AGENT_SCOPED_TOKEN: options.callbackToken,
+            CODEDECK_AGENT_SCOPED_PIPE: agentBridgeServer?.getConnection()?.pipe_name ?? "",
+          }
+        : {}),
       ...(submitInitialPromptAtLaunch
         ? { [initialPromptEnvKey]: initialPromptBase64 }
         : {}),
@@ -1514,6 +1532,11 @@ function ensureAgentTaskManager(): AgentTaskManager {
         terminalSessionManager.closeSession(terminalSessionId, reason),
       getSnapshot: (terminalSessionId) =>
         terminalSessionManager.getSnapshot(terminalSessionId),
+      verifyParentContext: (terminalSessionId, token) => {
+        const snapshot = terminalSessionManager.getSnapshot(terminalSessionId);
+        return snapshot?.status === "running"
+          && managedTerminalParentTokens.get(terminalSessionId) === token;
+      },
     },
     listProfiles: getAgentProfileSummaries,
     isProfileBlocked: (profileKey) =>
@@ -1554,16 +1577,35 @@ async function handleAgentBridgeRequest(
       cwd: request.cwd,
       waitMs: request.wait_ms,
       showTerminal: request.show_terminal,
+      model: request.model,
+      reasoningEffort: request.reasoning_effort,
+      parentSessionId: request.parent_session_id,
+      parentToken: request.parent_token,
+      returnPolicy: request.return_policy,
     });
   }
   if (request.command === "continue") {
-    return manager.continue(request.session_id, request.prompt, request.wait_ms);
+    return manager.continue(
+      request.session_id,
+      request.prompt,
+      request.wait_ms,
+      request.return_policy,
+      request.parent_session_id,
+      request.parent_token,
+    );
   }
   if (request.command === "status") {
     return manager.status(request.session_id);
   }
   if (request.command === "wait") {
     return manager.wait(request.session_id, request.wait_ms);
+  }
+  if (request.command === "interrupt") {
+    return manager.interruptChild(
+      request.session_id,
+      request.parent_session_id,
+      request.parent_token,
+    );
   }
   return manager.cancel(request.session_id);
 }
@@ -1572,6 +1614,9 @@ async function startAgentBridgeServer(): Promise<void> {
   agentBridgeServer ??= new AgentBridgeServer({
     connectionFile: getAgentBridgeConnectionFile(),
     handleRequest: handleAgentBridgeRequest,
+    handleScopedRequest: async (token, request) => request.command === "policy"
+      ? ensureAgentTaskManager().scopedPolicy(token, request.return_policy)
+      : ensureAgentTaskManager().scopedInterruptParent(token),
   });
   await agentBridgeServer.start();
   appLogger.info("agent_bridge", "server_started", "Local AI delegation bridge started", {

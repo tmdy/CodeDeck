@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type {
   TerminalSessionActivityEvent,
   TerminalSessionSnapshot,
@@ -6,12 +6,18 @@ import type {
 } from "../electron/terminal-session-manager.js";
 import { cleanTerminalText } from "./protocol.js";
 import {
+  normalizeClaudeReasoningEffort,
+  normalizeCodexReasoningEffort,
+} from "../profile/types.js";
+import {
   AgentBridgeRequestError,
   DEFAULT_AGENT_WAIT_MS,
   type AgentBridgeError,
   type AgentProfileSummary,
   type AgentTaskResponse,
   type AgentTaskStatus,
+  type AgentDeliveryStatus,
+  type AgentReturnPolicy,
 } from "./types.js";
 
 export interface AgentTaskLaunchOptions {
@@ -19,6 +25,10 @@ export interface AgentTaskLaunchOptions {
   cwd?: string;
   showTerminal: boolean;
   initialPrompt: string;
+  model?: string;
+  reasoningEffort?: string;
+  childTaskId: string;
+  callbackToken?: string;
 }
 
 export interface AgentTaskLaunchResult {
@@ -33,6 +43,7 @@ export interface AgentTaskTerminalAdapter {
   sendInput: (terminalSessionId: string, data: string) => void;
   close: (terminalSessionId: string, reason: string) => Promise<void>;
   getSnapshot: (terminalSessionId: string) => TerminalSessionSnapshot | undefined;
+  verifyParentContext: (terminalSessionId: string, token: string) => boolean;
 }
 
 export interface AgentTaskManagerDependencies {
@@ -65,6 +76,19 @@ interface AgentTaskRecord {
   turnNumber: number;
   completedTurnNumber: number;
   updatedAt: number;
+  parentSessionId: string | null;
+  returnPolicy: AgentReturnPolicy;
+  deliveryStatus: AgentDeliveryStatus;
+  deliveryError: string | null;
+  deliveredTurnNumber: number;
+  pendingDeliveries: AgentPendingDelivery[];
+  deliverySubmitTimer?: ReturnType<typeof setTimeout>;
+  callbackToken?: string;
+}
+
+interface AgentPendingDelivery {
+  turnNumber: number;
+  assistantText: string;
 }
 
 const MAX_TERMINAL_OUTPUT_CHARS = 64_000;
@@ -72,6 +96,7 @@ const MAX_TERMINAL_TAIL_CHARS = 8_000;
 const STARTUP_INPUT_QUIET_MS = 1_000;
 const STARTUP_READY_TIMEOUT_MS = 60_000;
 const PASTED_INPUT_SUBMIT_DELAY_MS = 25;
+const MAX_DELIVERY_PROMPT_CHARS = 64_000;
 const CLI_READY_PROMPT_PATTERN = /(?:^|\n)\s*[›❯]\s+[^\n]*(?:\n|$)/;
 const INTERACTIVE_PROMPT_PATTERN =
   /(?:do you want to proceed|would you like to|allow (?:this|once|always)|approve (?:this|once|always)|enter to confirm|press enter|continue\?|proceed\?|\(y\/n\)|\[y\/n\]|是否(?:允许|继续|确认)|需要(?:授权|确认)|请选择)/i;
@@ -102,6 +127,11 @@ function waitingStatus(status: AgentTaskStatus): boolean {
 export class AgentTaskManager {
   private readonly tasks = new Map<string, AgentTaskRecord>();
   private readonly terminalToTask = new Map<string, string>();
+  private readonly callbackTokens = new Map<string, string>();
+  private readonly activeDeliveryByParent = new Map<
+    string,
+    { sessionId: string; turnNumber: number }
+  >();
   private readonly now: () => number;
   private pendingLaunches = 0;
 
@@ -127,6 +157,11 @@ export class AgentTaskManager {
     cwd?: string;
     waitMs?: number;
     showTerminal?: boolean;
+    model?: string;
+    reasoningEffort?: string;
+    parentSessionId?: string;
+    parentToken?: string;
+    returnPolicy?: AgentReturnPolicy;
   }): Promise<AgentTaskResponse> {
     if (this.dependencies.isProfileBlocked(options.profileKey)) {
       throw new AgentBridgeRequestError("profile_blocked", "该 Profile 已被代理接口黑名单禁用。");
@@ -137,6 +172,25 @@ export class AgentTaskManager {
     if (!profile) {
       throw new AgentBridgeRequestError("profile_not_found", "Profile 不存在或不可用于代理调用。");
     }
+    const reasoningEffort = this.validateReasoningEffort(profile.provider, options.reasoningEffort);
+    const parentSessionId = options.parentSessionId?.trim() || null;
+    if (
+      parentSessionId
+      && (
+        this.terminalToTask.has(parentSessionId)
+        || !this.dependencies.terminal.verifyParentContext(
+          parentSessionId,
+          options.parentToken?.trim() ?? "",
+        )
+      )
+    ) {
+      throw new AgentBridgeRequestError("invalid_parent", "父终端身份无效或已停止。");
+    }
+    if (!parentSessionId && options.returnPolicy && options.returnPolicy !== "manual") {
+      throw new AgentBridgeRequestError("invalid_parent", "自动回传策略必须绑定受监控父终端。");
+    }
+    const sessionId = randomUUID();
+    const callbackToken = parentSessionId ? randomBytes(32).toString("base64url") : undefined;
     if (this.countRunningTasks() >= this.getConcurrencyLimit()) {
       throw new AgentBridgeRequestError("capacity_exceeded", "代理任务已达到并发上限。", true);
     }
@@ -149,6 +203,10 @@ export class AgentTaskManager {
         cwd: options.cwd,
         showTerminal: options.showTerminal === true,
         initialPrompt: options.prompt,
+        ...(options.model?.trim() ? { model: options.model.trim() } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        childTaskId: sessionId,
+        ...(callbackToken ? { callbackToken } : {}),
       });
     } catch (error) {
       if (error instanceof AgentBridgeRequestError) {
@@ -162,7 +220,6 @@ export class AgentTaskManager {
       this.pendingLaunches -= 1;
     }
 
-    const sessionId = randomUUID();
     const pendingInitialInput = launched.initialPromptSubmitted
       ? null
       : normalizeInput(options.prompt);
@@ -182,9 +239,17 @@ export class AgentTaskManager {
       turnNumber: 1,
       completedTurnNumber: 0,
       updatedAt: this.now(),
+      parentSessionId,
+      returnPolicy: parentSessionId ? options.returnPolicy ?? "once" : "manual",
+      deliveryStatus: "not_requested",
+      deliveryError: null,
+      deliveredTurnNumber: 0,
+      pendingDeliveries: [],
+      callbackToken,
     };
     this.tasks.set(sessionId, task);
     this.terminalToTask.set(task.terminalSessionId, sessionId);
+    if (callbackToken) this.callbackTokens.set(callbackToken, sessionId);
     task.disposeTerminal = this.dependencies.terminal.attach(task.terminalSessionId, {
       onOutput: (chunk) => this.handleOutput(task, chunk),
       onStatus: (snapshot) => this.handleTerminalStatus(task, snapshot),
@@ -204,6 +269,9 @@ export class AgentTaskManager {
     sessionId: string,
     prompt: string,
     waitMs?: number,
+    returnPolicy?: AgentReturnPolicy,
+    parentSessionId?: string,
+    parentToken?: string,
   ): Promise<AgentTaskResponse> {
     const task = this.requireTask(sessionId);
     if (this.dependencies.isProfileBlocked(task.profileKey)) {
@@ -215,6 +283,21 @@ export class AgentTaskManager {
     }
     if (waitingStatus(task.status)) {
       throw new AgentBridgeRequestError("session_busy", "代理会话仍在处理上一轮输入。", true);
+    }
+    if (returnPolicy) {
+      if (
+        task.parentSessionId
+        && (
+          task.parentSessionId !== parentSessionId
+          || !this.dependencies.terminal.verifyParentContext(
+            parentSessionId,
+            parentToken?.trim() ?? "",
+          )
+        )
+      ) {
+        throw new AgentBridgeRequestError("unauthorized", "只能修改当前父终端创建的回传绑定。");
+      }
+      this.setReturnPolicy(task, returnPolicy);
     }
     if (!occupiedStatus(task.status) && this.countRunningTasks() >= this.getConcurrencyLimit()) {
       throw new AgentBridgeRequestError("capacity_exceeded", "代理任务已达到并发上限。", true);
@@ -243,6 +326,7 @@ export class AgentTaskManager {
     const task = this.requireTask(sessionId);
     if (task.status !== "cancelled") {
       this.clearStartupTimers(task);
+      this.clearQueuedDeliveries(task);
       task.pendingInitialInput = null;
       task.status = "cancelled";
       task.question = null;
@@ -250,14 +334,40 @@ export class AgentTaskManager {
       await this.dependencies.terminal.close(task.terminalSessionId, "agent_cancelled");
       task.disposeTerminal();
       this.terminalToTask.delete(task.terminalSessionId);
+      if (task.callbackToken) this.callbackTokens.delete(task.callbackToken);
       this.notify(task);
     }
+    return this.toResponse(task);
+  }
+
+  interruptChild(
+    sessionId: string,
+    parentSessionId?: string,
+    parentToken?: string,
+  ): AgentTaskResponse {
+    const task = this.requireTask(sessionId);
+    if (task.parentSessionId && (
+      task.parentSessionId !== parentSessionId
+      || !this.dependencies.terminal.verifyParentContext(
+        parentSessionId ?? "",
+        parentToken?.trim() ?? "",
+      )
+    )) {
+      throw new AgentBridgeRequestError("unauthorized", "只能中断当前父终端创建的代理会话。");
+    }
+    this.interruptTerminal(task.terminalSessionId, "代理会话当前没有可中断的运行轮次。");
+    task.updatedAt = this.now();
+    this.notify(task);
     return this.toResponse(task);
   }
 
   async shutdown(): Promise<void> {
     await Promise.all([...this.tasks.values()].map(async (task) => {
       this.clearStartupTimers(task);
+      if (task.deliverySubmitTimer) {
+        clearTimeout(task.deliverySubmitTimer);
+        task.deliverySubmitTimer = undefined;
+      }
       task.pendingInitialInput = null;
       const snapshot = this.dependencies.terminal.getSnapshot(task.terminalSessionId);
       if (snapshot?.status === "running") {
@@ -268,9 +378,35 @@ export class AgentTaskManager {
       task.waiters.clear();
     }));
     this.terminalToTask.clear();
+    this.callbackTokens.clear();
+    this.activeDeliveryByParent.clear();
+  }
+
+  scopedPolicy(token: string, returnPolicy?: AgentReturnPolicy): AgentTaskResponse {
+    const task = this.requireScopedTask(token);
+    if (returnPolicy) this.setReturnPolicy(task, returnPolicy);
+    return this.toResponse(task);
+  }
+
+  scopedInterruptParent(token: string): AgentTaskResponse {
+    const task = this.requireScopedTask(token);
+    if (!task.parentSessionId) {
+      throw new AgentBridgeRequestError("invalid_parent", "该代理会话没有父终端绑定。");
+    }
+    this.interruptTerminal(task.parentSessionId, "父会话当前没有可中断的运行轮次。");
+    task.updatedAt = this.now();
+    this.notify(task);
+    return this.toResponse(task);
   }
 
   handleActivityChange(event: TerminalSessionActivityEvent): void {
+    if (event.reason === "turn_completed" && event.activity === "idle") {
+      this.activeDeliveryByParent.delete(event.sessionId);
+      this.flushDeliveriesForParent(event.sessionId);
+    } else if (event.reason === "process_exit" || event.reason === "session_closed") {
+      this.activeDeliveryByParent.delete(event.sessionId);
+      this.failDeliveriesForParent(event.sessionId);
+    }
     const task = this.findByTerminal(event.sessionId);
     if (!task) {
       return;
@@ -324,6 +460,7 @@ export class AgentTaskManager {
     task.question = null;
     task.updatedAt = this.now();
     this.notify(task);
+    await this.scheduleDelivery(task, turnNumber);
   }
 
   private handleOutput(task: AgentTaskRecord, chunk: string): void {
@@ -362,6 +499,7 @@ export class AgentTaskManager {
     }
     task.disposeTerminal();
     this.terminalToTask.delete(task.terminalSessionId);
+    if (task.callbackToken) this.callbackTokens.delete(task.callbackToken);
     task.updatedAt = this.now();
     this.notify(task);
   }
@@ -494,6 +632,10 @@ export class AgentTaskManager {
       question: task.question,
       terminal_tail: cleanTerminalText(task.terminalOutput).slice(-MAX_TERMINAL_TAIL_CHARS),
       error: task.error,
+      parent_session_id: task.parentSessionId,
+      return_policy: task.returnPolicy,
+      delivery_status: task.deliveryStatus,
+      delivery_error: task.deliveryError,
     };
   }
 
@@ -510,6 +652,25 @@ export class AgentTaskManager {
     return task;
   }
 
+  private requireScopedTask(token: string): AgentTaskRecord {
+    const sessionId = this.callbackTokens.get(token);
+    if (!sessionId) {
+      throw new AgentBridgeRequestError("unauthorized", "作用域回传凭据无效或已过期。");
+    }
+    return this.requireTask(sessionId);
+  }
+
+  private interruptTerminal(terminalSessionId: string, idleMessage: string): void {
+    const snapshot = this.dependencies.terminal.getSnapshot(terminalSessionId);
+    if (!snapshot || snapshot.status !== "running") {
+      throw new AgentBridgeRequestError("session_not_running", "目标会话已停止，无法中断。", false);
+    }
+    if (snapshot.activity !== "busy") {
+      throw new AgentBridgeRequestError("session_idle", idleMessage, false);
+    }
+    this.dependencies.terminal.sendInput(terminalSessionId, "\x1b");
+  }
+
   private countRunningTasks(): number {
     return this.pendingLaunches
       + [...this.tasks.values()].filter((task) => occupiedStatus(task.status)).length;
@@ -517,5 +678,172 @@ export class AgentTaskManager {
 
   private getConcurrencyLimit(): number {
     return Math.max(1, Math.min(32, Math.floor(this.dependencies.getConcurrencyLimit()) || 4));
+  }
+
+  private validateReasoningEffort(
+    provider: "claude" | "codex",
+    value?: string,
+  ): string | undefined {
+    const normalizedInput = value?.trim();
+    if (!normalizedInput) return undefined;
+    const normalized = provider === "claude"
+      ? normalizeClaudeReasoningEffort(normalizedInput)
+      : normalizeCodexReasoningEffort(normalizedInput);
+    if (!normalized) {
+      throw new AgentBridgeRequestError(
+        "invalid_reasoning_effort",
+        `${provider} 不支持 reasoning_effort=${normalizedInput}。`,
+      );
+    }
+    return normalized;
+  }
+
+  private setReturnPolicy(task: AgentTaskRecord, policy: AgentReturnPolicy): void {
+    if (!task.parentSessionId && policy !== "manual") {
+      throw new AgentBridgeRequestError("invalid_parent", "该代理会话没有父终端绑定。");
+    }
+    task.returnPolicy = policy;
+    if (policy === "manual") {
+      this.clearQueuedDeliveries(task);
+    }
+    task.updatedAt = this.now();
+    this.notify(task);
+  }
+
+  private async scheduleDelivery(task: AgentTaskRecord, turnNumber: number): Promise<void> {
+    if (!task.parentSessionId || task.returnPolicy === "manual" || !task.assistantText) return;
+    if (
+      task.deliveredTurnNumber >= turnNumber
+      || task.pendingDeliveries.some((delivery) => delivery.turnNumber === turnNumber)
+      || (task.returnPolicy === "once" && task.pendingDeliveries.length > 0)
+    ) return;
+    task.pendingDeliveries.push({ turnNumber, assistantText: task.assistantText });
+    task.deliveryStatus = "pending";
+    task.deliveryError = null;
+    const parent = this.dependencies.terminal.getSnapshot(task.parentSessionId);
+    if (!parent || parent.status !== "running") {
+      this.failDelivery(task, "父终端已退出或关闭，无法自动回传。");
+      return;
+    }
+    if (parent.activity === "idle") this.flushDeliveriesForParent(task.parentSessionId);
+    else this.notify(task);
+  }
+
+  private flushDeliveriesForParent(parentSessionId: string): void {
+    if (this.activeDeliveryByParent.has(parentSessionId)) return;
+    for (const task of this.tasks.values()) {
+      if (
+        task.parentSessionId === parentSessionId
+        && task.deliveryStatus === "pending"
+        && task.pendingDeliveries.length > 0
+      ) {
+        this.deliver(task, task.pendingDeliveries[0]);
+        return;
+      }
+    }
+  }
+
+  private failDeliveriesForParent(parentSessionId: string): void {
+    for (const task of this.tasks.values()) {
+      if (task.parentSessionId === parentSessionId && task.pendingDeliveries.length > 0) {
+        this.failDelivery(task, "父终端已退出或关闭，无法自动回传。");
+      }
+    }
+  }
+
+  private deliver(task: AgentTaskRecord, delivery: AgentPendingDelivery): void {
+    if (!task.parentSessionId || task.deliveredTurnNumber >= delivery.turnNumber) return;
+    const parent = this.dependencies.terminal.getSnapshot(task.parentSessionId);
+    if (!parent || parent.status !== "running" || parent.activity !== "idle") return;
+    this.activeDeliveryByParent.set(task.parentSessionId, {
+      sessionId: task.sessionId,
+      turnNumber: delivery.turnNumber,
+    });
+    const text = delivery.assistantText.length > MAX_DELIVERY_PROMPT_CHARS
+      ? delivery.assistantText.slice(0, MAX_DELIVERY_PROMPT_CHARS) + "\n[内容过长，已截断；完整回答可通过 status 查询]"
+      : delivery.assistantText;
+    const prompt = [
+      `[[CodeDeck delegated opinion: ${task.profileKey} / ${task.sessionId}]]`,
+      text,
+      "[[End delegated opinion]]",
+      "请审阅以上代理意见并继续当前任务。",
+    ].join("\n\n");
+    const input = normalizeInput(prompt);
+    try {
+      this.dependencies.terminal.sendInput(task.parentSessionId, input.data);
+    } catch {
+      this.failDelivery(task, "父终端输入失败，无法自动回传。");
+      return;
+    }
+    task.deliverySubmitTimer = setTimeout(() => {
+      task.deliverySubmitTimer = undefined;
+      const parentSessionId = task.parentSessionId;
+      const activeDelivery = parentSessionId
+        ? this.activeDeliveryByParent.get(parentSessionId)
+        : undefined;
+      if (
+        !parentSessionId
+        || activeDelivery?.sessionId !== task.sessionId
+        || activeDelivery.turnNumber !== delivery.turnNumber
+      ) return;
+      const latestParent = this.dependencies.terminal.getSnapshot(parentSessionId);
+      if (latestParent?.status !== "running") {
+        this.failDelivery(task, "父终端已退出或关闭，无法自动回传。");
+        return;
+      }
+      try {
+        if (input.submitSeparately) {
+          this.dependencies.terminal.sendInput(parentSessionId, "\r");
+        }
+      } catch {
+        this.failDelivery(task, "父终端输入失败，无法自动回传。");
+        return;
+      }
+      task.pendingDeliveries = task.pendingDeliveries.filter(
+        (pending) => pending.turnNumber !== delivery.turnNumber,
+      );
+      task.deliveredTurnNumber = Math.max(task.deliveredTurnNumber, delivery.turnNumber);
+      task.deliveryError = null;
+      if (task.returnPolicy === "once") {
+        task.returnPolicy = "manual";
+        task.pendingDeliveries = [];
+      }
+      task.deliveryStatus = task.pendingDeliveries.length > 0 ? "pending" : "delivered";
+      task.updatedAt = this.now();
+      this.notify(task);
+    }, PASTED_INPUT_SUBMIT_DELAY_MS);
+  }
+
+  private failDelivery(task: AgentTaskRecord, message: string): void {
+    if (task.deliverySubmitTimer) {
+      clearTimeout(task.deliverySubmitTimer);
+      task.deliverySubmitTimer = undefined;
+    }
+    if (task.parentSessionId) {
+      const activeDelivery = this.activeDeliveryByParent.get(task.parentSessionId);
+      if (activeDelivery?.sessionId === task.sessionId) {
+        this.activeDeliveryByParent.delete(task.parentSessionId);
+      }
+    }
+    task.deliveryStatus = "failed";
+    task.deliveryError = message;
+    task.pendingDeliveries = [];
+    task.updatedAt = this.now();
+    this.notify(task);
+  }
+
+  private clearQueuedDeliveries(task: AgentTaskRecord): void {
+    const activeDelivery = task.parentSessionId
+      ? this.activeDeliveryByParent.get(task.parentSessionId)
+      : undefined;
+    task.pendingDeliveries = activeDelivery?.sessionId === task.sessionId
+      ? task.pendingDeliveries.filter(
+          (delivery) => delivery.turnNumber === activeDelivery.turnNumber,
+        )
+      : [];
+    if (task.pendingDeliveries.length === 0 && task.deliveryStatus === "pending") {
+      task.deliveryStatus = "not_requested";
+      task.deliveryError = null;
+    }
   }
 }

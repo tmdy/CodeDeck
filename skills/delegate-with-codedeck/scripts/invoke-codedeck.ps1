@@ -1,20 +1,28 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("profiles", "run", "continue", "status", "wait", "cancel")]
+  [ValidateSet("profiles", "run", "continue", "status", "wait", "interrupt", "cancel", "policy", "interrupt-parent")]
   [string]$Command,
   [string]$Profile,
   [string]$Session,
   [string]$Cwd,
   [int]$WaitMs = -1,
   [switch]$ShowTerminal,
+  [string]$Model,
+  [string]$ReasoningEffort,
+  [ValidateSet("once", "continuous", "manual")]
+  [string]$ReturnPolicy,
   [string]$Prompt
 )
 
 $ErrorActionPreference = "Stop"
 
-if ($env:CODEDECK_DELEGATED -eq "1") {
-  throw "Delegated CodeDeck sessions cannot delegate recursively."
+if (
+  $env:CODEDECK_DELEGATED -eq "1" -and
+  $Command -ne "policy" -and
+  $Command -ne "interrupt-parent"
+) {
+  throw "Delegated CodeDeck sessions may only manage their own return policy or interrupt their bound parent."
 }
 
 $agent = Get-Command "codedeck-agent.cmd" -ErrorAction SilentlyContinue
@@ -57,6 +65,15 @@ if ($WaitMs -ge 0) {
 }
 if ($ShowTerminal) {
   $agentArgs += "--show-terminal"
+}
+if ($Model) {
+  $agentArgs += @("--model", $Model)
+}
+if ($ReasoningEffort) {
+  $agentArgs += @("--reasoning-effort", $ReasoningEffort)
+}
+if ($ReturnPolicy) {
+  $agentArgs += @("--return-policy", $ReturnPolicy)
 }
 
 $requiresPrompt = $Command -eq "run" -or $Command -eq "continue"

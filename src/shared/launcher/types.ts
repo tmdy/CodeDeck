@@ -15,6 +15,8 @@ export interface LaunchRequest {
   model_mappings_state?: ModelMappingsState;
   permission_override?: PermissionPreset;
   capability_overlay?: LaunchCapabilityOverlay;
+  model_override?: string;
+  reasoning_effort_override?: string;
 }
 
 export interface LaunchSessionSource {

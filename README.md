@@ -62,6 +62,18 @@ Claude Code 和 Codex 都可在一个 PTY 终端中启动，支持复制、粘�
 
 *代码：`src/shared/electron/terminal-session-manager.ts` + `terminal-auto-continue.ts` · 测试：`src/shared/__tests__/electron/`*
 
+### 本地 AI 委托
+
+启用“本地 AI 委托接口”后，`codedeck-agent` 可列出允许的 Profile，并在独立受监控终端中异步运行任务。`run` 支持 `--model`、`--reasoning-effort`、`--show-terminal` 与 `--return-policy once|continuous|manual`；从 CodeDeck 监控终端发起时，子任务回答可在父终端空闲后自动作为下一轮输入。关闭可见子终端窗口仍会明确停止该子任务。
+
+```powershell
+"审阅当前改动" | codedeck-agent run --profile "codex::Review" --model "gpt-5.6" --reasoning-effort high --return-policy once --wait-ms 0
+codedeck-agent status --session "<session-id>"
+codedeck-agent interrupt --session "<session-id>"
+```
+
+受委托子进程不能递归启动其他任务；它只获得读取或修改自身回传策略、以及用 ESC 中断绑定父会话当前轮次的作用域能力，例如 `codedeck-agent policy --return-policy manual` 和 `codedeck-agent interrupt-parent`。父会话可用 `codedeck-agent interrupt --session "<session-id>"` 中断自己的子任务；中断不会关闭任一终端。
+
 ### Skills 可视化管理
 
 扫描 Claude / Codex 的 Skills 目录，区分 `active`、`inactive`、`conflict`、`readonly` 四种状态。启用、停用和项目复制先生成操作预览再执行；执行记录支持回滚最近一次成功批次。

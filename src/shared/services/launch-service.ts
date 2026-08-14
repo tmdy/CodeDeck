@@ -112,6 +112,11 @@ interface ProviderLaunchArtifacts {
 
 type LaunchCapabilityOverlay = NonNullable<LaunchRequest["capability_overlay"]>;
 
+interface RunOverrides {
+  model?: string;
+  reasoningEffort?: string;
+}
+
 export class LaunchService {
   constructor(
     private profileService: ProfileService,
@@ -160,15 +165,53 @@ export class LaunchService {
       });
     }
 
+    const runOverrides: RunOverrides = {
+      ...(request.model_override?.trim() ? { model: request.model_override.trim() } : {}),
+      ...(request.reasoning_effort_override?.trim()
+        ? { reasoningEffort: request.reasoning_effort_override.trim() }
+        : {}),
+    };
+    const launchProfile = this.applyRunOverrides(profile, request);
     return this.buildPlan(
-      profile,
+      launchProfile,
       request.runtime_settings,
       request.model_mappings_state,
       request.session_id,
       request.permission_override,
       request.capability_overlay,
       request.terminal_mode,
+      runOverrides,
     );
+  }
+
+  private applyRunOverrides(profile: Profile, request: LaunchRequest): Profile {
+    const model = request.model_override?.trim();
+    const reasoningEffort = request.reasoning_effort_override?.trim();
+    if (!model && !reasoningEffort) return profile;
+
+    const advancedModelMapping: NonNullable<Profile["advancedModelMapping"]> = {
+      ...profile.advancedModelMapping,
+      enabled: profile.advancedModelMapping?.enabled ?? false,
+      claude: { ...profile.advancedModelMapping?.claude },
+      codex: { ...profile.advancedModelMapping?.codex },
+    };
+    if (reasoningEffort && profile.provider === PROVIDER_CLAUDE) {
+      advancedModelMapping.claude = {
+        ...advancedModelMapping.claude,
+        reasoningEffort: normalizeClaudeReasoningEffort(reasoningEffort),
+      };
+    }
+    if (reasoningEffort && profile.provider === PROVIDER_CODEX) {
+      advancedModelMapping.codex = {
+        ...advancedModelMapping.codex,
+        reasoningEffort: normalizeCodexReasoningEffort(reasoningEffort),
+      };
+    }
+    return {
+      ...profile,
+      ...(model ? { selectedModelId: model } : {}),
+      advancedModelMapping,
+    };
   }
 
   private buildPlan(
@@ -179,6 +222,7 @@ export class LaunchService {
     permissionOverride?: LaunchRequest["permission_override"],
     capabilityOverlay?: LaunchCapabilityOverlay,
     terminalModeOverride?: LaunchRequest["terminal_mode"],
+    runOverrides?: RunOverrides,
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
     const isNativeStartup = normalizedRuntime.startup_mode === "native";
@@ -216,7 +260,12 @@ export class LaunchService {
 
     let artifacts: ProviderLaunchArtifacts;
     if (isNativeStartup) {
-      artifacts = this.buildNativeArtifacts(profile, normalizedRuntime, normalizedSessionId);
+      artifacts = this.buildNativeArtifacts(
+        profile,
+        normalizedRuntime,
+        normalizedSessionId,
+        runOverrides,
+      );
     } else {
       const permissions = resolveEffectivePermissions({
         provider: profile.provider,
@@ -272,6 +321,7 @@ export class LaunchService {
     profile: Profile,
     runtime: RuntimeSettings,
     sessionId: string,
+    runOverrides?: RunOverrides,
   ): ProviderLaunchArtifacts {
     const commandBase = normalizeCommandExecutable(
       runtime.command_base,
@@ -288,6 +338,10 @@ export class LaunchService {
         extraArgs,
         sessionId,
         excludeUserSettings: false,
+        model: runOverrides?.model,
+        effort: normalizeClaudeReasoningEffort(
+          runOverrides?.reasoningEffort,
+        ) || undefined,
       };
       return {
         commandExecutable: commandBase,
@@ -298,12 +352,19 @@ export class LaunchService {
       };
     }
 
+    const reasoningEffort = normalizeCodexReasoningEffort(
+      runOverrides?.reasoningEffort,
+    );
     const options = {
       commandBase: runtime.command_base,
       launchMode: runtime.launch_mode,
-      extraArgs,
+      extraArgs: [
+        extraArgs,
+        reasoningEffort ? `-c model_reasoning_effort=${reasoningEffort}` : "",
+      ].filter(Boolean).join(" "),
       sessionId,
       baseUrl: "",
+      modelOverride: runOverrides?.model,
     };
     return {
       commandExecutable: commandBase,

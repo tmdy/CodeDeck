@@ -75,6 +75,9 @@ describe("ParameterSettingsPanel", () => {
 
     expect(html).toContain("本地 AI 委托接口");
     expect(html).toContain("允许本机 AI 调用 Profile");
+    expect(html).toContain("按任务覆盖模型与推理强度");
+    expect(html).toContain("once、continuous 或 manual");
+    expect(html).toContain("ESC 中断对方当前轮次");
     expect(html).toContain("Profile 黑名单");
     expect(html).toContain("灰色表示禁止调用");
     expect(html).toContain("Delegated");

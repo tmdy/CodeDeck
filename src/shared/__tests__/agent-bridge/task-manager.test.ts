@@ -38,11 +38,14 @@ function createFixture(options: {
   blocked?: boolean;
   limit?: number;
   initialPromptSubmitted?: boolean;
+  parentActivity?: "idle" | "busy";
+  assistantTexts?: string[];
 } = {}) {
   let nextTerminal = 0;
   const snapshots = new Map<string, TerminalSessionSnapshot>();
   const subscribers = new Map<string, TerminalSessionSubscriber>();
   const sentInputs: Array<{ sessionId: string; data: string }> = [];
+  const assistantTexts = [...(options.assistantTexts ?? [])];
   const terminal: AgentTaskTerminalAdapter = {
     launch: vi.fn(async () => {
       const terminalSessionId = "terminal-" + (++nextTerminal);
@@ -65,7 +68,14 @@ function createFixture(options: {
       subscribers.get(sessionId)?.onStatus(snapshot);
     }),
     getSnapshot: (sessionId) => snapshots.get(sessionId),
+    verifyParentContext: (sessionId, token) =>
+      (sessionId === "parent-terminal" && token === "parent-secret")
+      || (snapshots.has(sessionId) && token === `token-${sessionId}`),
   };
+  snapshots.set("parent-terminal", {
+    ...makeSnapshot("parent-terminal"),
+    activity: options.parentActivity ?? "idle",
+  });
   const manager = new AgentTaskManager({
     terminal,
     listProfiles: () => [{
@@ -77,9 +87,9 @@ function createFixture(options: {
     }],
     isProfileBlocked: () => options.blocked === true,
     getConcurrencyLimit: () => options.limit ?? 4,
-    readLastAssistantText: vi.fn(async () => "clean assistant result"),
+    readLastAssistantText: vi.fn(async () => assistantTexts.shift() ?? "clean assistant result"),
   });
-  return { manager, terminal, subscribers, sentInputs };
+  return { manager, terminal, subscribers, sentInputs, snapshots };
 }
 
 describe("AgentTaskManager", () => {
@@ -241,6 +251,7 @@ describe("AgentTaskManager", () => {
         sendInput: () => undefined,
         close: async () => undefined,
         getSnapshot: () => snapshot,
+        verifyParentContext: () => false,
       },
       listProfiles: () => [{
         profile_key: "codex::demo",
@@ -267,5 +278,308 @@ describe("AgentTaskManager", () => {
     })).rejects.toMatchObject({ code: "capacity_exceeded" });
     resolveLaunch({ terminalSessionId: "terminal-pending", provider: "codex" });
     await expect(firstRun).resolves.toMatchObject({ status: "starting" });
+  });
+
+  it("validates provider reasoning levels before launching", async () => {
+    const fixture = createFixture();
+    await expect(fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "task",
+      reasoningEffort: "invalid",
+      waitMs: 0,
+    })).rejects.toMatchObject({ code: "invalid_reasoning_effort" });
+    expect(fixture.terminal.launch).not.toHaveBeenCalled();
+  });
+
+  it("rejects unverified parent bindings", async () => {
+    const fixture = createFixture();
+    await expect(fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "task",
+      parentSessionId: "unrelated-terminal",
+      parentToken: "wrong",
+      returnPolicy: "once",
+      waitMs: 0,
+    })).rejects.toMatchObject({ code: "invalid_parent" });
+  });
+
+  it("rejects a delegated task terminal as the parent of another task", async () => {
+    const fixture = createFixture({ initialPromptSubmitted: true });
+    await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "first task",
+      waitMs: 0,
+    });
+
+    await expect(fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "recursive task",
+      parentSessionId: "terminal-1",
+      parentToken: "token-terminal-1",
+      waitMs: 0,
+    })).rejects.toMatchObject({ code: "invalid_parent" });
+    expect(fixture.terminal.launch).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a verified parent interrupt its busy child without closing it", async () => {
+    const fixture = createFixture({ initialPromptSubmitted: true });
+    const initial = await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "review",
+      parentSessionId: "parent-terminal",
+      parentToken: "parent-secret",
+      waitMs: 0,
+    });
+    fixture.snapshots.get("terminal-1")!.activity = "busy";
+
+    expect(fixture.manager.interruptChild(
+      initial.session_id,
+      "parent-terminal",
+      "parent-secret",
+    )).toMatchObject({ status: "running", session_id: initial.session_id });
+    expect(fixture.sentInputs.at(-1)).toEqual({ sessionId: "terminal-1", data: "\x1b" });
+    expect(fixture.snapshots.get("terminal-1")?.status).toBe("running");
+
+    expect(() => fixture.manager.interruptChild(
+      initial.session_id,
+      "unrelated-terminal",
+      "wrong",
+    )).toThrow("只能中断当前父终端创建的代理会话");
+  });
+
+  it("lets a scoped child interrupt only its busy parent", async () => {
+    const fixture = createFixture({ initialPromptSubmitted: true, parentActivity: "busy" });
+    const initial = await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "review",
+      parentSessionId: "parent-terminal",
+      parentToken: "parent-secret",
+      waitMs: 0,
+    });
+    const callbackToken = vi.mocked(fixture.terminal.launch).mock.calls[0]?.[0].callbackToken;
+    expect(callbackToken).toBeTruthy();
+
+    expect(fixture.manager.scopedPolicy(callbackToken!, "continuous")).toMatchObject({
+      return_policy: "continuous",
+      parent_session_id: "parent-terminal",
+    });
+
+    expect(fixture.manager.scopedInterruptParent(callbackToken!)).toMatchObject({
+      status: "running",
+      session_id: initial.session_id,
+    });
+    expect(fixture.sentInputs.at(-1)).toEqual({ sessionId: "parent-terminal", data: "\x1b" });
+    expect(fixture.snapshots.get("parent-terminal")?.status).toBe("running");
+
+    fixture.snapshots.get("parent-terminal")!.activity = "idle";
+    expect(() => fixture.manager.scopedInterruptParent(callbackToken!)).toThrow(
+      "父会话当前没有可中断的运行轮次",
+    );
+    expect(() => fixture.manager.scopedInterruptParent("wrong-token")).toThrow(
+      "作用域回传凭据无效或已过期",
+    );
+  });
+
+  it("queues while the parent is busy, delivers once when idle, and stays idempotent", async () => {
+    vi.useFakeTimers();
+    const fixture = createFixture({ initialPromptSubmitted: true, parentActivity: "busy" });
+    const initial = await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "review",
+      parentSessionId: "parent-terminal",
+      parentToken: "parent-secret",
+      waitMs: 0,
+    });
+    fixture.manager.associateProviderSession("terminal-1", "provider-session", "session.jsonl");
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.manager.status(initial.session_id)).toMatchObject({
+      delivery_status: "pending",
+      return_policy: "once",
+    });
+    expect(fixture.sentInputs).toEqual([]);
+
+    fixture.snapshots.get("parent-terminal")!.activity = "idle";
+    fixture.manager.handleActivityChange({
+      sessionId: "parent-terminal",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    expect(fixture.sentInputs[0]).toMatchObject({ sessionId: "parent-terminal" });
+    expect(fixture.sentInputs[0].data).toContain("[[CodeDeck delegated opinion:");
+    await vi.advanceTimersByTimeAsync(25);
+    expect(fixture.sentInputs.at(-1)).toEqual({ sessionId: "parent-terminal", data: "\r" });
+    expect(fixture.manager.status(initial.session_id)).toMatchObject({
+      delivery_status: "delivered",
+      return_policy: "manual",
+    });
+
+    const inputCount = fixture.sentInputs.length;
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    expect(fixture.sentInputs).toHaveLength(inputCount);
+    vi.useRealTimers();
+  });
+
+  it("cancels a queued automatic return when the parent continues in manual mode", async () => {
+    vi.useFakeTimers();
+    const fixture = createFixture({ initialPromptSubmitted: true, parentActivity: "busy" });
+    const initial = await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "review",
+      parentSessionId: "parent-terminal",
+      parentToken: "parent-secret",
+      returnPolicy: "continuous",
+      waitMs: 0,
+    });
+    fixture.manager.associateProviderSession("terminal-1", "provider-session", "session.jsonl");
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    await vi.waitFor(() => expect(fixture.manager.status(initial.session_id).status).toBe("completed"));
+
+    await fixture.manager.continue(
+      initial.session_id,
+      "follow up",
+      0,
+      "manual",
+      "parent-terminal",
+      "parent-secret",
+    );
+    expect(fixture.manager.status(initial.session_id)).toMatchObject({
+      delivery_status: "not_requested",
+      return_policy: "manual",
+    });
+
+    fixture.snapshots.get("parent-terminal")!.activity = "idle";
+    fixture.manager.handleActivityChange({
+      sessionId: "parent-terminal",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    expect(fixture.sentInputs.filter((input) => input.sessionId === "parent-terminal")).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("preserves continuous results across child turns and submits them one parent turn at a time", async () => {
+    vi.useFakeTimers();
+    const fixture = createFixture({
+      initialPromptSubmitted: true,
+      parentActivity: "busy",
+      assistantTexts: ["first child result", "second child result"],
+    });
+    const initial = await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "first review",
+      parentSessionId: "parent-terminal",
+      parentToken: "parent-secret",
+      returnPolicy: "continuous",
+      waitMs: 0,
+    });
+    fixture.manager.associateProviderSession("terminal-1", "provider-session", "session.jsonl");
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    await vi.waitFor(() => expect(fixture.manager.status(initial.session_id).assistant_text).toBe("first child result"));
+
+    await fixture.manager.continue(initial.session_id, "second review", 0);
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    await vi.waitFor(() => expect(fixture.manager.status(initial.session_id).assistant_text).toBe("second child result"));
+
+    fixture.snapshots.get("parent-terminal")!.activity = "idle";
+    fixture.manager.handleActivityChange({
+      sessionId: "parent-terminal",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    expect(fixture.sentInputs.filter((input) => input.sessionId === "parent-terminal")).toHaveLength(1);
+    expect(fixture.sentInputs.at(-1)?.data).toContain("first child result");
+    await vi.advanceTimersByTimeAsync(25);
+    expect(fixture.sentInputs.filter((input) => input.sessionId === "parent-terminal")).toHaveLength(2);
+
+    fixture.manager.handleActivityChange({
+      sessionId: "parent-terminal",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    expect(fixture.sentInputs.filter((input) => input.sessionId === "parent-terminal")).toHaveLength(3);
+    expect(fixture.sentInputs.at(-1)?.data).toContain("second child result");
+    await vi.advanceTimersByTimeAsync(25);
+    expect(fixture.sentInputs.filter((input) => input.sessionId === "parent-terminal")).toHaveLength(4);
+    expect(fixture.manager.status(initial.session_id)).toMatchObject({
+      delivery_status: "delivered",
+      return_policy: "continuous",
+    });
+    vi.useRealTimers();
+  });
+
+  it("keeps the child result inspectable when the parent exits before delivery", async () => {
+    const fixture = createFixture({ initialPromptSubmitted: true, parentActivity: "busy" });
+    const initial = await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "review",
+      parentSessionId: "parent-terminal",
+      parentToken: "parent-secret",
+      returnPolicy: "continuous",
+      waitMs: 0,
+    });
+    fixture.manager.associateProviderSession("terminal-1", "provider-session", "session.jsonl");
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    await vi.waitFor(() => expect(fixture.manager.status(initial.session_id).status).toBe("completed"));
+    fixture.snapshots.get("parent-terminal")!.status = "closed";
+    fixture.manager.handleActivityChange({
+      sessionId: "parent-terminal",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "session_closed",
+    });
+    expect(fixture.manager.status(initial.session_id)).toMatchObject({
+      assistant_text: "clean assistant result",
+      delivery_status: "failed",
+      delivery_error: expect.stringContaining("父终端已退出或关闭"),
+    });
   });
 });

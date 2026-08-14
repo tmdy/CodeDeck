@@ -10,6 +10,7 @@ export interface CodexCommandOptions {
   sessionId?: string;
   baseUrl: string;
   model?: string;
+  modelOverride?: string;
   wireApi?: string;
 }
 
@@ -37,6 +38,11 @@ export function buildCodexArgs(options: CodexCommandOptions): string[] {
       }
       break;
     }
+  }
+
+  const model = options.modelOverride?.trim() ?? "";
+  if (model) {
+    parts.push("--model", model);
   }
 
   parts.push(...parseCliArgs(options.extraArgs));

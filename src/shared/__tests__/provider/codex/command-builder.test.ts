@@ -28,6 +28,18 @@ describe("buildCodexCommand", () => {
     expect(cmd).toBe("codex");
   });
 
+  it("should include an explicit one-run model override", () => {
+    const cmd = buildCodexCommand({
+      commandBase: "codex",
+      launchMode: "new",
+      extraArgs: "",
+      baseUrl: "https://api.openai.com/v1",
+      modelOverride: "gpt-5.4",
+    });
+
+    expect(cmd).toBe("codex --model gpt-5.4");
+  });
+
   it("should handle new launch mode", () => {
     const cmd = buildCodexCommand({
       commandBase: "codex",

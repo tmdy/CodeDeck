@@ -47,9 +47,12 @@ npm run agent -- profiles
 "检查当前项目" | npm run agent -- run --profile "codex::示例" --cwd "D:\project"
 npm run agent -- wait --session "<session-id>"
 "不同意" | npm run agent -- continue --session "<session-id>"
+npm run agent -- interrupt --session "<session-id>"
 ```
 
 `skills/delegate-with-codedeck/` 是 Hermes 与 Codex 共用的 Agent Skill，源码仓库和安装目录中都会提供。将同一目录安装到对应宿主的 Skills 目录即可，不需要维护两套协议。
+
+`run` 可用 `--model`、`--reasoning-effort` 和 `--return-policy once|continuous|manual` 覆盖单次委托。监控父会话可异步启动子任务并接收自动回传；父子双方都可发送 ESC 中断对方当前轮次，但作用域令牌不能控制其他终端，ESC 也不会关闭会话。
 
 ## 主要数据
 
