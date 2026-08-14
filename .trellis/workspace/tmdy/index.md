@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-08-11
+- **Total Sessions**: 3
+- **Last Active**: 2026-08-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~49 | Active |
+| `journal-1.md` | ~72 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-08-14 | 即时参数、持久多代理与浏览器鉴权 | `5776223`, `560bc2e`, `2d266dc` | `main` |
 | 2 | 2026-08-11 | Hide Codex subagent sessions | `7bfc731` | `main` |
 | 1 | 2026-08-05 | SQLite logs trigger and WAL repair | `d85969c` | `main` |
 <!-- @@@/auto:session-history -->

@@ -47,3 +47,26 @@ Added a default-on Codex sub-agent session visibility filter across settings, se
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 即时参数、持久多代理与浏览器鉴权
+
+**Date**: 2026-08-14
+**Task**: 即时参数、持久多代理与浏览器鉴权
+**Branch**: `main`
+
+### Summary
+
+实现保存参数即时记忆、持久化 Agent Bridge 讨论与中断控制、浏览器托管后端鉴权和签到，并完成 Electron 冒烟测试与 Windows NSIS 打包。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5776223` | (see git log) |
+| `560bc2e` | (see git log) |
+| `2d266dc` | (see git log) |
+
+### Status
+
+[OK] **Completed**
