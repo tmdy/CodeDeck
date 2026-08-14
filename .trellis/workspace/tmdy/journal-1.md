@@ -70,3 +70,25 @@ Added a default-on Codex sub-agent session visibility filter across settings, se
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Codex working directory trust
+
+**Date**: 2026-08-15
+**Task**: Codex working directory trust
+**Branch**: `main`
+
+### Summary
+
+Trust the selected Codex cwd per launch, preserve hooks disablement, normalize Windows project keys, and verify arbitrary Bridge cwd without a trust prompt.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54d4f14` | (see git log) |
+| `8c2ed68` | (see git log) |
+
+### Status
+
+[OK] **Completed**
