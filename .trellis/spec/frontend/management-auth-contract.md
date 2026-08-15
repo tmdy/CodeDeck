@@ -42,6 +42,14 @@ class BrowserAccountSessionManager {
   ): Promise<void>;
 }
 
+class ProfileService {
+  bindProfileSiteBalanceSession(
+    profileKey: ProfileKey,
+    baseUrl: string,
+    sessionId: string,
+  ): Promise<Profile>;
+}
+
 class PendingBrowserAccountReferenceRegistry {
   run<T>(
     baseUrl: string,
@@ -56,8 +64,12 @@ class PendingBrowserAccountReferenceRegistry {
 - `access_token` sends exactly `Authorization: Bearer <token>` plus existing compatibility headers.
 - `browser_session` persists only a stable positive `browser_slot`, its canonical opaque partition reference, exact account origin, and verified user ID.
 - Modern New API refresh uses the account partition, same-origin `Origin`, a per-account mutex, memory-only Bearer/SID state, and one confirmed SID-mismatch retry without SID.
-- Legacy browser mode uses the account `Session.fetch(..., { credentials: "include" })`; JavaScript never reads Cookies or builds a `Cookie` header.
-- During interactive legacy login only, the manager may read `localStorage.uid` after both the window URL and the page execution context exactly match the bound account origin. The value must be normalized as a positive integer, may be sent as `New-Api-User` only on the `/api/user/self` identity probe, and becomes trusted only when the response returns the same identity. LinuxDo-origin storage and every credential-bearing storage field remain unread.
+- Legacy browser mode uses the account `Session.fetch(..., { credentials: "include" })`; JavaScript never reads Cookies or builds a `Cookie` header. Legacy deployments may additionally require their page-client Bearer and user ID headers.
+- For legacy identity only, the manager may read a minimal candidate after both the BrowserWindow URL and page execution context exactly match the bound account origin. It prefers positive-integer `localStorage.user.id` plus a non-empty `localStorage.user.token`, then falls back to positive-integer `localStorage.uid`; no other user fields are returned. LinuxDo and every other origin remain unread.
+- Sub2API browser identity is another strict-origin legacy candidate: read positive-integer `localStorage.auth_user.id`, non-empty `auth_token`, and optional `refresh_token`; verify the root-level `id` returned by `/api/v1/auth/me`. Both tokens remain main-process runtime secrets and never enter renderer IPC or `SiteBalanceSession` persistence.
+- A Sub2API 401 may call `/api/v1/auth/refresh` once per credential generation. Delayed 401 responses compare the Bearer/Refresh Token snapshot that issued the request: if credentials already rotated, retry with the latest Bearer; otherwise join the one in-flight refresh. An old response must never clear a newer `ready` state.
+- A legacy candidate may produce `Authorization: Bearer <token>` and `New-Api-User: <id>` only through the account-origin bound fetch. The candidate becomes trusted only when `/api/user/self` returns the same user ID. The token remains in Electron main-process runtime memory and never enters `SiteBalanceSession`, renderer IPC, logs, or diagnostics.
+- On cold start, legacy resolution first verifies Cookie plus the persisted account user ID. After an unauthenticated result, it may load the exact account origin in a hidden sandboxed BrowserWindow using the account's persistent partition, recover the minimal candidate, close the window, and re-run `/api/user/self`. This recovery never opens the interactive login UI.
 - Deprecated `session_cookie` records are migration-only, produce `login_required`, and are never sent directly.
 - Browser partitions retain Cookies, localStorage, IndexedDB, Service Workers, and other Chromium storage across window closure and app restart.
 - Login navigation is restricted to the account origin plus exact HTTPS origins `https://connect.linux.do` and `https://linux.do`; all other cross-origin navigation, popups, downloads, webviews, and permissions are denied.
@@ -69,8 +81,13 @@ class PendingBrowserAccountReferenceRegistry {
 - Logout clears transient account state and calls `clearStorageData({ origin: browser_origin })`; it does not clear the whole partition, shared LinuxDo state, or another binding's origin.
 - Deletion clears only the binding origin while another binding references the same partition. The final reference clears storage and cache for the whole partition, then removes the slot registry entry.
 - Account-bound management fetches use `redirect: "manual"`; code must never silently follow an API redirect outside the bound account origin.
+- `ManagementRequestContext.headers` from browser authentication is the authoritative verified header set. Balance/check-in services merge it last, never replace its `Authorization`, and never expand its user ID into generic multi-vendor aliases; compatibility probing remains limited to manual PAT/Cookie credentials.
 - A failed new-account login keeps its tentative partition in Electron main for a bounded retry lifetime. Repeated attempts for the same normalized base URL reuse that reference and one in-flight promise, preserving LinuxDo state without exposing it to the renderer.
 - A successful new-account login consumes the tentative reference into the saved account. Retry expiry and normal application shutdown clear an unpersisted tentative partition. Failed migration and re-login behavior remains account-bound: a newly allocated migration partition is cleared immediately, while an existing browser account keeps its referenced partition.
+- Closing an unfinished interactive login window is a verification request, not immediate cancellation: prevent destruction, await the coalesced active probe or run one final probe, then complete as `ready` only after the same-origin identity check succeeds; otherwise complete as `canceled` and close programmatically.
+- A verified browser login persists the sanitized account first. Existing Profiles bind through `ProfileService.bindProfileSiteBalanceSession`, which may change only `balance_session_id`; unsaved new Profiles keep the saved session selected only in renderer draft state.
+- Balance testing must reject an empty `selection === "new"` draft before generic empty-new-to-auto normalization. Browser mode prompts for login; PAT mode prompts for credentials/save. A complete PAT draft may continue through the existing save-then-test flow, while explicit `selection === "auto"` remains unchanged.
+- Profile Base URL opening uses a sandboxed CodeDeck BrowserWindow. A selected `browser_session` supplies its opaque persistent partition; otherwise use the dedicated application browser partition. This action never calls `shell.openExternal`.
 - `GET /api/user/checkin?month=YYYY-MM` may return `data.checkin_nonce`; the following POST must send `{ "checkin_nonce": "..." }`.
 
 ### 4. Validation & Error Matrix
@@ -84,7 +101,12 @@ class PendingBrowserAccountReferenceRegistry {
 - `404`, `405`, or a response unrelated to the pinned AuthBundle -> legacy browser-cookie capability.
 - Modern-shaped `401`, `409`, `429`, revocation, or protocol error -> terminal modern result; never downgrade.
 - Identity mismatch during re-login -> reject without changing the saved account.
-- Closing, canceling, logging out, or deleting during an identity probe rejects every late result; it cannot restore `ready` state or persist an identity.
+- Malformed `localStorage.user`, an empty token, or a non-positive ID -> ignore that field and use a valid UID/Cookie fallback when available; otherwise `login_required`.
+- Recovered legacy candidate ID differs from the saved or `/api/user/self` ID -> `login_required` with account-mismatch semantics; never retain the recovered Bearer.
+- Sub2API `auth_user.id` differs from `/api/v1/auth/me.id` or the saved account ID -> `login_required`; clear only the matching credential generation, never a newer rotated runtime credential.
+- Profile binding with a missing Profile -> `profile not found`; normalized Profile URL mismatch -> `Profile 与后台账号 Base URL 不一致`; missing session -> `后台账号不存在`.
+- A manual close request may still accept the currently active or one final verified probe. After the task is formally completed as canceled/failed, or after explicit cancel/logout/delete, every late result is rejected and cannot restore `ready` or persist an identity.
+- Empty new browser/PAT draft on balance test -> renderer error and no `profileManager.testBalance`; complete PAT draft -> save session/Profile first, then test.
 - `manual_required` remains CAPTCHA-specific and must not be used for expired login state.
 - API redirect -> expose the redirect response to authentication handling; never auto-follow it across origins.
 - Canceled/failed new-account login -> retain the tentative reference only for the bounded retry lifetime; expiry/shutdown clears storage/cache/Cookies and drops runtime state.
@@ -97,16 +119,19 @@ class PendingBrowserAccountReferenceRegistry {
 
 ### Forbidden Patterns
 
-- Persisting or logging refresh Cookies, AuthBundle payloads, dashboard Bearers, or SIDs.
+- Persisting or logging refresh Cookies, AuthBundle payloads, modern or legacy Bearers, complete `localStorage.user` payloads, or SIDs.
 - Sending browser secrets to renderer IPC or generic profile persistence.
 - Copying browser Cookies into `access_token` or a manual `Cookie` header.
 - Calling `/api/user/token` or fabricating `localStorage.user` in browser-session mode.
-- Reading legacy identity candidates from LinuxDo or any non-account origin, reading any localStorage field other than `uid`, or treating the candidate as proof of login without a matching `/api/user/self` response.
+- Reading legacy identity candidates from LinuxDo or any non-account origin, returning fields beyond `user.id`, `user.token`, and fallback `uid`, or treating storage contents as proof of login without a matching `/api/user/self` response.
 - Opening a login window from balance, check-in, or scheduler background work.
 - Clearing persistent partition storage when a login/check-in window closes normally.
 - Clearing a whole browser partition from account logout or from deletion while another binding references the slot.
 - Renumbering sparse slots, or deriving browser account labels from array order.
 - Allowing account-bound `Session.fetch` to use automatic redirect following.
+- Adding generic `Veloera-User`, `X-Api-User`, or other vendor aliases to an already verified browser request context.
+- Persisting Sub2API `auth_token`/`refresh_token`, sending them through renderer IPC, or refreshing again from a delayed 401 after credentials already rotated.
+- Opening a Profile Base URL in the system default browser or a partition different from its selected browser account.
 - Retaining a tentative new-account partition beyond its bounded retry lifetime or application shutdown, or retaining a failed migration partition.
 
 ### 6. Tests Required
@@ -114,12 +139,18 @@ class PendingBrowserAccountReferenceRegistry {
 - Persistence tests prove browser records drop credential fields and migrate legacy Cookie accounts in place.
 - Persistence tests cover legacy one-to-one slot migration, same-reference slot reuse, conflicting references, stable sparse labels, and lowest-hole allocation.
 - Manager tests cover slot-isolated partitions, origin-only logout/shared-reference deletion, final-reference partition cleanup, refresh serialization, cold-start SID omission, bounded SID retry, legacy classification, identity matching, and late-result rejection.
-- Interactive legacy-login tests cover exact-origin `localStorage.uid` access, positive-integer validation, the one-request `New-Api-User` scope, response identity matching, and refusal to read LinuxDo-origin storage.
+- Interactive close tests cover in-flight probe coalescing, one final probe after an earlier miss, verified close-to-ready, true close cancellation, programmatic close non-recursion, and rejection after confirmed cancellation.
+- Interactive legacy-login tests cover exact-origin `localStorage.user.id/token`, malformed-user UID fallback, positive-integer validation, legacy request headers, response identity matching, secret non-disclosure, and refusal to read LinuxDo-origin storage.
+- Cold-start legacy tests cover Cookie/user-ID first attempt, hidden persistent-partition recovery, candidate mismatch rejection, immediate hidden-window closure, and runtime secret cleanup on cancel/logout/delete/shutdown.
+- Sub2API manager tests cover strict-origin storage reads, root-level identity, hidden-window recovery, runtime-only refresh tokens, one refresh for concurrent 401 responses, and delayed-401 retry with the latest Bearer.
 - Navigation tests allow only account origin and the two fixed LinuxDo HTTPS origins.
 - Lifecycle tests prove shutdown/window closure preserves all Chromium storage, logout clears only the binding origin, shared-reference deletion preserves LinuxDo state, and final-reference deletion clears the whole partition.
 - Request tests assert `redirect: "manual"`; tentative-reference tests assert same-origin retry reuse, concurrent coalescing, success handoff, cross-origin isolation, TTL cleanup, and shutdown cleanup.
 - Balance/check-in tests assert browser Cookie mode has no synthesized `Cookie` header and browser Bearer mode has no legacy user headers.
+- Balance and check-in tests assert browser request-context headers cannot be overridden, do not trigger user-ID alias retries, and preserve manual PAT/Cookie compatibility probing, including learned and scheduled check-in paths.
 - Scheduler/state tests cover explicit `login_required` and no-window/no-retry behavior.
+- Profile service/IPC tests prove binding validates normalized URL/session existence and changes only `balance_session_id` plus related balance caches.
+- Renderer tests prove existing Profiles bind without saving unrelated draft fields, unsaved new Profiles remain unsaved, browser reference fields survive hydration, empty new browser/PAT drafts never route to API auto during balance testing, and complete PAT drafts save before testing.
 
 ### 7. Wrong vs Correct
 
@@ -144,4 +175,26 @@ await manager.deleteAccount(accountKey, account, true);
 // Correct: the main-process owner decides cleanup from the remaining references.
 const clearWholePartition = remainingReferences.length === 0;
 await manager.deleteAccount(accountKey, account, clearWholePartition);
+
+// Wrong: closing the login window immediately finalizes cancellation.
+browserWindow.on("closed", () => completeLogin(task, canceledResult));
+
+// Correct: close first performs one controlled verification decision.
+browserWindow.on("close", (event) => {
+  event.preventDefault();
+  void finalizeLoginOnClose(task);
+});
+
+// Wrong: balance testing normalizes an unfinished new account to API auto.
+await saveCurrentProfile();
+await profileManager.testBalance(profileKey);
+
+// Correct: reject empty new drafts before the generic normalization path.
+if (isEmptyNewBalanceSessionDraft(selection, draft)) return showActionableError();
+
+// Wrong: loses the browser account partition and opens outside CodeDeck.
+await shell.openExternal(baseUrl);
+
+// Correct: reuse the selected browser account partition in a sandboxed window.
+await openProfileSiteBrowser(baseUrl, selectedBrowserSessionId);
 ```

@@ -4,6 +4,10 @@ import type {
   TerminalSessionSnapshot,
   TerminalSessionSubscriber,
 } from "../electron/terminal-session-manager.js";
+import {
+  containsBusyTerminalOutput,
+  containsInteractiveTerminalPrompt,
+} from "../electron/terminal-activity.js";
 import { cleanTerminalText } from "./protocol.js";
 import {
   normalizeClaudeReasoningEffort,
@@ -25,6 +29,7 @@ export interface AgentTaskLaunchOptions {
   cwd?: string;
   showTerminal: boolean;
   initialPrompt: string;
+  orchestrator: boolean;
   model?: string;
   reasoningEffort?: string;
   childTaskId: string;
@@ -75,6 +80,10 @@ interface AgentTaskRecord {
   pendingSubmitTimer?: ReturnType<typeof setTimeout>;
   turnNumber: number;
   completedTurnNumber: number;
+  completingTurnNumber?: number;
+  interruptedTurnNumber?: number;
+  busyTurnNumber?: number;
+  interactiveResponseTurnNumber?: number;
   updatedAt: number;
   parentSessionId: string | null;
   returnPolicy: AgentReturnPolicy;
@@ -84,6 +93,7 @@ interface AgentTaskRecord {
   pendingDeliveries: AgentPendingDelivery[];
   deliverySubmitTimer?: ReturnType<typeof setTimeout>;
   callbackToken?: string;
+  orchestrator: boolean;
 }
 
 interface AgentPendingDelivery {
@@ -91,16 +101,13 @@ interface AgentPendingDelivery {
   assistantText: string;
 }
 
-const MAX_TERMINAL_OUTPUT_CHARS = 64_000;
+const MAX_TERMINAL_OUTPUT_CHARS = 256_000;
 const MAX_TERMINAL_TAIL_CHARS = 8_000;
 const STARTUP_INPUT_QUIET_MS = 1_000;
 const STARTUP_READY_TIMEOUT_MS = 60_000;
-const PASTED_INPUT_SUBMIT_DELAY_MS = 25;
+const PASTED_INPUT_SUBMIT_DELAY_MS = 250;
 const MAX_DELIVERY_PROMPT_CHARS = 64_000;
 const CLI_READY_PROMPT_PATTERN = /(?:^|\n)\s*[›❯]\s+[^\n]*(?:\n|$)/;
-const INTERACTIVE_PROMPT_PATTERN =
-  /(?:do you want to proceed|would you like to|allow (?:this|once|always)|approve (?:this|once|always)|enter to confirm|press enter|continue\?|proceed\?|\(y\/n\)|\[y\/n\]|是否(?:允许|继续|确认)|需要(?:授权|确认)|请选择)/i;
-
 interface AgentTaskInput {
   data: string;
   submitSeparately: boolean;
@@ -128,9 +135,10 @@ export class AgentTaskManager {
   private readonly tasks = new Map<string, AgentTaskRecord>();
   private readonly terminalToTask = new Map<string, string>();
   private readonly callbackTokens = new Map<string, string>();
+  private readonly launchingChildByParent = new Set<string>();
   private readonly activeDeliveryByParent = new Map<
     string,
-    { sessionId: string; turnNumber: number }
+    { sessionId: string; turnNumber: number; submitted: boolean }
   >();
   private readonly now: () => number;
   private pendingLaunches = 0;
@@ -157,6 +165,7 @@ export class AgentTaskManager {
     cwd?: string;
     waitMs?: number;
     showTerminal?: boolean;
+    orchestrator?: boolean;
     model?: string;
     reasoningEffort?: string;
     parentSessionId?: string;
@@ -174,10 +183,17 @@ export class AgentTaskManager {
     }
     const reasoningEffort = this.validateReasoningEffort(profile.provider, options.reasoningEffort);
     const parentSessionId = options.parentSessionId?.trim() || null;
+    if (options.orchestrator && parentSessionId) {
+      throw new AgentBridgeRequestError(
+        "invalid_parent",
+        "编排父会话不能再绑定上级终端。",
+      );
+    }
+    const trackedParent = parentSessionId ? this.findByTerminal(parentSessionId) : undefined;
     if (
       parentSessionId
       && (
-        this.terminalToTask.has(parentSessionId)
+        (trackedParent !== undefined && !trackedParent.orchestrator)
         || !this.dependencies.terminal.verifyParentContext(
           parentSessionId,
           options.parentToken?.trim() ?? "",
@@ -185,6 +201,20 @@ export class AgentTaskManager {
       )
     ) {
       throw new AgentBridgeRequestError("invalid_parent", "父终端身份无效或已停止。");
+    }
+    if (
+      parentSessionId
+      && trackedParent?.orchestrator
+      && (
+        this.launchingChildByParent.has(parentSessionId)
+        || this.hasLiveBoundChild(parentSessionId)
+      )
+    ) {
+      throw new AgentBridgeRequestError(
+        "child_already_bound",
+        "编排父会话已有一个存活的代理会话。",
+        true,
+      );
     }
     if (!parentSessionId && options.returnPolicy && options.returnPolicy !== "manual") {
       throw new AgentBridgeRequestError("invalid_parent", "自动回传策略必须绑定受监控父终端。");
@@ -195,6 +225,12 @@ export class AgentTaskManager {
       throw new AgentBridgeRequestError("capacity_exceeded", "代理任务已达到并发上限。", true);
     }
 
+    const reservedOrchestratorParent = parentSessionId && trackedParent?.orchestrator
+      ? parentSessionId
+      : null;
+    if (reservedOrchestratorParent) {
+      this.launchingChildByParent.add(reservedOrchestratorParent);
+    }
     let launched: AgentTaskLaunchResult;
     this.pendingLaunches += 1;
     try {
@@ -203,6 +239,7 @@ export class AgentTaskManager {
         cwd: options.cwd,
         showTerminal: options.showTerminal === true,
         initialPrompt: options.prompt,
+        orchestrator: options.orchestrator === true,
         ...(options.model?.trim() ? { model: options.model.trim() } : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
         childTaskId: sessionId,
@@ -218,6 +255,9 @@ export class AgentTaskManager {
       );
     } finally {
       this.pendingLaunches -= 1;
+      if (reservedOrchestratorParent) {
+        this.launchingChildByParent.delete(reservedOrchestratorParent);
+      }
     }
 
     const pendingInitialInput = launched.initialPromptSubmitted
@@ -246,6 +286,7 @@ export class AgentTaskManager {
       deliveredTurnNumber: 0,
       pendingDeliveries: [],
       callbackToken,
+      orchestrator: options.orchestrator === true,
     };
     this.tasks.set(sessionId, task);
     this.terminalToTask.set(task.terminalSessionId, sessionId);
@@ -277,33 +318,50 @@ export class AgentTaskManager {
     if (this.dependencies.isProfileBlocked(task.profileKey)) {
       throw new AgentBridgeRequestError("profile_blocked", "该 Profile 已被代理接口黑名单禁用。");
     }
+    if (
+      task.parentSessionId
+      && (
+        task.parentSessionId !== parentSessionId
+        || !this.dependencies.terminal.verifyParentContext(
+          parentSessionId ?? "",
+          parentToken?.trim() ?? "",
+        )
+      )
+    ) {
+      throw new AgentBridgeRequestError("unauthorized", "只能继续当前父终端创建的代理会话。");
+    }
     const snapshot = this.dependencies.terminal.getSnapshot(task.terminalSessionId);
     if (!snapshot || snapshot.status !== "running") {
       throw new AgentBridgeRequestError("session_not_running", "代理会话已停止，无法继续。");
     }
-    if (waitingStatus(task.status)) {
+    const acceptsUnobservedCodexTrustResponse = task.provider === "codex"
+      && task.status === "running"
+      && task.turnNumber === 1
+      && task.completedTurnNumber === 0
+      && !task.providerSessionId
+      && !task.terminalOutput
+      && task.busyTurnNumber !== task.turnNumber
+      && snapshot.activity === "idle"
+      && prompt.trim() === "1";
+    if (waitingStatus(task.status) && !acceptsUnobservedCodexTrustResponse) {
       throw new AgentBridgeRequestError("session_busy", "代理会话仍在处理上一轮输入。", true);
     }
     if (returnPolicy) {
-      if (
-        task.parentSessionId
-        && (
-          task.parentSessionId !== parentSessionId
-          || !this.dependencies.terminal.verifyParentContext(
-            parentSessionId,
-            parentToken?.trim() ?? "",
-          )
-        )
-      ) {
-        throw new AgentBridgeRequestError("unauthorized", "只能修改当前父终端创建的回传绑定。");
-      }
       this.setReturnPolicy(task, returnPolicy);
     }
     if (!occupiedStatus(task.status) && this.countRunningTasks() >= this.getConcurrencyLimit()) {
       throw new AgentBridgeRequestError("capacity_exceeded", "代理任务已达到并发上限。", true);
     }
-    task.turnNumber += 1;
+    const resumesInteractivePrompt = task.status === "awaiting_input"
+      || acceptsUnobservedCodexTrustResponse;
+    if (!resumesInteractivePrompt) {
+      task.turnNumber += 1;
+    }
     task.status = "running";
+    task.busyTurnNumber = undefined;
+    task.interactiveResponseTurnNumber = resumesInteractivePrompt
+      ? task.turnNumber
+      : undefined;
     task.assistantText = "";
     task.question = null;
     task.terminalOutput = "";
@@ -356,6 +414,7 @@ export class AgentTaskManager {
       throw new AgentBridgeRequestError("unauthorized", "只能中断当前父终端创建的代理会话。");
     }
     this.interruptTerminal(task.terminalSessionId, "代理会话当前没有可中断的运行轮次。");
+    task.interruptedTurnNumber = task.turnNumber;
     task.updatedAt = this.now();
     this.notify(task);
     return this.toResponse(task);
@@ -379,6 +438,7 @@ export class AgentTaskManager {
     }));
     this.terminalToTask.clear();
     this.callbackTokens.clear();
+    this.launchingChildByParent.clear();
     this.activeDeliveryByParent.clear();
   }
 
@@ -388,21 +448,51 @@ export class AgentTaskManager {
     return this.toResponse(task);
   }
 
+  scopedStatusParent(token: string): AgentTaskResponse {
+    return this.toResponse(this.requireScopedParentTask(token));
+  }
+
+  async scopedContinueParent(token: string, prompt: string): Promise<AgentTaskResponse> {
+    const parentTask = this.requireScopedParentTask(token);
+    const snapshot = this.dependencies.terminal.getSnapshot(parentTask.terminalSessionId);
+    if (!snapshot || snapshot.status !== "running") {
+      throw new AgentBridgeRequestError("session_not_running", "父会话已停止，无法继续。", false);
+    }
+    if (snapshot.activity === "busy" || waitingStatus(parentTask.status)) {
+      throw new AgentBridgeRequestError("session_busy", "父会话仍在处理上一轮输入。", true);
+    }
+    return this.continue(parentTask.sessionId, prompt, 0);
+  }
+
   scopedInterruptParent(token: string): AgentTaskResponse {
     const task = this.requireScopedTask(token);
     if (!task.parentSessionId) {
       throw new AgentBridgeRequestError("invalid_parent", "该代理会话没有父终端绑定。");
     }
     this.interruptTerminal(task.parentSessionId, "父会话当前没有可中断的运行轮次。");
+    const parentTask = this.findByTerminal(task.parentSessionId);
+    if (parentTask) {
+      parentTask.interruptedTurnNumber = parentTask.turnNumber;
+      parentTask.updatedAt = this.now();
+      this.notify(parentTask);
+    }
     task.updatedAt = this.now();
     this.notify(task);
     return this.toResponse(task);
   }
 
   handleActivityChange(event: TerminalSessionActivityEvent): void {
-    if (event.reason === "turn_completed" && event.activity === "idle") {
-      this.activeDeliveryByParent.delete(event.sessionId);
-      this.flushDeliveriesForParent(event.sessionId);
+    if (event.activity === "busy" && event.reason === "submitted_input") {
+      this.finishEarlyDeliverySubmission(event.sessionId);
+    }
+    const completedActivity = event.activity === "idle"
+      && (event.reason === "turn_completed" || event.reason === "idle_prompt");
+    if (completedActivity) {
+      const activeDelivery = this.activeDeliveryByParent.get(event.sessionId);
+      if (!activeDelivery || activeDelivery.submitted) {
+        this.activeDeliveryByParent.delete(event.sessionId);
+        this.flushDeliveriesForParent(event.sessionId);
+      }
     } else if (event.reason === "process_exit" || event.reason === "session_closed") {
       this.activeDeliveryByParent.delete(event.sessionId);
       this.failDeliveriesForParent(event.sessionId);
@@ -411,14 +501,66 @@ export class AgentTaskManager {
     if (!task) {
       return;
     }
-    if (event.reason === "turn_started") {
+    if (
+      event.activity === "busy"
+      && (
+        event.reason === "submitted_input"
+        || event.reason === "busy_output"
+        || event.reason === "turn_started"
+      )
+    ) {
+      if (
+        event.reason === "submitted_input"
+        && task.interactiveResponseTurnNumber === task.turnNumber
+      ) {
+        task.interactiveResponseTurnNumber = undefined;
+        task.status = "running";
+        task.question = null;
+        task.updatedAt = this.now();
+        this.notify(task);
+        return;
+      }
+      const resumedFromPrompt = task.status === "awaiting_input";
+      const startsNewTurn = task.status === "completed"
+        || (
+          task.status === "running"
+          && task.completingTurnNumber === task.turnNumber
+          && (event.reason === "submitted_input" || event.reason === "turn_started")
+        );
+      if (
+        startsNewTurn
+        && (event.reason === "submitted_input" || event.reason === "turn_started")
+      ) {
+        task.turnNumber += 1;
+        task.assistantText = "";
+        task.terminalOutput = "";
+        task.error = null;
+      }
+      if (task.status === "completed" && event.reason === "busy_output") {
+        return;
+      }
       task.status = "running";
+      task.busyTurnNumber = task.turnNumber;
+      task.interactiveResponseTurnNumber = undefined;
       task.question = null;
+      if (resumedFromPrompt) {
+        task.terminalOutput = "";
+      }
       task.updatedAt = this.now();
       this.notify(task);
       return;
     }
-    if (event.reason === "turn_completed") {
+    if (
+      event.reason === "turn_completed"
+      || (
+        event.reason === "idle_prompt"
+        && task.status === "running"
+        && (
+          task.busyTurnNumber === task.turnNumber
+          || task.interruptedTurnNumber === task.turnNumber
+        )
+      )
+    ) {
       void this.completeTurn(task);
     }
   }
@@ -438,29 +580,42 @@ export class AgentTaskManager {
 
   private async completeTurn(task: AgentTaskRecord): Promise<void> {
     const turnNumber = task.turnNumber;
-    if (task.completedTurnNumber === turnNumber) {
+    if (
+      task.completedTurnNumber === turnNumber
+      || task.completingTurnNumber === turnNumber
+    ) {
       return;
     }
+    task.completingTurnNumber = turnNumber;
     let assistantText = "";
-    if (task.sessionFile) {
-      for (let attempt = 0; attempt < 5 && !assistantText; attempt += 1) {
-        if (attempt > 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    try {
+      if (task.sessionFile && task.interruptedTurnNumber !== turnNumber) {
+        for (let attempt = 0; attempt < 5 && !assistantText; attempt += 1) {
+          if (attempt > 0) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
+          }
+          assistantText = await this.dependencies.readLastAssistantText(task.sessionFile)
+            .catch(() => "");
         }
-        assistantText = await this.dependencies.readLastAssistantText(task.sessionFile)
-          .catch(() => "");
+      }
+      if (task.status === "cancelled" || task.turnNumber !== turnNumber) {
+        return;
+      }
+      task.assistantText = assistantText;
+      task.completedTurnNumber = turnNumber;
+      task.status = "completed";
+      task.question = null;
+      if (task.interruptedTurnNumber === turnNumber) {
+        task.interruptedTurnNumber = undefined;
+      }
+      task.updatedAt = this.now();
+      this.notify(task);
+      await this.scheduleDelivery(task, turnNumber);
+    } finally {
+      if (task.completingTurnNumber === turnNumber) {
+        task.completingTurnNumber = undefined;
       }
     }
-    if (task.status === "cancelled" || task.turnNumber !== turnNumber) {
-      return;
-    }
-    task.assistantText = assistantText;
-    task.completedTurnNumber = turnNumber;
-    task.status = "completed";
-    task.question = null;
-    task.updatedAt = this.now();
-    this.notify(task);
-    await this.scheduleDelivery(task, turnNumber);
   }
 
   private handleOutput(task: AgentTaskRecord, chunk: string): void {
@@ -473,8 +628,11 @@ export class AgentTaskManager {
     if (!waitingStatus(task.status)) {
       return;
     }
-    const visibleTail = cleanTerminalText(task.terminalOutput.slice(-4_000));
-    if (INTERACTIVE_PROMPT_PATTERN.test(visibleTail)) {
+    const visibleTail = cleanTerminalText(task.terminalOutput).slice(-4_000);
+    if (
+      containsInteractiveTerminalPrompt(visibleTail)
+      && !containsBusyTerminalOutput(visibleTail)
+    ) {
       task.status = "awaiting_input";
       task.question = visibleTail.slice(-1_000);
       this.notify(task);
@@ -512,7 +670,7 @@ export class AgentTaskManager {
       clearTimeout(task.startupQuietTimer);
       task.startupQuietTimer = undefined;
     }
-    const visibleTail = cleanTerminalText(task.terminalOutput.slice(-8_000));
+    const visibleTail = cleanTerminalText(task.terminalOutput).slice(-8_000);
     if (!CLI_READY_PROMPT_PATTERN.test(visibleTail)) {
       return;
     }
@@ -644,6 +802,12 @@ export class AgentTaskManager {
     return sessionId ? this.tasks.get(sessionId) : undefined;
   }
 
+  private hasLiveBoundChild(parentSessionId: string): boolean {
+    return [...this.tasks.values()].some((task) =>
+      task.parentSessionId === parentSessionId
+      && this.dependencies.terminal.getSnapshot(task.terminalSessionId)?.status === "running");
+  }
+
   private requireTask(sessionId: string): AgentTaskRecord {
     const task = this.tasks.get(sessionId);
     if (!task) {
@@ -658,6 +822,23 @@ export class AgentTaskManager {
       throw new AgentBridgeRequestError("unauthorized", "作用域回传凭据无效或已过期。");
     }
     return this.requireTask(sessionId);
+  }
+
+  private requireScopedParentTask(token: string): AgentTaskRecord {
+    const childTask = this.requireScopedTask(token);
+    if (!childTask.parentSessionId) {
+      throw new AgentBridgeRequestError("invalid_parent", "该代理会话没有父终端绑定。");
+    }
+    const parentTask = [...this.tasks.values()].find(
+      (task) => task.terminalSessionId === childTask.parentSessionId,
+    );
+    if (!parentTask?.orchestrator) {
+      throw new AgentBridgeRequestError(
+        "invalid_parent",
+        "绑定父终端不是可续接的编排会话。",
+      );
+    }
+    return parentTask;
   }
 
   private interruptTerminal(terminalSessionId: string, idleMessage: string): void {
@@ -758,6 +939,7 @@ export class AgentTaskManager {
     this.activeDeliveryByParent.set(task.parentSessionId, {
       sessionId: task.sessionId,
       turnNumber: delivery.turnNumber,
+      submitted: false,
     });
     const text = delivery.assistantText.length > MAX_DELIVERY_PROMPT_CHARS
       ? delivery.assistantText.slice(0, MAX_DELIVERY_PROMPT_CHARS) + "\n[内容过长，已截断；完整回答可通过 status 查询]"
@@ -793,25 +975,46 @@ export class AgentTaskManager {
       }
       try {
         if (input.submitSeparately) {
+          activeDelivery.submitted = true;
           this.dependencies.terminal.sendInput(parentSessionId, "\r");
         }
       } catch {
         this.failDelivery(task, "父终端输入失败，无法自动回传。");
         return;
       }
-      task.pendingDeliveries = task.pendingDeliveries.filter(
-        (pending) => pending.turnNumber !== delivery.turnNumber,
-      );
-      task.deliveredTurnNumber = Math.max(task.deliveredTurnNumber, delivery.turnNumber);
-      task.deliveryError = null;
-      if (task.returnPolicy === "once") {
-        task.returnPolicy = "manual";
-        task.pendingDeliveries = [];
-      }
-      task.deliveryStatus = task.pendingDeliveries.length > 0 ? "pending" : "delivered";
-      task.updatedAt = this.now();
-      this.notify(task);
+      this.finishDeliverySubmission(task, delivery);
     }, PASTED_INPUT_SUBMIT_DELAY_MS);
+  }
+
+  private finishEarlyDeliverySubmission(parentSessionId: string): void {
+    const activeDelivery = this.activeDeliveryByParent.get(parentSessionId);
+    if (!activeDelivery || activeDelivery.submitted) return;
+    const task = this.tasks.get(activeDelivery.sessionId);
+    const delivery = task?.pendingDeliveries.find(
+      (candidate) => candidate.turnNumber === activeDelivery.turnNumber,
+    );
+    if (!task || !delivery) return;
+    activeDelivery.submitted = true;
+    this.finishDeliverySubmission(task, delivery);
+  }
+
+  private finishDeliverySubmission(task: AgentTaskRecord, delivery: AgentPendingDelivery): void {
+    if (task.deliverySubmitTimer) {
+      clearTimeout(task.deliverySubmitTimer);
+      task.deliverySubmitTimer = undefined;
+    }
+    task.pendingDeliveries = task.pendingDeliveries.filter(
+      (pending) => pending.turnNumber !== delivery.turnNumber,
+    );
+    task.deliveredTurnNumber = Math.max(task.deliveredTurnNumber, delivery.turnNumber);
+    task.deliveryError = null;
+    if (task.returnPolicy === "once") {
+      task.returnPolicy = "manual";
+      task.pendingDeliveries = [];
+    }
+    task.deliveryStatus = task.pendingDeliveries.length > 0 ? "pending" : "delivered";
+    task.updatedAt = this.now();
+    this.notify(task);
   }
 
   private failDelivery(task: AgentTaskRecord, message: string): void {

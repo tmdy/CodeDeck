@@ -115,6 +115,7 @@ export class CheckinService {
     const accessToken = session.access_token.trim();
     const requestContext = diagnostics?.managementRequestContext;
     const savedUserId = session.user_id.trim() || null;
+    const requestContextSensitiveValues = collectRequestContextSensitiveValues(requestContext);
     const checkinEndpoint = `${baseUrl}/api/user/checkin`;
     const failures: CheckinResult[] = [];
     const deadline = Date.now() + Math.max(1, timeoutMs);
@@ -128,7 +129,7 @@ export class CheckinService {
       options: CheckinRequestOptions = {},
     ) => this.request(endpoint, timeout, headers, options, requestContext);
     const userIdHeaders = (userId: string | null): Record<string, string> => (
-      userId && requestContext?.userIdHeaderPolicy !== "omit"
+      userId && !requestContext
         ? buildUserIdHeaders(userId)
         : {}
     );
@@ -139,13 +140,14 @@ export class CheckinService {
       userId?: string | null,
     ): string[] => [
       accessToken,
+      ...requestContextSensitiveValues,
       ...Object.values(transport?.headers ?? {}),
       ...knownUserIds,
       userId ?? "",
     ];
 
     const finish = (result: CheckinResult): CheckinResult => {
-      const normalized = normalizeFinalFailure(result);
+      const normalized = normalizeFinalFailure(result, !requestContext);
       const sanitizedMessage = sanitizeDiagnosticMessage(
         normalized.message,
         sensitiveValues(),
@@ -169,7 +171,7 @@ export class CheckinService {
       });
     };
 
-    if (isKnownUnsupportedCheckinPlatform(baseUrl)) {
+    if (!requestContext && isKnownUnsupportedCheckinPlatform(baseUrl)) {
       return finish(unsupportedResult(
         `${baseUrl}/api/user/checkin`,
         baseUrl,
@@ -185,7 +187,7 @@ export class CheckinService {
       ));
     }
 
-    if (isVoApiV2BaseUrl(baseUrl)) {
+    if (!requestContext && isVoApiV2BaseUrl(baseUrl)) {
       const result = await this.tryVoApiV2Checkin(baseUrl, accessToken, deadline);
       if (result) {
         learnPath(result, {
@@ -388,6 +390,14 @@ export class CheckinService {
       let userId = savedUserId;
       let userIdSource: CheckinUserIdSource = userId ? "saved" : "none";
       if (!userId) {
+        if (requestContext) {
+          failures.push(failedResult(
+            checkinEndpoint,
+            "浏览器后台账号缺少已验证的用户 ID",
+            "user_id_missing",
+          ));
+          return null;
+        }
         userId = await discoverUserId(transport);
         userIdSource = userId ? "discovered" : "none";
         if (!userId) {
@@ -397,7 +407,8 @@ export class CheckinService {
 
       let statusAttempt = await probeCheckinStatus(transport, userId, userIdSource);
       if (
-        userIdSource === "saved"
+        !requestContext
+        && userIdSource === "saved"
         && (statusAttempt.inspection.diagnosticResult.error_code === "user_id_missing"
           || statusAttempt.inspection.diagnosticResult.error_code === "user_id_mismatch")
       ) {
@@ -432,7 +443,8 @@ export class CheckinService {
         body,
       );
       if (
-        userIdSource === "saved"
+        !requestContext
+        && userIdSource === "saved"
         && (attempt.result.error_code === "user_id_missing"
           || attempt.result.error_code === "user_id_mismatch")
       ) {
@@ -481,17 +493,19 @@ export class CheckinService {
 
     const learnedPath = diagnostics?.learnedPath;
     if (learnedPath?.platform === "voapi_v2") {
-      const learnedResult = await this.tryVoApiV2Checkin(baseUrl, accessToken, deadline);
-      if (learnedResult && !isDeterministicPathFailure(learnedResult)) {
-        learnPath(learnedResult, {
-          platform: "voapi_v2",
-          endpoint_path: "/api/check_in",
-          method: "POST",
-          authorization_mode: "raw",
-          cookie_mode: "none",
-          requires_user_id: false,
-        });
-        return finish(learnedResult);
+      if (!requestContext) {
+        const learnedResult = await this.tryVoApiV2Checkin(baseUrl, accessToken, deadline);
+        if (learnedResult && !isDeterministicPathFailure(learnedResult)) {
+          learnPath(learnedResult, {
+            platform: "voapi_v2",
+            endpoint_path: "/api/check_in",
+            method: "POST",
+            authorization_mode: "raw",
+            cookie_mode: "none",
+            requires_user_id: false,
+          });
+          return finish(learnedResult);
+        }
       }
       diagnostics?.onPathInvalidated?.();
     } else if (learnedPath?.platform === "management") {
@@ -788,8 +802,8 @@ export class CheckinService {
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          ...requestContext?.headers,
           ...headers,
+          ...requestContext?.headers,
         },
         ...(method === "POST" ? { body: options.body ?? "{}" } : {}),
         signal: controller.signal,
@@ -1047,14 +1061,19 @@ function isAuthErrorCode(errorCode: CheckinErrorCode | undefined): boolean {
     || errorCode === "user_id_mismatch";
 }
 
-function normalizeFinalFailure(result: CheckinResult): CheckinResult {
+function normalizeFinalFailure(
+  result: CheckinResult,
+  userIdDiscoveryAllowed: boolean,
+): CheckinResult {
   if (result.success || result.status === "manual_required" || result.error_code === "business_rejected") {
     return result;
   }
   if (result.error_code === "user_id_missing" || result.error_code === "user_id_mismatch") {
     return {
       ...result,
-      message: "签到用户 ID 未匹配；已尝试保存值和同一凭证自动发现值",
+      message: userIdDiscoveryAllowed
+        ? "签到用户 ID 未匹配；已尝试保存值和同一凭证自动发现值"
+        : "浏览器认证上下文未通过签到用户 ID 校验",
     };
   }
   if (isAuthErrorCode(result.error_code)) {
@@ -1372,6 +1391,19 @@ function sanitizeDiagnosticMessage(message: string, sensitiveValues: string[]): 
     .replace(/\s+/g, " ")
     .trim();
   return sanitized.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH);
+}
+
+function collectRequestContextSensitiveValues(
+  requestContext: ManagementRequestContext | undefined,
+): string[] {
+  if (!requestContext) return [];
+  return Object.entries(requestContext.headers).flatMap(([name, rawValue]) => {
+    const value = rawValue.trim();
+    if (!value) return [];
+    if (name.toLowerCase() !== "authorization") return [value];
+    const credential = value.replace(/^\S+\s+/u, "").trim();
+    return credential && credential !== value ? [value, credential] : [value];
+  });
 }
 
 function escapeRegExp(value: string): string {

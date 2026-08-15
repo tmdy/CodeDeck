@@ -347,6 +347,103 @@ describe("ProfileService", () => {
     });
   });
 
+  describe("bindProfileSiteBalanceSession", () => {
+    it("binds only the matching saved backend account to an existing profile", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const profileKey = itemKey(profile);
+      const accessor = new MemoryStateAccessor({
+        balance_checks_by_profile: {
+          [profileKey]: {
+            provider: "codex",
+            profile_name: "Relay",
+            base_url: "https://new-api.example.com",
+            running: false,
+            supported: true,
+            success: false,
+            message: "旧余额结果",
+            items: [],
+            endpoint: "https://new-api.example.com/api/user/self",
+            finished_at_display: "2026/08/15 12:00:00",
+          },
+        },
+      });
+      const localService = new ProfileService([profile], accessor, null, {
+        "https://new-api.example.com": [makeSiteSession("sess-a", "账号1")],
+      });
+
+      const bound = await localService.bindProfileSiteBalanceSession(
+        profileKey,
+        "https://new-api.example.com/v1/chat/completions",
+        "sess-a",
+      );
+
+      expect(bound).toEqual(expect.objectContaining({
+        provider: profile.provider,
+        name: profile.name,
+        url: profile.url,
+        key: profile.key,
+        balance_session_id: "sess-a",
+      }));
+      expect(localService.getProfiles()).toEqual([bound]);
+      expect(accessor.get().balance_checks_by_profile[profileKey]).toBeUndefined();
+    });
+
+    it("rejects missing profiles, URL mismatches, and missing backend accounts", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), null, {
+        "https://new-api.example.com": [makeSiteSession("sess-a", "账号1")],
+      });
+
+      await expect(localService.bindProfileSiteBalanceSession(
+        "codex::Missing",
+        profile.url,
+        "sess-a",
+      )).rejects.toThrow("profile not found");
+      await expect(localService.bindProfileSiteBalanceSession(
+        itemKey(profile),
+        "https://other.example.com/v1",
+        "sess-a",
+      )).rejects.toThrow("Base URL 不一致");
+      await expect(localService.bindProfileSiteBalanceSession(
+        itemKey(profile),
+        profile.url,
+        "missing-session",
+      )).rejects.toThrow("后台账号不存在");
+    });
+
+    it("rejects a session whose stored base URL disagrees with its map key", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const mismatchedSession = {
+        ...makeSiteSession("sess-a", "账号1"),
+        base_url: "https://other.example.com",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), null, {
+        "https://new-api.example.com": [mismatchedSession],
+      });
+
+      await expect(localService.bindProfileSiteBalanceSession(
+        itemKey(profile),
+        profile.url,
+        "sess-a",
+      )).rejects.toThrow("Base URL 不一致");
+    });
+  });
+
   describe("deleteProfile", () => {
     it("should delete existing profile", async () => {
       const key = itemKey(makeProfiles()[0]);

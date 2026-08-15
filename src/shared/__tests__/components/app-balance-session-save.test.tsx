@@ -115,6 +115,12 @@ function createProfileManagerFixture(
       label: draft.label,
       base_url: baseUrl,
       access_token: draft.access_token,
+      auth_kind: draft.auth_kind ?? "access_token",
+      ...(draft.browser_session_id ? { browser_session_id: draft.browser_session_id } : {}),
+      ...(draft.browser_slot ? { browser_slot: draft.browser_slot } : {}),
+      ...(draft.browser_origin ? { browser_origin: draft.browser_origin } : {}),
+      ...(draft.refresh_token ? { refresh_token: draft.refresh_token } : {}),
+      ...(draft.token_expires_at ? { token_expires_at: draft.token_expires_at } : {}),
       user_id: draft.user_id,
       updated_at: "2026-05-05T10:00:00.000Z",
     };
@@ -130,6 +136,19 @@ function createProfileManagerFixture(
     profiles = [{ ...draft }];
     state = createState(profiles, draft, runtimeDraft);
     return draft;
+  });
+  const bindProfileSiteBalanceSession = vi.fn(async (
+    profileKey: string,
+    _baseUrl: string,
+    sessionId: string,
+  ) => {
+    const index = profiles.findIndex((profile) => itemKey(profile) === profileKey);
+    if (index < 0) throw new Error("profile not found");
+    const updated = { ...profiles[index], balance_session_id: sessionId };
+    profiles = profiles.map((profile, currentIndex) => (
+      currentIndex === index ? updated : { ...profile }
+    ));
+    return updated;
   });
   const testBalance = vi.fn(async () => undefined);
   const balanceState: BalanceCheckState = {
@@ -181,6 +200,7 @@ function createProfileManagerFixture(
     reorderProfiles: vi.fn(async () => undefined),
     activateProvider: vi.fn(async () => undefined),
     saveSiteBalanceSession,
+    bindProfileSiteBalanceSession,
     deleteSiteBalanceSession: vi.fn(async () => undefined),
     pickWorkingDirectory: vi.fn(async () => undefined),
     openBaseUrl: vi.fn(async () => undefined),
@@ -220,6 +240,7 @@ function createProfileManagerFixture(
   return {
     manager,
     saveSiteBalanceSession,
+    bindProfileSiteBalanceSession,
     saveProfile,
     testBalance,
   };
@@ -322,6 +343,38 @@ describe("App balance session autosave", () => {
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
   }
+
+  it("opens the Profile URL with the currently selected browser account", async () => {
+    const profile = { ...baseProfile, balance_session_id: "browser-account" };
+    const fixture = createProfileManagerFixture([profile], {
+      "https://new-api.example.com": [{
+        id: "browser-account",
+        label: "账号1",
+        base_url: "https://new-api.example.com",
+        access_token: "",
+        auth_kind: "browser_session",
+        browser_session_id: "browser-reference",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+        user_id: "42",
+        updated_at: "2026-08-15T10:00:00.000Z",
+      }],
+    });
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await act(async () => {
+      clickExactButtonByText(container, "打开");
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.openBaseUrl).toHaveBeenCalledWith(
+      "https://new-api.example.com/v1",
+      "browser-account",
+    );
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
 
   it("renders fetched model count after refreshing the site model list", async () => {
     const fixture = createProfileManagerFixture();
@@ -530,7 +583,7 @@ describe("App balance session autosave", () => {
         { slot: 3, browser_session_id: "slot-three" },
       ],
     );
-    const loginBrowserAccount = vi.fn(async () => ({
+    const savedBrowserSession = {
       id: "sess-browser",
       label: "账号3",
       base_url: "https://new-api.example.com",
@@ -542,8 +595,17 @@ describe("App balance session autosave", () => {
       user_id: "42",
       auto_checkin_enabled: false,
       updated_at: "2026-08-14T00:00:00.000Z",
-    }));
+    };
+    const loginBrowserAccount = vi.fn(async () => {
+      await fixture.saveSiteBalanceSession(baseProfile.url, savedBrowserSession);
+      return savedBrowserSession;
+    });
     fixture.manager.loginBrowserAccount = loginBrowserAccount;
+    fixture.manager.getBrowserAccountStatus = vi.fn(async () => ({
+      accountKey: "https://new-api.example.com::sess-browser",
+      mode: "modern" as const,
+      status: "ready" as const,
+    }));
     const { container, root } = await renderAppWithFixture(fixture);
 
     await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
@@ -562,6 +624,78 @@ describe("App balance session autosave", () => {
       "https://new-api.example.com/v1",
       3,
     );
+    expect(fixture.bindProfileSiteBalanceSession).toHaveBeenCalledWith(
+      itemKey(baseProfile),
+      "https://new-api.example.com/v1",
+      "sess-browser",
+    );
+    expect(fixture.saveProfile).not.toHaveBeenCalled();
+    expect(findBalanceSessionSelect(container).value).toBe("sess-browser");
+    expect(container.textContent).toContain("状态：已登录");
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("keeps browser references hydrated and does not persist a new Profile during login", async () => {
+    const existingBrowserSession = {
+      id: "sess-existing",
+      label: "账号1",
+      base_url: "https://new-api.example.com",
+      access_token: "",
+      auth_kind: "browser_session" as const,
+      browser_session_id: "slot-one",
+      browser_slot: 1,
+      browser_origin: "https://new-api.example.com",
+      user_id: "42",
+      auto_checkin_enabled: false,
+      updated_at: "2026-08-14T00:00:00.000Z",
+    };
+    const profile = { ...baseProfile, balance_session_id: existingBrowserSession.id };
+    const fixture = createProfileManagerFixture(
+      [profile],
+      { "https://new-api.example.com": [existingBrowserSession] },
+      [{ slot: 1, browser_session_id: "slot-one" }],
+    );
+    const savedBrowserSession = {
+      ...existingBrowserSession,
+      id: "sess-new",
+      label: "账号2",
+      browser_session_id: "slot-two",
+      browser_slot: 2,
+      user_id: "84",
+    };
+    fixture.manager.loginBrowserAccount = vi.fn(async () => {
+      await fixture.saveSiteBalanceSession(baseProfile.url, savedBrowserSession);
+      return savedBrowserSession;
+    });
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    const createProfileButton = container.querySelector<HTMLButtonElement>(
+      'button[title="新建 Profile"]',
+    );
+    expect(createProfileButton).toBeInstanceOf(HTMLButtonElement);
+    await act(async () => {
+      createProfileButton?.click();
+    });
+
+    expect(fixture.saveProfile).not.toHaveBeenCalled();
+    const urlInput = container.querySelector<HTMLInputElement>('input[placeholder="https://api.example.com"]');
+    expect(urlInput).toBeInstanceOf(HTMLInputElement);
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(urlInput, baseProfile.url);
+      urlInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    await act(async () => {
+      clickExactButtonByText(container, "浏览器登录");
+      await Promise.resolve();
+    });
+
+    expect(fixture.bindProfileSiteBalanceSession).not.toHaveBeenCalled();
+    expect(fixture.saveProfile).not.toHaveBeenCalled();
+    expect(findBalanceSessionSelect(container).value).toBe("sess-new");
 
     await act(async () => root.unmount());
     container.remove();
@@ -635,6 +769,45 @@ describe("App balance session autosave", () => {
     await act(async () => {
       root.unmount();
     });
+    container.remove();
+  });
+
+  it("blocks balance testing while a new browser session is still unverified", async () => {
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    await act(async () => {
+      clickExactButtonByText(container, "检测余额");
+    });
+
+    expect(fixture.saveProfile).not.toHaveBeenCalled();
+    expect(fixture.saveSiteBalanceSession).not.toHaveBeenCalled();
+    expect(fixture.testBalance).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("请先完成浏览器登录");
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("blocks balance testing for an empty new PAT session instead of falling back to API key auto", async () => {
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    await act(async () => {
+      clickButtonByText(container, "改用 PAT 兼容模式");
+    });
+    await act(async () => {
+      clickExactButtonByText(container, "检测余额");
+    });
+
+    expect(fixture.saveProfile).not.toHaveBeenCalled();
+    expect(fixture.saveSiteBalanceSession).not.toHaveBeenCalled();
+    expect(fixture.testBalance).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("请先填写并保存 PAT");
+
+    await act(async () => root.unmount());
     container.remove();
   });
 

@@ -141,6 +141,7 @@ export interface FindMonitoredTerminalSessionTitleOptions {
   cwd: string;
   startedAt: string | number | Date;
   sessionId?: string;
+  expectedPreview?: string;
   codexHome?: string;
   claudeHome?: string;
 }
@@ -1589,11 +1590,17 @@ export async function findMonitoredTerminalSessionTitle(
     return { status: "pending", candidateCount: 0 };
   }
 
+  const expectedPreview = options.expectedPreview === undefined
+    ? undefined
+    : trimPreview(options.expectedPreview);
   const matchedSessions = sessions.filter((session) =>
     previewFromMonitoredSession(session)
     && parseSessionTimeMs(session.updated_at) >= startedAtMs
     && normalizeProvider(session.provider) === provider
     && (provider === PROVIDER_CLAUDE || provider === PROVIDER_CODEX)
+    && (expectedPreview === undefined
+      || trimPreview(session.preview) === expectedPreview
+      || trimPreview(session.user_prompts?.[0] ?? "") === expectedPreview)
   );
   if (matchedSessions.length === 0) {
     return { status: "pending", candidateCount: 0 };

@@ -149,6 +149,16 @@ const profileApi = {
     ipcRenderer.invoke("profile:update-working-directory-favorites", favorites),
   saveSiteBalanceSession: (baseUrl: string, draft: unknown): Promise<unknown> =>
     ipcRenderer.invoke("profile:save-site-balance-session", baseUrl, draft),
+  bindProfileSiteBalanceSession: (
+    profileKey: string,
+    baseUrl: string,
+    sessionId: string,
+  ): Promise<unknown> => ipcRenderer.invoke(
+    "profile:bind-site-balance-session",
+    profileKey,
+    baseUrl,
+    sessionId,
+  ),
   loginBrowserAccount: (baseUrl: string, browserSlot?: number): Promise<unknown> =>
     ipcRenderer.invoke("browser-auth:login", baseUrl, browserSlot),
   reloginBrowserAccount: (baseUrl: string, sessionId: string): Promise<unknown> =>
@@ -171,8 +181,8 @@ const profileApi = {
   ),
   pickWorkingDirectory: (): Promise<string | undefined> =>
     ipcRenderer.invoke("profile:pick-working-directory"),
-  openBaseUrl: (baseUrl: string): Promise<void> =>
-    ipcRenderer.invoke("profile:open-base-url", baseUrl),
+  openBaseUrl: (baseUrl: string, balanceSessionId?: string): Promise<void> =>
+    ipcRenderer.invoke("profile:open-base-url", baseUrl, balanceSessionId),
 
   // Launcher
   previewForDraft: (

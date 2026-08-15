@@ -14,6 +14,9 @@ export interface SiteBalanceSessionPanelProps {
     label: string;
     access_token: string;
     auth_kind?: SiteBalanceAuthKind;
+    browser_session_id?: string;
+    browser_slot?: number;
+    browser_origin?: string;
     refresh_token?: string;
     token_expires_at?: number;
     user_id: string;

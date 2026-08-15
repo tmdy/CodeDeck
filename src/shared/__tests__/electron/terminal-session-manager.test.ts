@@ -137,6 +137,181 @@ describe("TerminalSessionManager", () => {
     ]);
   });
 
+  it("does not mark a multiline bracketed paste busy until Enter is sent", async () => {
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: false,
+        limit: 1,
+        prompt: "继续",
+        keywords: [],
+      },
+    });
+
+    manager.sendInput(session.sessionId, "\u001b[200~first line\nsecond line\u001b[201~");
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("idle");
+    manager.sendInput(session.sessionId, "\r");
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
+  });
+
+  it("falls back to a stable idle prompt after output subscribers inspect it", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+      onActivityChange: (event) => {
+        events.push(`activity:${event.reason}`);
+      },
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: false,
+        limit: 1,
+        prompt: "继续",
+        keywords: [],
+      },
+    });
+    manager.attachSession(session.sessionId, {
+      onOutput: () => events.push("output"),
+      onStatus: vi.fn(),
+    });
+
+    manager.sendInput(session.sessionId, "执行任务\r");
+    events.length = 0;
+    fakePty.emitData("完成\r\n› ");
+
+    expect(events).toEqual(["output"]);
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
+    await vi.advanceTimersByTimeAsync(249);
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events).toEqual(["output", "activity:idle_prompt"]);
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("idle");
+  });
+
+  it("settles a Codex placeholder prompt to idle", async () => {
+    vi.useFakeTimers();
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: false,
+        limit: 1,
+        prompt: "继续",
+        keywords: [],
+      },
+    });
+
+    manager.sendInput(session.sessionId, "执行任务\r");
+    fakePty.emitData("完成\r\n› Implement {feature}\r\n");
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("idle");
+  });
+
+  it("cancels a provisional idle prompt when the TUI resumes output", async () => {
+    vi.useFakeTimers();
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: false,
+        limit: 1,
+        prompt: "继续",
+        keywords: [],
+      },
+    });
+
+    manager.sendInput(session.sessionId, "执行任务\r");
+    fakePty.emitData("\r\n› ");
+    await vi.advanceTimersByTimeAsync(100);
+    fakePty.emitData("Working (0s • esc to interrupt)");
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
+  });
+
+  it("cancels a provisional idle prompt when new input is submitted", async () => {
+    vi.useFakeTimers();
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: false,
+        limit: 1,
+        prompt: "继续",
+        keywords: [],
+      },
+    });
+
+    manager.sendInput(session.sessionId, "first task\r");
+    fakePty.emitData("完成\r\n› ");
+    await vi.advanceTimersByTimeAsync(100);
+    manager.sendInput(session.sessionId, "second task\r");
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
+  });
+
+  it("keeps an interactive confirmation prompt busy", async () => {
+    vi.useFakeTimers();
+    const activityReasons: string[] = [];
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+      onActivityChange: (event) => activityReasons.push(event.reason),
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: false,
+        limit: 1,
+        prompt: "继续",
+        keywords: [],
+      },
+    });
+
+    manager.sendInput(session.sessionId, "执行任务\r");
+    fakePty.emitData("Do you want to proceed? (y/n)\r\n› ");
+    await vi.advanceTimersByTimeAsync(250);
+
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
+    expect(activityReasons).toEqual(["submitted_input"]);
+  });
+
   it("ignores prompt repaints and Working output as lifecycle transitions", async () => {
     const manager = new TerminalSessionManager({
       createPtyProcess: vi.fn(() => fakePty),
@@ -162,7 +337,7 @@ describe("TerminalSessionManager", () => {
     expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
   });
 
-  it("can start a turn from a provider lifecycle event", async () => {
+  it("marks provider busy output as a running turn without waiting for lifecycle metadata", async () => {
     const manager = new TerminalSessionManager({
       createPtyProcess: vi.fn(() => fakePty),
     });
@@ -180,8 +355,8 @@ describe("TerminalSessionManager", () => {
       },
     });
 
-    fakePty.emitData("Working");
-    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("idle");
+    fakePty.emitData("Working (0s • esc to interrupt)");
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
     manager.reportTurnLifecycle(session.sessionId, "started");
     expect(manager.getSnapshot(session.sessionId)?.activity).toBe("busy");
   });

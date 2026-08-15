@@ -22,7 +22,7 @@ function parseArguments(args: string[]): ParsedArguments {
       throw new Error("无法识别参数：" + argument);
     }
     const key = argument.slice(2);
-    if (key === "show-terminal") {
+    if (key === "show-terminal" || key === "orchestrator") {
       options.set(key, true);
       continue;
     }
@@ -63,9 +63,15 @@ async function readPrompt(): Promise<string> {
     content += chunk;
   }
   if (!content.trim()) {
-    throw new Error("run/continue 必须通过 stdin 提供 prompt。");
+    throw new Error("run/continue/continue-parent 必须通过 stdin 提供 prompt。");
   }
   return content.trim();
+}
+
+function rejectOptions(options: Map<string, string | true>, command: string): void {
+  if (options.size > 0) {
+    throw new Error(`${command} 不接受参数；父会话由作用域凭据绑定。`);
+  }
 }
 
 async function buildRequest(parsed: ParsedArguments): Promise<AgentBridgeRequest> {
@@ -84,6 +90,7 @@ async function buildRequest(parsed: ParsedArguments): Promise<AgentBridgeRequest
       ...(typeof cwd === "string" && cwd.trim() ? { cwd: cwd.trim() } : {}),
       ...(requestedWaitMs !== undefined ? { wait_ms: requestedWaitMs } : {}),
       ...(parsed.options.get("show-terminal") === true ? { show_terminal: true } : {}),
+      ...(parsed.options.get("orchestrator") === true ? { orchestrator: true } : {}),
       ...(typeof parsed.options.get("model") === "string"
         ? { model: String(parsed.options.get("model")).trim() }
         : {}),
@@ -155,9 +162,9 @@ async function buildRequest(parsed: ParsedArguments): Promise<AgentBridgeRequest
   throw new Error(
     "用法：codedeck-agent profiles | run --profile <key> [--cwd <path>] [--model <id>] "
     + "[--reasoning-effort <level>] [--return-policy once|continuous|manual] [--wait-ms <ms>] "
-    + "[--show-terminal] | continue --session <id> [--return-policy ...] "
+    + "[--show-terminal] [--orchestrator] | continue --session <id> [--return-policy ...] "
     + "| status/wait/interrupt/cancel --session <id> | policy [--return-policy ...] "
-    + "| interrupt-parent（delegated child 作用域命令）。",
+    + "| status-parent | continue-parent | interrupt-parent（delegated child 作用域命令）。",
   );
 }
 
@@ -207,14 +214,35 @@ async function main(): Promise<void> {
       if (
         scopedToken
         && scopedPipe
-        && (parsed.command === "policy" || parsed.command === "interrupt-parent")
+        && (
+          parsed.command === "policy"
+          || parsed.command === "status-parent"
+          || parsed.command === "continue-parent"
+          || parsed.command === "interrupt-parent"
+        )
       ) {
+        if (parsed.command !== "policy") {
+          rejectOptions(parsed.options, parsed.command);
+        }
+        const request = parsed.command === "policy"
+          ? {
+              command: "policy" as const,
+              request_id: randomUUID(),
+              ...(parsed.options.has("return-policy")
+                ? { return_policy: requiredReturnPolicy(parsed.options) }
+                : {}),
+            }
+          : parsed.command === "status-parent"
+            ? { command: "status_parent" as const, request_id: randomUUID() }
+            : parsed.command === "continue-parent"
+              ? {
+                  command: "continue_parent" as const,
+                  request_id: randomUUID(),
+                  prompt: await readPrompt(),
+                }
+              : { command: "interrupt_parent" as const, request_id: randomUUID() };
         writeResponse(await sendAgentScopedRequest(scopedPipe, scopedToken, {
-          command: parsed.command === "policy" ? "policy" : "interrupt_parent",
-          request_id: randomUUID(),
-          ...(parsed.command === "policy" && parsed.options.has("return-policy")
-            ? { return_policy: requiredReturnPolicy(parsed.options) }
-            : {}),
+          ...request,
         }));
         return;
       }

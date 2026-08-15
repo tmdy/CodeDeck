@@ -131,7 +131,6 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   const [bulkEnvText, setBulkEnvText] = useState("");
   const [bulkEnvStatus, setBulkEnvStatus] = useState("");
   const [savedArgEditorOpen, setSavedArgEditorOpen] = useState(false);
-  const [editingSavedArgId, setEditingSavedArgId] = useState<string | null>(null);
   const [savedArgEditorText, setSavedArgEditorText] = useState("");
   const advancedMapping = draft.advancedModelMapping;
   const isNativeStartup = isOfficialNativeProfile({ provider, name: draft.name });
@@ -240,19 +239,11 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   }, [onRuntimeChange, runtimeEnv]);
 
   const openSavedArgEditor = useCallback(() => {
-    setEditingSavedArgId(null);
     setSavedArgEditorText("");
     setSavedArgEditorOpen(true);
   }, []);
 
-  const editSavedExtraArg = useCallback((item: SavedExtraArg) => {
-    setEditingSavedArgId(item.id);
-    setSavedArgEditorText(item.value);
-    setSavedArgEditorOpen(true);
-  }, []);
-
   const closeSavedArgEditor = useCallback(() => {
-    setEditingSavedArgId(null);
     setSavedArgEditorText("");
     setSavedArgEditorOpen(false);
   }, []);
@@ -260,24 +251,15 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   const saveSavedExtraArg = useCallback(() => {
     const value = savedArgEditorText.trim();
     if (!value) return;
-    onSavedExtraArgsChange?.(editingSavedArgId
-      ? savedExtraArgs.map((item) => item.id === editingSavedArgId ? { ...item, value } : item)
-      : [
-          ...savedExtraArgs,
-          { id: `saved-extra-arg-${Date.now()}`, value, enabled: true },
-        ]);
+    onSavedExtraArgsChange?.([
+      ...savedExtraArgs,
+      { id: `saved-extra-arg-${Date.now()}`, value },
+    ]);
     closeSavedArgEditor();
-  }, [closeSavedArgEditor, editingSavedArgId, onSavedExtraArgsChange, savedArgEditorText, savedExtraArgs]);
+  }, [closeSavedArgEditor, onSavedExtraArgsChange, savedArgEditorText, savedExtraArgs]);
 
   const removeSavedExtraArg = useCallback((id: string) => {
     onSavedExtraArgsChange?.(savedExtraArgs.filter((item) => item.id !== id));
-    if (editingSavedArgId === id) closeSavedArgEditor();
-  }, [closeSavedArgEditor, editingSavedArgId, onSavedExtraArgsChange, savedExtraArgs]);
-
-  const setSavedExtraArgEnabled = useCallback((id: string, enabled: boolean) => {
-    onSavedExtraArgsChange?.(
-      savedExtraArgs.map((item) => item.id === id ? { ...item, enabled } : item),
-    );
   }, [onSavedExtraArgsChange, savedExtraArgs]);
 
   const toggleSavedExtraArg = useCallback((value: string) => {
@@ -841,7 +823,7 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                     disabled={disabled}
                   />
                   <button type="button" className="secondary-button small" onClick={saveSavedExtraArg} disabled={disabled || !savedArgEditorText.trim()}>
-                    {editingSavedArgId ? "更新" : "保存"}
+                    保存
                   </button>
                   <button type="button" className="secondary-button small" onClick={closeSavedArgEditor} disabled={disabled}>
                     取消
@@ -852,26 +834,15 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 <div className="profile-saved-extra-args-list" role="list">
                   {savedExtraArgs.map((item) => (
                     <div key={item.id} className="profile-saved-extra-arg-row" role="listitem">
-                      <input
-                        type="checkbox"
-                        checked={item.enabled}
-                        onChange={(event) => setSavedExtraArgEnabled(item.id, event.target.checked)}
-                        disabled={disabled}
-                        aria-label={`${item.enabled ? "禁用" : "启用"}已保存参数 ${item.value || "未命名参数"}`}
-                      />
                       <button
                         type="button"
                         className={`saved-extra-arg-chip${hasSavedArgText(runtime.extra_args, item.value) ? " active" : ""}`}
                         onClick={() => toggleSavedExtraArg(item.value)}
-                        disabled={disabled || !item.enabled || !item.value.trim()}
-                        title={!item.enabled
-                          ? "请先启用此参数"
-                          : hasSavedArgText(runtime.extra_args, item.value) ? "点击移除参数" : "点击加入参数"}
+                        disabled={disabled || !item.value.trim()}
+                        aria-pressed={hasSavedArgText(runtime.extra_args, item.value)}
+                        title={hasSavedArgText(runtime.extra_args, item.value) ? "点击移除参数" : "点击加入参数"}
                       >
                         {item.value || "未命名参数"}
-                      </button>
-                      <button type="button" className="secondary-button small" onClick={() => editSavedExtraArg(item)} disabled={disabled}>
-                        编辑
                       </button>
                       <button type="button" className="saved-extra-arg-delete" onClick={() => removeSavedExtraArg(item.id)} disabled={disabled} aria-label="删除已保存参数">
                         ×

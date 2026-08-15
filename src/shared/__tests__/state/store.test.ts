@@ -152,6 +152,24 @@ describe("LocalStateStore", () => {
     expect((await store.load()).global_settings.hide_codex_subagent_sessions).toBe(false);
   });
 
+  it("defaults close-to-tray on for legacy state and persists explicit opt-out", async () => {
+    expect(defaultLocalState().global_settings.close_to_tray).toBe(true);
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    const legacyState = defaultLocalState();
+    const { close_to_tray: _removed, ...legacyGlobalSettings } = legacyState.global_settings;
+
+    await writeFile(rawPath, JSON.stringify({
+      ...legacyState,
+      global_settings: legacyGlobalSettings,
+    }), "utf-8");
+    expect((await store.load()).global_settings.close_to_tray).toBe(true);
+
+    legacyState.global_settings.close_to_tray = false;
+    await store.save(legacyState);
+    expect((await store.load()).global_settings.close_to_tray).toBe(false);
+  });
+
   it("should remove protected environment values and proxy credentials from plaintext state", async () => {
     const store = await makeStore();
     const state = defaultLocalState();

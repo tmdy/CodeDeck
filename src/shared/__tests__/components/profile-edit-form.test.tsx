@@ -48,7 +48,7 @@ describe("ProfileEditForm", () => {
             launch_mode: "new",
             exclude_user_settings: true,
           }}
-          savedExtraArgs={[{ id: "saved-1", value: "--review fast", enabled: true }]}
+          savedExtraArgs={[{ id: "saved-1", value: "--review fast" }]}
           provider="claude"
           modelOptions={[]}
           onChange={vi.fn()}
@@ -83,7 +83,7 @@ describe("ProfileEditForm", () => {
     container.remove();
   });
 
-  it("edits and enables saved arguments through the provider-level settings callback", async () => {
+  it("renders saved arguments as only a clickable parameter box and delete control", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -100,7 +100,7 @@ describe("ProfileEditForm", () => {
             launch_mode: "new",
             exclude_user_settings: true,
           }}
-          savedExtraArgs={[{ id: "saved-1", value: "--review fast", enabled: false }]}
+          savedExtraArgs={[{ id: "saved-1", value: "--review fast" }]}
           provider="claude"
           modelOptions={[]}
           onChange={vi.fn()}
@@ -118,19 +118,21 @@ describe("ProfileEditForm", () => {
     const chip = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (button) => button.textContent === "--review fast",
     );
-    expect(chip?.disabled).toBe(true);
-    const enableCheckbox = container.querySelector<HTMLInputElement>(
-      'input[aria-label="启用已保存参数 --review fast"]',
-    );
-    await act(async () => enableCheckbox?.click());
-    expect(onSavedExtraArgsChange).toHaveBeenCalledWith([
-      { id: "saved-1", value: "--review fast", enabled: true },
+    expect(chip?.disabled).toBe(false);
+    const row = chip?.closest(".profile-saved-extra-arg-row");
+    expect(row?.querySelector("input")).toBeNull();
+    expect(Array.from(row?.querySelectorAll("button") ?? []).map((button) => button.textContent)).toEqual([
+      "--review fast",
+      "×",
     ]);
+    const deleteButton = row?.querySelector<HTMLButtonElement>('[aria-label="删除已保存参数"]');
+    await act(async () => deleteButton?.click());
+    expect(onSavedExtraArgsChange).toHaveBeenCalledWith([]);
 
-    const editButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent === "编辑",
+    const addButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "添加参数",
     );
-    await act(async () => editButton?.click());
+    await act(async () => addButton?.click());
     const editor = container.querySelector<HTMLInputElement>(
       'input[placeholder="输入要保存的 CLI 参数"]',
     );
@@ -139,12 +141,13 @@ describe("ProfileEditForm", () => {
       valueSetter?.call(editor, "--review thorough");
       editor?.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const updateButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent === "更新",
+    const saveButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent === "保存",
     );
-    await act(async () => updateButton?.click());
+    await act(async () => saveButton?.click());
     expect(onSavedExtraArgsChange).toHaveBeenLastCalledWith([
-      { id: "saved-1", value: "--review thorough", enabled: false },
+      { id: "saved-1", value: "--review fast" },
+      { id: expect.stringMatching(/^saved-extra-arg-/), value: "--review thorough" },
     ]);
 
     await act(async () => root.unmount());
@@ -886,10 +889,10 @@ describe("ProfileEditForm", () => {
     expect(html).not.toContain("应用推荐设置");
   });
 
-  it("should not offer a recommended compatibility action for official Claude models on third-party gateways", () => {
+  it("should not offer a recommended compatibility action for newer official Claude models on third-party gateways", () => {
     const html = renderToStaticMarkup(
       <ProfileEditForm
-        draft={{ name: "Claude", url: "https://api.aicod.com", key: "sk", selectedModelId: "claude-opus-4-7", advancedModelMapping: makeAdvancedMapping() }}
+        draft={{ name: "Claude", url: "https://api.aicod.com", key: "sk", selectedModelId: "claude-fable-5[1m]", advancedModelMapping: makeAdvancedMapping() }}
         runtime={{
           cwd: "",
           command_base: "claude",
@@ -911,7 +914,7 @@ describe("ProfileEditForm", () => {
     );
 
     expect(html).toContain("Claude 模型兼容设置");
-    expect(html).toContain("claude-opus-4-7");
+    expect(html).toContain("claude-fable-5[1m]");
     expect(html).not.toContain("用于第三方 Anthropic-compatible 网关的 Claude 内部模型别名覆盖");
     expect(html).not.toContain("主会话模型");
     expect(html).not.toContain("看起来是第三方模型");

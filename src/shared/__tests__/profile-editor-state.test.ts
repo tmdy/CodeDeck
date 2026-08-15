@@ -195,6 +195,7 @@ describe("profile-editor-state", () => {
     expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "claude-opus-4-7")).toBe(false);
     expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "claude-sonnet-4-5")).toBe(false);
     expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "claude-haiku-4-5")).toBe(false);
+    expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "claude-fable-5[1m]")).toBe(false);
     expect(shouldRecommendClaudeSingleModelCompatibility("https://api.aicod.com", "glm-5.1")).toBe(true);
   });
 

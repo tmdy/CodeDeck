@@ -48,6 +48,9 @@ describe("saved extra arguments", () => {
           saved_extra_args: [
             { id: " keep ", value: " --one ", enabled: false },
             { value: "--two" },
+            { id: "empty", value: "   " },
+            { id: "missing" },
+            { id: "wrong-type", value: 42 },
             null,
           ] as never,
         },
@@ -55,8 +58,8 @@ describe("saved extra arguments", () => {
     });
 
     expect(settings.cli_settings.claude.saved_extra_args).toEqual([
-      { id: "keep", value: " --one ", enabled: false },
-      { id: "saved-extra-arg-2", value: "--two", enabled: true },
+      { id: "keep", value: " --one " },
+      { id: "saved-extra-arg-2", value: "--two" },
     ]);
     expect(settings.cli_settings.codex.saved_extra_args).toEqual([]);
   });

@@ -419,6 +419,53 @@ export class ProfileService {
     return nd;
   }
 
+  async bindProfileSiteBalanceSession(
+    profileKey: ProfileKey,
+    rawBaseUrl: string,
+    sessionId: string,
+  ): Promise<Profile> {
+    const normalizedKey = normalizeKeyWithFallback(
+      profileKey,
+      this.getState().selected_provider,
+    );
+    const profileIndex = this.profiles.findIndex((profile) => itemKey(profile) === normalizedKey);
+    if (profileIndex < 0) {
+      throw new Error(`profile not found: ${normalizedKey}`);
+    }
+
+    const baseUrl = normalizeBalanceBaseUrl(rawBaseUrl);
+    const profile = this.profiles[profileIndex];
+    if (!baseUrl || normalizeBalanceBaseUrl(profile.url) !== baseUrl) {
+      throw new Error("Profile 与后台账号 Base URL 不一致");
+    }
+
+    const normalizedSessionId = sessionId.trim();
+    const session = (this.siteBalanceSessionsByBaseUrl[baseUrl] ?? [])
+      .find((candidate) => candidate.id === normalizedSessionId);
+    if (!session) {
+      throw new Error("后台账号不存在");
+    }
+    if (normalizeBalanceBaseUrl(session.base_url) !== baseUrl) {
+      throw new Error("Profile 与后台账号 Base URL 不一致");
+    }
+
+    const nextProfile = {
+      ...profile,
+      balance_session_id: session.id,
+    };
+    const nextProfiles = this.profiles.map((candidate, index) => (
+      index === profileIndex ? nextProfile : { ...candidate }
+    ));
+    const state = this.getState();
+    delete state.balance_checks_by_profile[normalizedKey];
+    delete state.site_capability_cache.balance_by_target[`profile:${normalizedKey}`];
+
+    await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl, state);
+    this.profiles = nextProfiles;
+    await this.stateAccessor.save(state);
+    return { ...nextProfile };
+  }
+
   // ---- 克隆 ----
 
   async cloneProfileToProvider(

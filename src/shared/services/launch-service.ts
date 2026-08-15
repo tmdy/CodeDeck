@@ -181,6 +181,7 @@ export class LaunchService {
       request.capability_overlay,
       request.terminal_mode,
       runOverrides,
+      request.disable_codex_hooks === true,
     );
   }
 
@@ -223,6 +224,7 @@ export class LaunchService {
     capabilityOverlay?: LaunchCapabilityOverlay,
     terminalModeOverride?: LaunchRequest["terminal_mode"],
     runOverrides?: RunOverrides,
+    disableCodexHooks = false,
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
     const isNativeStartup = normalizedRuntime.startup_mode === "native";
@@ -265,6 +267,7 @@ export class LaunchService {
         normalizedRuntime,
         normalizedSessionId,
         runOverrides,
+        disableCodexHooks,
       );
     } else {
       const permissions = resolveEffectivePermissions({
@@ -284,7 +287,15 @@ export class LaunchService {
 
       artifacts = profile.provider === PROVIDER_CLAUDE
         ? this.buildClaudeArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.claude)
-        : this.buildCodexArtifacts(profile, normalizedRuntime, normalizedSessionId, selectedModelId, permissions, capabilityOverlay?.codex);
+        : this.buildCodexArtifacts(
+            profile,
+            normalizedRuntime,
+            normalizedSessionId,
+            selectedModelId,
+            permissions,
+            capabilityOverlay?.codex,
+            disableCodexHooks,
+          );
     }
     const env = this.mergeInjectedEnv(artifacts.env, normalizedRuntime.extra_env);
     const terminalMode = profile.provider === PROVIDER_CLAUDE
@@ -322,6 +333,7 @@ export class LaunchService {
     runtime: RuntimeSettings,
     sessionId: string,
     runOverrides?: RunOverrides,
+    disableCodexHooks = false,
   ): ProviderLaunchArtifacts {
     const commandBase = normalizeCommandExecutable(
       runtime.command_base,
@@ -366,6 +378,7 @@ export class LaunchService {
       baseUrl: "",
       modelOverride: runOverrides?.model,
       trustedProjectPath: runtime.cwd,
+      disableHooks: disableCodexHooks,
     };
     return {
       commandExecutable: commandBase,
@@ -472,6 +485,7 @@ export class LaunchService {
     selectedModelId: string,
     permissions: ProfilePermissions,
     overlay?: LaunchCapabilityOverlay["codex"],
+    disableCodexHooks = false,
   ): ProviderLaunchArtifacts {
     const subagentTarget = profile.advancedModelMapping?.enabled
       ? profile.advancedModelMapping.codex?.subagentTarget?.trim() ?? ""
@@ -502,6 +516,7 @@ export class LaunchService {
       baseUrl: profile.url,
       wireApi,
       trustedProjectPath: runtime.cwd,
+      disableHooks: disableCodexHooks,
     };
     const commandArgs = buildCodexArgs(commandOptions);
     const command = buildCodexCommand(commandOptions);

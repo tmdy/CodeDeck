@@ -31,6 +31,7 @@ export interface ProfileEditorDraft {
     access_token: string;
     auth_kind?: SiteBalanceAuthKind;
     browser_session_id?: string;
+    browser_slot?: number;
     browser_origin?: string;
     refresh_token?: string;
     token_expires_at?: number;
@@ -55,6 +56,7 @@ export function buildSelectedProfileDraft(
     access_token?: string;
     auth_kind?: SiteBalanceAuthKind;
     browser_session_id?: string;
+    browser_slot?: number;
     browser_origin?: string;
     refresh_token?: string;
     token_expires_at?: number;
@@ -80,6 +82,9 @@ export function buildSelectedProfileDraft(
       ...(balanceSessionDraft?.auth_kind ? { auth_kind: balanceSessionDraft.auth_kind } : {}),
       ...(balanceSessionDraft?.browser_session_id
         ? { browser_session_id: balanceSessionDraft.browser_session_id }
+        : {}),
+      ...(balanceSessionDraft?.browser_slot
+        ? { browser_slot: balanceSessionDraft.browser_slot }
         : {}),
       ...(balanceSessionDraft?.browser_origin
         ? { browser_origin: balanceSessionDraft.browser_origin }
@@ -409,6 +414,7 @@ export function balanceSessionDraftsEqual(
     && (left.access_token ?? "") === (right.access_token ?? "")
     && (left.auth_kind ?? "access_token") === (right.auth_kind ?? "access_token")
     && (left.browser_session_id ?? "") === (right.browser_session_id ?? "")
+    && (left.browser_slot ?? 0) === (right.browser_slot ?? 0)
     && (left.browser_origin ?? "") === (right.browser_origin ?? "")
     && (left.refresh_token ?? "") === (right.refresh_token ?? "")
     && (left.token_expires_at ?? 0) === (right.token_expires_at ?? 0)

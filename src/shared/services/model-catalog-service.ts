@@ -82,10 +82,32 @@ function collectModels(payload: unknown): string[] {
 async function readErrorBody(response: Response): Promise<string> {
   try {
     const body = await response.text();
-    return body.trim();
+    return summarizeErrorBody(body);
   } catch {
     return "";
   }
+}
+
+function summarizeErrorBody(body: string): string {
+  const compactBody = body.replace(/\s+/g, " ").trim();
+  if (!compactBody) {
+    return "";
+  }
+
+  const looksLikeHtml = /<(?:!doctype|html|head|body)\b/i.test(compactBody);
+  if (!looksLikeHtml) {
+    return compactBody.slice(0, 300);
+  }
+
+  if (/cloudflare/i.test(compactBody)) {
+    return "站点返回 Cloudflare 拦截页面，无法自动获取模型列表。请完成站点验证或联系服务提供方。";
+  }
+
+  const titleMatch = compactBody.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch?.[1]?.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return title
+    ? `站点返回 HTML 错误页：${title.slice(0, 160)}`
+    : "站点返回 HTML 错误页，无法自动获取模型列表。";
 }
 
 export class ModelCatalogService {

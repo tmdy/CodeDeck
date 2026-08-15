@@ -32,4 +32,28 @@ describe("Electron main node-pty loading", () => {
     expect(createPtyBlock).toContain("if (!nodePtyModule)");
     expect(createPtyBlock).toContain("nodePtyModule.spawn");
   });
+
+  it("passes an agent task's initial prompt into monitored title resolution", async () => {
+    const source = normalizeNewlines(await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8"));
+    const launchAgentTaskStart = source.indexOf("async function launchAgentTask");
+    const launchAgentTaskEnd = source.indexOf("function ensureAgentTaskManager", launchAgentTaskStart);
+    const launchAgentTaskBlock = source.slice(launchAgentTaskStart, launchAgentTaskEnd);
+    expect(launchAgentTaskBlock).toContain("expectedPreview: options.initialPrompt");
+    expect(launchAgentTaskBlock).toContain("disable_codex_hooks: true");
+
+    const monitoredLaunchStart = source.indexOf("async function launchMonitoredTerminalSession");
+    const monitoredLaunchEnd = source.indexOf("async function prepareCapabilityOverlay", monitoredLaunchStart);
+    const monitoredLaunchBlock = source.slice(monitoredLaunchStart, monitoredLaunchEnd);
+    expect(monitoredLaunchBlock).toContain(
+      "scheduleTerminalTitleResolution(snapshot, plan, startedAt, options.expectedPreview)",
+    );
+
+    const titleResolutionStart = source.indexOf("function scheduleTerminalTitleResolution");
+    const titleResolutionEnd = source.indexOf("function startTerminalLifecycleWatcher", titleResolutionStart);
+    const titleResolutionBlock = source.slice(titleResolutionStart, titleResolutionEnd);
+    expect(titleResolutionBlock).toContain("expectedPreview,");
+    expect(titleResolutionBlock).toContain(
+      "if (!expectedPreview?.trim() && Date.now() >= deadlineMs)",
+    );
+  });
 });

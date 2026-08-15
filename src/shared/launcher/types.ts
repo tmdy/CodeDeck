@@ -17,6 +17,7 @@ export interface LaunchRequest {
   capability_overlay?: LaunchCapabilityOverlay;
   model_override?: string;
   reasoning_effort_override?: string;
+  disable_codex_hooks?: boolean;
 }
 
 export interface LaunchSessionSource {

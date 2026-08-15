@@ -98,6 +98,7 @@ export interface GlobalSettings {
   proxy: string;
   theme_mode: ThemeMode;
   hide_codex_subagent_sessions: boolean;
+  close_to_tray: boolean;
   permissions: GlobalPermissions;
   permissions_preset?: string;
 }
@@ -333,6 +334,7 @@ export function defaultGlobalSettings(): GlobalSettings {
     proxy: "",
     theme_mode: "system",
     hide_codex_subagent_sessions: true,
+    close_to_tray: true,
     permissions: normalizeGlobalPermissions(undefined),
   };
 }
@@ -428,7 +430,7 @@ export function isOfficialAnthropicBaseUrl(baseUrl: string): boolean {
 }
 
 export function isOfficialClaudeModelId(selectedModelId: string): boolean {
-  return /^claude-(opus|sonnet|haiku)(?:[-.]|$)/.test(selectedModelId.trim().toLowerCase());
+  return /^claude(?:[-.]|$)/.test(selectedModelId.trim().toLowerCase());
 }
 
 export function shouldRecommendClaudeSingleModelCompatibility(baseUrl: string, selectedModelId: string): boolean {
@@ -451,6 +453,9 @@ export function normalizeGlobalSettings(settings: Partial<GlobalSettings> & {
     hide_codex_subagent_sessions: typeof settings.hide_codex_subagent_sessions === "boolean"
       ? settings.hide_codex_subagent_sessions
       : defaults.hide_codex_subagent_sessions,
+    close_to_tray: typeof settings.close_to_tray === "boolean"
+      ? settings.close_to_tray
+      : defaults.close_to_tray,
     permissions: normalizeGlobalPermissions(settings.permissions) as GlobalPermissions,
   };
 }

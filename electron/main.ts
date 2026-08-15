@@ -4,10 +4,11 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  Menu,
   nativeTheme,
   safeStorage,
   session as electronSession,
-  shell,
+  Tray,
 } from "electron";
 import path from "node:path";
 import { existsSync, readFileSync, promises as fs } from "node:fs";
@@ -62,6 +63,7 @@ import {
 import {
   BrowserAccountSessionManager,
   BrowserLoginRequiredError,
+  type BrowserAccountDiagnosticEvent,
   type BrowserAccountStatusSnapshot,
 } from "../src/shared/electron/browser-account-session-manager.js";
 import { PendingBrowserAccountReferenceRegistry } from "../src/shared/electron/browser-account-pending-references.js";
@@ -98,7 +100,10 @@ import {
   executeLaunchPlan,
   type ExternalTerminalLaunchSpec,
 } from "../src/shared/electron/launch-runtime.js";
-import { resolveBaseUrlExternalTarget } from "../src/shared/electron/open-url.js";
+import {
+  DEFAULT_PROFILE_BROWSER_PARTITION,
+  resolveBaseUrlBrowserTarget,
+} from "../src/shared/electron/open-url.js";
 import {
   TerminalSessionManager,
   type CreatePtyProcessOptions,
@@ -217,6 +222,10 @@ let profileStateAccessor: StateAccessor | null = null;
 let currentPassphrase: string = "";
 const legacyCleanupWarnings = new Set<string>();
 let mainWindow: BrowserWindow | null = null;
+const profileBrowserWindows = new Set<BrowserWindow>();
+let appTray: Tray | null = null;
+let closeToTrayEnabled = false;
+let isExplicitlyQuitting = false;
 let skillsInitPromise: Promise<void> | null = null;
 let profileStoresInitPromise: Promise<void> | null = null;
 const sessionListCache = createSessionListCache({ ttlMs: 60_000 });
@@ -413,6 +422,7 @@ async function syncNativeThemeFromLocalState(): Promise<void> {
   const stateStore = localStateStore ?? new LocalStateStore(getLocalStatePath());
   const state = await stateStore.load();
   applyNativeThemeMode(state.global_settings.theme_mode);
+  syncCloseToTraySetting(state.global_settings.close_to_tray);
 }
 
 function getStartupThemeArgument(): string {
@@ -936,6 +946,7 @@ function getBrowserAccountSessionManager(): BrowserAccountSessionManager {
       getParentWindow: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
       windowIcon: resolveWindowIconPath(),
       onStatusChange: emitBrowserAccountStatus,
+      onDiagnostic: logBrowserAccountDiagnostic,
     });
   }
   return browserAccountSessionManager;
@@ -1008,6 +1019,12 @@ function logCheckinVerificationDiagnostic(event: CheckinVerificationDiagnosticEv
   appLogger.info("checkin_verification", event.event, "Check-in verification state changed", {
     durationMs,
     context,
+  });
+}
+
+function logBrowserAccountDiagnostic(event: BrowserAccountDiagnosticEvent): void {
+  appLogger.info("browser-auth", event.event, "Browser login probe state changed", {
+    context: event,
   });
 }
 
@@ -1197,6 +1214,7 @@ async function launchMonitoredTerminalSession(
   options: {
     showWindow?: boolean;
     additionalEnv?: Record<string, string>;
+    expectedPreview?: string;
   } = {},
 ): Promise<TerminalSessionSnapshot> {
   await validateLaunchPlan(plan);
@@ -1246,7 +1264,7 @@ async function launchMonitoredTerminalSession(
       throw windowError;
     }
   }
-  scheduleTerminalTitleResolution(snapshot, plan, startedAt);
+  scheduleTerminalTitleResolution(snapshot, plan, startedAt, options.expectedPreview);
   return snapshot;
 }
 
@@ -1585,6 +1603,7 @@ async function launchAgentTask(
     provider: profile.provider,
     runtime_settings: runtime,
     terminal_mode: "monitored",
+    disable_codex_hooks: true,
     ...(options.model ? { model_override: options.model } : {}),
     ...(options.reasoningEffort ? { reasoning_effort_override: options.reasoningEffort } : {}),
   };
@@ -1598,8 +1617,14 @@ async function launchAgentTask(
     : plan;
   const snapshot = await launchMonitoredTerminalSession(launchPlan, {
     showWindow: options.showTerminal,
+    expectedPreview: options.initialPrompt,
     additionalEnv: {
-      CODEDECK_DELEGATED: "1",
+      // Explicit orchestrators must not inherit delegated mode from the host
+      // process or a saved runtime environment.
+      CODEDECK_DELEGATED: options.orchestrator ? "0" : "1",
+      ...(app.isPackaged
+        ? { CODEDECK_AGENT_CLI: path.join(path.dirname(process.execPath), "codedeck-agent.cmd") }
+        : {}),
       ...(options.callbackToken
         ? {
             CODEDECK_AGENT_SCOPED_TOKEN: options.callbackToken,
@@ -1676,6 +1701,7 @@ async function handleAgentBridgeRequest(
       cwd: request.cwd,
       waitMs: request.wait_ms,
       showTerminal: request.show_terminal,
+      orchestrator: request.orchestrator,
       model: request.model,
       reasoningEffort: request.reasoning_effort,
       parentSessionId: request.parent_session_id,
@@ -1713,9 +1739,19 @@ async function startAgentBridgeServer(): Promise<void> {
   agentBridgeServer ??= new AgentBridgeServer({
     connectionFile: getAgentBridgeConnectionFile(),
     handleRequest: handleAgentBridgeRequest,
-    handleScopedRequest: async (token, request) => request.command === "policy"
-      ? ensureAgentTaskManager().scopedPolicy(token, request.return_policy)
-      : ensureAgentTaskManager().scopedInterruptParent(token),
+    handleScopedRequest: async (token, request) => {
+      const manager = ensureAgentTaskManager();
+      if (request.command === "policy") {
+        return manager.scopedPolicy(token, request.return_policy);
+      }
+      if (request.command === "status_parent") {
+        return manager.scopedStatusParent(token);
+      }
+      if (request.command === "continue_parent") {
+        return manager.scopedContinueParent(token, request.prompt);
+      }
+      return manager.scopedInterruptParent(token);
+    },
   });
   await agentBridgeServer.start();
   appLogger.info("agent_bridge", "server_started", "Local AI delegation bridge started", {
@@ -1969,6 +2005,69 @@ function findCheckinAccount(rawBaseUrl: string, sessionId: string): SiteBalanceS
     throw new Error("后台账号不存在");
   }
   return account;
+}
+
+async function openProfileSiteBrowser(rawBaseUrl: string, balanceSessionId?: string): Promise<void> {
+  const targetUrl = resolveBaseUrlBrowserTarget(rawBaseUrl);
+  const selectedAccount = balanceSessionId
+    ? findCheckinAccount(rawBaseUrl, balanceSessionId)
+    : null;
+  const partition = selectedAccount?.auth_kind === "browser_session"
+    ? getBrowserAccountSessionManager().getPartitionName(selectedAccount)
+    : DEFAULT_PROFILE_BROWSER_PARTITION;
+  const browserSession = electronSession.fromPartition(partition);
+  browserSession.setPermissionCheckHandler(() => false);
+  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+
+  const browserWindow = new BrowserWindow({
+    title: "CodeDeck 内置浏览器",
+    width: 1180,
+    height: 820,
+    minWidth: 840,
+    minHeight: 620,
+    show: false,
+    autoHideMenuBar: true,
+    ...(resolveWindowIconPath() ? { icon: resolveWindowIconPath() } : {}),
+    webPreferences: {
+      partition,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
+  });
+  profileBrowserWindows.add(browserWindow);
+  browserWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isHttpUrl(url)) void browserWindow.loadURL(url).catch(() => undefined);
+    return { action: "deny" };
+  });
+  browserWindow.webContents.on("will-navigate", (event, targetUrl) => {
+    if (!isHttpUrl(targetUrl)) event.preventDefault();
+  });
+  browserWindow.webContents.on("will-redirect", (event, targetUrl) => {
+    if (!isHttpUrl(targetUrl)) event.preventDefault();
+  });
+  browserWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  browserWindow.on("closed", () => profileBrowserWindows.delete(browserWindow));
+  try {
+    await browserWindow.loadURL(targetUrl);
+    if (!browserWindow.isDestroyed()) {
+      browserWindow.show();
+      browserWindow.focus();
+    }
+  } catch (error) {
+    if (!browserWindow.isDestroyed()) browserWindow.close();
+    throw error;
+  }
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function allocateBrowserAccountSessionId(): string {
@@ -2834,6 +2933,56 @@ function resolveWindowIconPath(): string | undefined {
   return candidates[0];
 }
 
+function destroyAppTray(): void {
+  appTray?.destroy();
+  appTray = null;
+}
+
+function requestExplicitQuit(): void {
+  isExplicitlyQuitting = true;
+  app.quit();
+}
+
+function ensureAppTray(): void {
+  if (appTray || !app.isReady()) {
+    return;
+  }
+  const iconPath = resolveWindowIconPath();
+  if (!iconPath) {
+    appLogger.error("tray", "icon_missing", "Application tray icon could not be resolved");
+    return;
+  }
+  const tray = new Tray(iconPath);
+  tray.setToolTip(APP_NAME);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: "打开 CodeDeck",
+      click: () => {
+        void reactivateMainWindow("tray").catch((error) => {
+          appLogger.error("tray", "reopen_failed", "Failed to reopen CodeDeck from tray", { error });
+        });
+      },
+    },
+    { type: "separator" },
+    { label: "退出", click: requestExplicitQuit },
+  ]));
+  tray.on("click", () => {
+    void reactivateMainWindow("tray").catch((error) => {
+      appLogger.error("tray", "reopen_failed", "Failed to reopen CodeDeck from tray", { error });
+    });
+  });
+  appTray = tray;
+}
+
+function syncCloseToTraySetting(enabled: unknown): void {
+  closeToTrayEnabled = enabled === true;
+  if (closeToTrayEnabled) {
+    ensureAppTray();
+  } else {
+    destroyAppTray();
+  }
+}
+
 function resolveDistIndexPath(): string {
   return resolveElectronRuntimePaths({
     appRoot,
@@ -2946,6 +3095,7 @@ function scheduleTerminalTitleResolution(
   snapshot: TerminalSessionSnapshot,
   plan: Parameters<typeof executeLaunchPlan>[0],
   startedAt: Date,
+  expectedPreview?: string,
 ): void {
   const sessionId = snapshot.sessionId;
   const deadlineMs = Date.now() + TERMINAL_TITLE_POLL_TIMEOUT_MS;
@@ -2963,6 +3113,7 @@ function scheduleTerminalTitleResolution(
         cwd: currentSnapshot.cwd,
         startedAt,
         sessionId: plan.sessionId,
+        expectedPreview,
         codexHome: plan.env.CODEX_HOME,
         claudeHome: plan.env.CLAUDE_CONFIG_DIR,
       });
@@ -3029,7 +3180,7 @@ function scheduleTerminalTitleResolution(
       });
     }
 
-    if (Date.now() >= deadlineMs) {
+    if (!expectedPreview?.trim() && Date.now() >= deadlineMs) {
       stopTerminalTitleResolution(sessionId);
       appLogger.info("terminal", "title_resolution_timeout", "Monitored terminal title resolution timed out", {
         context: {
@@ -3078,6 +3229,13 @@ async function createMainWindow(): Promise<void> {
   });
   browserWindow.on("ready-to-show", () => {
     appLogger.info("window", "main_window_ready_to_show", "Main window is ready to show");
+  });
+
+  browserWindow.on("close", (event) => {
+    if (!isExplicitlyQuitting && closeToTrayEnabled && appTray) {
+      event.preventDefault();
+      browserWindow.hide();
+    }
   });
 
   browserWindow.on("closed", () => {
@@ -3655,6 +3813,12 @@ function registerAllIpcHandlers(): void {
     },
   );
   handleIpc(
+    "profile:bind-site-balance-session",
+    async (_event, profileKey: ProfileKey, baseUrl: string, sessionId: string) => (
+      getProfileService().bindProfileSiteBalanceSession(profileKey, baseUrl, sessionId)
+    ),
+  );
+  handleIpc(
     "browser-auth:get-status",
     async (_event, baseUrl: string, sessionId: string): Promise<BrowserAccountStatusSnapshot> => {
       const accountKey = buildCheckinAccountKey(normalizeBalanceBaseUrl(baseUrl), sessionId);
@@ -3707,8 +3871,12 @@ function registerAllIpcHandlers(): void {
           "选择工作目录",
         );
   });
-  handleIpc("profile:open-base-url", async (_event, baseUrl: string) => {
-    await shell.openExternal(resolveBaseUrlExternalTarget(baseUrl));
+  handleIpc("profile:open-base-url", async (
+    _event,
+    baseUrl: string,
+    balanceSessionId?: string,
+  ) => {
+    await openProfileSiteBrowser(baseUrl, balanceSessionId);
   });
 
   // Launcher
@@ -4042,6 +4210,7 @@ function registerAllIpcHandlers(): void {
     async (_event, settings: Partial<GlobalSettings>) => {
       const updated = await getSettingsStateService().updateGlobalSettings(settings);
       applyNativeThemeMode(updated.theme_mode);
+      syncCloseToTraySetting(updated.close_to_tray);
       for (const win of BrowserWindow.getAllWindows()) {
         win.setBackgroundColor(resolveWindowBackgroundColor());
       }
@@ -4143,6 +4312,8 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", (event) => {
+  isExplicitlyQuitting = true;
+  destroyAppTray();
   checkinScheduler?.stop();
   void checkinVerificationService?.cancelAll();
   void agentTaskManager?.shutdown();

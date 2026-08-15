@@ -198,13 +198,22 @@ function createProfileSessionSwitchFixture(options: {
   delayBeta?: boolean;
   sameCwd?: boolean;
   savedExtraArgs?: string[];
+  withChannels?: boolean;
 } = {}) {
-  let appReactivatedCallback: ((event: { reason: "second_instance"; reactivated_at: string }) => void) | null = null;
+  let appReactivatedCallback: ((event: { reason: "second_instance" | "tray"; reactivated_at: string }) => void) | null = null;
   let alphaProfile: Profile = {
     provider: "claude",
     name: "Alpha",
     url: "https://alpha.example.com/v1",
-    key: "sk-alpha",
+    key: options.withChannels ? "sk-alpha-a" : "sk-alpha",
+    ...(options.withChannels ? {
+      selectedModelId: "model-a",
+      channels: [
+        { id: "alpha-a", name: "渠道 A", key: "sk-alpha-a", selectedModelId: "model-a" },
+        { id: "alpha-b", name: "渠道 B", key: "sk-alpha-b", selectedModelId: "model-b" },
+      ],
+      activeChannelId: "alpha-a",
+    } : {}),
   };
   let betaProfile: Profile = {
     provider: "claude",
@@ -255,7 +264,6 @@ function createProfileSessionSwitchFixture(options: {
           saved_extra_args: (options.savedExtraArgs ?? []).map((value, index) => ({
             id: `saved-${index + 1}`,
             value,
-            enabled: true,
           })),
         },
       },
@@ -394,6 +402,7 @@ function createProfileSessionSwitchFixture(options: {
         appReactivatedCallback = null;
       };
     }),
+    selectProfileChannel: vi.fn(async () => alphaProfile),
     onStateChanged: vi.fn(() => () => undefined),
     onBalanceProgress: vi.fn(() => () => undefined),
     onUnlockError: vi.fn(() => () => undefined),
@@ -419,9 +428,9 @@ function createProfileSessionSwitchFixture(options: {
         },
       };
     },
-    reactivate: () => {
+    reactivate: (reason: "second_instance" | "tray" = "second_instance") => {
       appReactivatedCallback?.({
-        reason: "second_instance",
+        reason,
         reactivated_at: "2026-07-28T09:00:00.000Z",
       });
     },
@@ -816,6 +825,54 @@ describe("App command preview", () => {
     vi.useRealTimers();
   });
 
+  it("keeps a launch-channel switch in the draft until the Profile is saved", async () => {
+    vi.useFakeTimers();
+    const fixture = createProfileSessionSwitchFixture({ withChannels: true });
+    const { container, root } = await renderUnlockedApp(fixture.manager);
+    await act(async () => {
+      await flushProfileSessionLoad();
+    });
+
+    const launchChannelSelect = Array.from(container.querySelectorAll<HTMLSelectElement>("select")).find(
+      (select) => select.parentElement?.textContent?.includes("启动渠道"),
+    );
+    expect(launchChannelSelect?.value).toBe("alpha-a");
+    await act(async () => {
+      if (launchChannelSelect) {
+        launchChannelSelect.value = "alpha-b";
+        launchChannelSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      await flushAsyncWork();
+    });
+
+    expect(launchChannelSelect?.value).toBe("alpha-b");
+    expect(container.querySelector<HTMLInputElement>('input[placeholder="输入 API Key"]')?.value)
+      .toBe("sk-alpha-b");
+    expect(fixture.manager.selectProfileChannel).not.toHaveBeenCalled();
+    expect(fixture.manager.saveProfile).not.toHaveBeenCalled();
+
+    const saveButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.textContent?.trim() === "保存",
+    );
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushAsyncWork();
+    });
+    expect(fixture.manager.saveProfile).toHaveBeenCalledWith(
+      fixture.alphaKey,
+      expect.objectContaining({
+        activeChannelId: "alpha-b",
+        key: "sk-alpha-b",
+        selectedModelId: "model-b",
+      }),
+      expect.any(Object),
+    );
+
+    await act(async () => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+  });
+
   it("restores the handwritten argument draft when immediate saved-argument persistence fails", async () => {
     vi.useFakeTimers();
     const fixture = createProfileSessionSwitchFixture({ savedExtraArgs: ["--review fast"] });
@@ -1152,7 +1209,7 @@ describe("App command preview", () => {
 
     fixture.setAlphaCwd(reactivatedCwd);
     await act(async () => {
-      fixture.reactivate();
+      fixture.reactivate("tray");
       await flushAsyncWork(8);
     });
 

@@ -146,14 +146,14 @@ Skills 是另一条独立流程：扫描本机 Skills，选择项目或全局范
 
 ```mermaid
 flowchart LR
-    UI[React 界面<br/>src/] --> PRELOAD[Preload API<br/>electron/preload.ts]
-    PRELOAD --> IPC[Electron IPC<br/>electron/main.ts]
-    IPC --> SERVICES[本地服务<br/>src/shared/services/]
-    SERVICES --> STATE[加密配置与本地状态<br/>src/shared/crypto/ + state/]
-    SERVICES --> SKILLS[Claude/Codex Skills<br/>src/shared/skills-service.ts]
-    SERVICES --> PLAN[CLI 启动计划<br/>src/shared/services/launch-service.ts]
-    PLAN --> DIRECT[系统终端]
-    PLAN --> PTY[受监控 PTY<br/>node-pty + xterm]
+    UI["React 界面 (src/)"] --> PRELOAD["Preload API (electron/preload.ts)"]
+    PRELOAD --> IPC["Electron IPC (electron/main.ts)"]
+    IPC --> SERVICES["本地服务 (src/shared/services/)"]
+    SERVICES --> STATE["加密配置与本地状态 (src/shared/crypto/ + state/)"]
+    SERVICES --> SKILLS["Claude/Codex Skills (src/shared/skills-service.ts)"]
+    SERVICES --> PLAN["CLI 启动计划 (src/shared/services/launch-service.ts)"]
+    PLAN --> DIRECT["系统终端"]
+    PLAN --> PTY["受监控 PTY (node-pty + xterm)"]
 ```
 
 ---

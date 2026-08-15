@@ -116,4 +116,28 @@ describe("ModelCatalogService", () => {
       }),
     ).rejects.toThrow(/401|404/);
   });
+
+  it("should summarize Cloudflare HTML error pages instead of returning their markup", async () => {
+    const cloudflarePage = "<!DOCTYPE html><html><head><title>Just a moment...</title></head><body>Cloudflare Sorry, you have been blocked.</body></html>";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => cloudflarePage,
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => cloudflarePage,
+      });
+    const service = new ModelCatalogService(fetchMock as typeof fetch);
+
+    const request = service.fetch({
+      baseUrl: "https://api.example.com/v1",
+      apiKey: "sk-test",
+    });
+
+    await expect(request).rejects.toThrow("站点返回 Cloudflare 拦截页面，无法自动获取模型列表");
+    await expect(request).rejects.not.toThrow(/<!DOCTYPE|<html/i);
+  });
 });

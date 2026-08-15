@@ -113,11 +113,13 @@ interface ManagedSession {
   subscribers: Set<TerminalSessionSubscriber>;
   pendingAutoContinueInput?: string;
   pendingAutoContinueTimer?: ReturnType<typeof setTimeout>;
+  pendingIdlePromptTimer?: ReturnType<typeof setTimeout>;
   disposeData?: () => void;
   disposeExit?: () => void;
 }
 
 const MAX_BUFFERED_OUTPUT_CHARS = 64_000;
+const IDLE_PROMPT_SETTLE_MS = 250;
 
 function cloneSnapshot(snapshot: TerminalSessionSnapshot): TerminalSessionSnapshot {
   return {
@@ -184,10 +186,12 @@ export class TerminalSessionManager {
 
     session.disposeData = normalizeDisposer(pty.onData((chunk) => {
       this.appendOutput(session, chunk);
-      this.observeActivity(session, session.activityDetector.observeOutput(chunk));
+      const activityObservation = session.activityDetector.observeOutput(chunk);
       const action = session.controller.processChunk(chunk);
       session.snapshot.autoContinue = session.controller.snapshot();
       this.notifyOutput(session, chunk);
+      this.cancelPendingIdlePrompt(session);
+      this.observeActivity(session, activityObservation);
       if (action) {
         this.enqueueAutoContinue(session, action.input, action.delayMs);
       }
@@ -195,6 +199,7 @@ export class TerminalSessionManager {
     }));
     session.disposeExit = normalizeDisposer(pty.onExit((event) => {
       this.cancelPendingAutoContinue(session);
+      this.cancelPendingIdlePrompt(session);
       this.applyActivity(session, "idle", "process_exit");
       session.snapshot.status = "exited";
       session.snapshot.exitCode = event.exitCode;
@@ -227,6 +232,7 @@ export class TerminalSessionManager {
     if (data && (session.pendingAutoContinueInput || session.pendingAutoContinueTimer)) {
       this.cancelPendingAutoContinue(session);
     }
+    this.cancelPendingIdlePrompt(session);
     session.controller.recordInput(data);
     this.observeActivity(session, session.activityDetector.recordInput(data));
     session.pty.write(data);
@@ -254,6 +260,7 @@ export class TerminalSessionManager {
     const session = this.requireSession(sessionId);
     if (session.snapshot.status !== "closed") {
       this.cancelPendingAutoContinue(session);
+      this.cancelPendingIdlePrompt(session);
       this.applyActivity(session, "idle", "session_closed");
       session.snapshot.status = "closed";
       session.snapshot.closeReason = reason;
@@ -294,6 +301,7 @@ export class TerminalSessionManager {
     if (session.snapshot.status !== "running") {
       return;
     }
+    this.cancelPendingIdlePrompt(session);
     this.applyActivity(
       session,
       phase === "started" ? "busy" : "idle",
@@ -347,20 +355,30 @@ export class TerminalSessionManager {
       this.applyActivity(session, "busy", observation.reason);
       return;
     }
-    // TUI prompts are continuously repainted and remain visible while Codex or
-    // Claude is still working. They are useful diagnostics, but not a reliable
-    // turn-completion signal. Provider lifecycle records call
-    // reportTurnLifecycle() when a turn actually finishes.
+    if (observation.reason === "busy_output") {
+      this.applyActivity(session, "busy", observation.reason);
+      return;
+    }
+    if (observation.reason === "idle_prompt") {
+      session.pendingIdlePromptTimer = setTimeout(() => {
+        session.pendingIdlePromptTimer = undefined;
+        if (session.snapshot.status !== "running") {
+          return;
+        }
+        this.applyActivity(session, "idle", observation.reason, true);
+      }, IDLE_PROMPT_SETTLE_MS);
+    }
   }
 
   private applyActivity(
     session: ManagedSession,
     activity: TerminalActivity,
     reason: TerminalActivityReason,
+    emitWhenUnchanged = false,
   ): void {
     const previousActivity = session.snapshot.activity;
     if (previousActivity === activity) {
-      if (reason === "process_exit" || reason === "session_closed") {
+      if (emitWhenUnchanged || reason === "process_exit" || reason === "session_closed") {
         this.dependencies.onActivityChange?.({
           sessionId: session.snapshot.sessionId,
           provider: session.snapshot.provider,
@@ -380,6 +398,13 @@ export class TerminalSessionManager {
       reason,
     });
     this.notifyStatus(session);
+  }
+
+  private cancelPendingIdlePrompt(session: ManagedSession): void {
+    if (session.pendingIdlePromptTimer) {
+      clearTimeout(session.pendingIdlePromptTimer);
+      session.pendingIdlePromptTimer = undefined;
+    }
   }
 
   private enqueueAutoContinue(session: ManagedSession, input: string, delayMs: number): void {

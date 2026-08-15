@@ -21,9 +21,24 @@ Task responses contain:
 monitored parent may select a return policy; omitted parent-bound policy defaults
 to `once`, while callers without parent context remain `manual`.
 
+Root callers may set `orchestrator: true` to create a tracked monitored parent
+session. That session may launch one live bound child. The child remains delegated
+and cannot create another session, so the supported depth is exactly A -> B.
+An orchestrator request with parent context and an ordinary tracked task used as
+a parent return `invalid_parent`. A second child requested while the first is
+running or launching returns retryable `child_already_bound`.
+
 The normal `interrupt` command sends ESC to the caller's bound child. A delegated
-child may use only scoped `policy` and `interrupt_parent`; it cannot supply a
-terminal ID, list Profiles, start another child, or control unrelated sessions.
+child may use only scoped `policy`, `status_parent`, `continue_parent`, and
+`interrupt_parent`. The server resolves the exact parent from the scoped token;
+the child cannot supply a terminal ID, list Profiles, start another child, or
+control unrelated sessions.
+
+Use `manual` for active A/B coordination. The child calls `status-parent`, then
+passes its message through stdin to `continue-parent` when the bound parent is
+idle. `continuous` remains a compatibility mode that injects completed child
+answers automatically; do not combine it with active parent continuation or the
+same answer may be submitted twice.
 
 Important errors:
 

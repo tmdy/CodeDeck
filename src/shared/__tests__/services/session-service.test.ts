@@ -1121,6 +1121,109 @@ describe("session-service", () => {
     expect(title).toEqual({ status: "ambiguous", candidateCount: 2 });
   });
 
+  it("waits for the monitored Codex session whose first prompt matches the launch prompt", async () => {
+    const codexRoot = await createTempDir("codedeck-codex-monitor-expected-preview-");
+    tempDirs.push(codexRoot);
+    const cwd = "C:/workspace/current-project";
+    const initialPrompt = `绑定这个新会话 ${"x".repeat(140)}`;
+    await writeFile(
+      path.join(codexRoot, "session_index.jsonl"),
+      `${JSON.stringify({
+        id: "unrelated-active-session",
+        thread_name: "同目录中的其他活跃会话",
+        updated_at: "2026-05-04T10:00:03.000Z",
+        cwd,
+      })}\n`,
+      "utf-8",
+    );
+
+    const pending = await findMonitoredTerminalSessionTitle({
+      provider: "codex",
+      cwd,
+      startedAt: "2026-05-04T10:00:00.000Z",
+      expectedPreview: initialPrompt,
+      codexHome: codexRoot,
+    });
+    expect(pending).toEqual({ status: "pending", candidateCount: 0 });
+
+    await writeJsonl(
+      path.join(codexRoot, "sessions", "2026", "05", "04", "rollout-2026-05-04T10-00-04-matching-session.jsonl"),
+      [
+        {
+          type: "session_meta",
+          payload: {
+            id: "matching-session",
+            cwd,
+            updated_at: "2026-05-04T10:00:04.000Z",
+            thread_name: "生成后的会话标题",
+          },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: `${initialPrompt}不同的截断后内容` }],
+          },
+        },
+      ],
+    );
+
+    const resolved = await findMonitoredTerminalSessionTitle({
+      provider: "codex",
+      cwd,
+      startedAt: "2026-05-04T10:00:00.000Z",
+      expectedPreview: initialPrompt,
+      codexHome: codexRoot,
+    });
+
+    expect(resolved).toEqual({
+      status: "resolved",
+      title: "生成后的会话标题",
+      sessionId: "matching-session",
+      candidateCount: 1,
+    });
+  });
+
+  it("keeps duplicate monitored Codex prompt matches ambiguous", async () => {
+    const codexRoot = await createTempDir("codedeck-codex-monitor-expected-ambiguous-");
+    tempDirs.push(codexRoot);
+    const cwd = "C:/workspace/current-project";
+    const initialPrompt = "执行相同的委托任务";
+    for (const [sessionId, title, updatedAt] of [
+      ["matching-session-a", "匹配会话 A", "2026-05-04T10:00:03.000Z"],
+      ["matching-session-b", "匹配会话 B", "2026-05-04T10:00:04.000Z"],
+    ]) {
+      await writeJsonl(
+        path.join(codexRoot, "sessions", "2026", "05", "04", `rollout-${sessionId}.jsonl`),
+        [
+          {
+            type: "session_meta",
+            payload: { id: sessionId, cwd, updated_at: updatedAt, thread_name: title },
+          },
+          {
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: initialPrompt }],
+            },
+          },
+        ],
+      );
+    }
+
+    const title = await findMonitoredTerminalSessionTitle({
+      provider: "codex",
+      cwd,
+      startedAt: "2026-05-04T10:00:00.000Z",
+      expectedPreview: initialPrompt,
+      codexHome: codexRoot,
+    });
+
+    expect(title).toEqual({ status: "ambiguous", candidateCount: 2 });
+  });
+
   it("refreshes Codex fallback sessions between monitored title lookup attempts", async () => {
     const codexRoot = await createTempDir("codedeck-codex-monitor-refresh-");
     tempDirs.push(codexRoot);

@@ -81,6 +81,319 @@ describe("CheckinService", () => {
     }
   });
 
+  it("keeps verified browser headers exact and authoritative", async () => {
+    const browserFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+      isStatusRequest(input, init)
+        ? jsonResponse(statusPayload())
+        : jsonResponse({ success: true, message: "签到成功" })
+    ));
+    const serviceFetch = vi.fn();
+
+    const result = await new CheckinService(serviceFetch as unknown as typeof fetch).checkin(
+      makeSession({
+        auth_kind: "browser_session",
+        access_token: "manual-token-must-not-win",
+        user_id: "9001",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+      }),
+      10_000,
+      {
+        runId: "browser-run",
+        trigger: "manual",
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: {
+            Authorization: "Bearer verified-browser-token",
+            "New-Api-User": "42",
+          },
+          userIdHeaderPolicy: "legacy_if_required",
+          authMode: "browser_cookie",
+        },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(serviceFetch).not.toHaveBeenCalled();
+    expect(browserFetch).toHaveBeenCalledTimes(2);
+    for (const call of browserFetch.mock.calls) {
+      expect(requestHeaders(call[1])).toEqual({
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: "Bearer verified-browser-token",
+        "New-Api-User": "42",
+      });
+    }
+  });
+
+  it("uses a verified Sub2API browser context instead of short-circuiting as unsupported", async () => {
+    const browserFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+      isStatusRequest(input, init)
+        ? jsonResponse(statusPayload())
+        : jsonResponse({ success: true, message: "签到成功" })
+    ));
+    const serviceFetch = vi.fn();
+
+    const result = await new CheckinService(serviceFetch as unknown as typeof fetch).checkin(
+      makeSession({
+        base_url: "https://sub2api.example.com",
+        auth_kind: "browser_session",
+        access_token: "",
+        user_id: "42",
+        browser_session_id: "sub2-browser-session",
+        browser_slot: 1,
+        browser_origin: "https://sub2api.example.com",
+      }),
+      10_000,
+      {
+        runId: "sub2-browser-run",
+        trigger: "manual",
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: {
+            Authorization: "Bearer runtime-only-sub2-token",
+            "New-Api-User": "42",
+          },
+          userIdHeaderPolicy: "legacy_if_required",
+          authMode: "browser_cookie",
+        },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(serviceFetch).not.toHaveBeenCalled();
+    expect(browserFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not expand or retry browser user-id headers", async () => {
+    const browserFetch = vi.fn().mockResolvedValue(jsonResponse({
+      success: false,
+      message: "missing required New-API-User header",
+    }, 400));
+
+    const result = await new CheckinService(vi.fn() as unknown as typeof fetch).checkin(
+      makeSession({
+        auth_kind: "browser_session",
+        access_token: "",
+        user_id: "9001",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+      }),
+      10_000,
+      {
+        runId: "browser-rejected-run",
+        trigger: "automatic",
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: {
+            Authorization: "Bearer verified-browser-token",
+            "New-Api-User": "42",
+          },
+          userIdHeaderPolicy: "legacy_if_required",
+          authMode: "browser_cookie",
+        },
+      },
+    );
+
+    expect(browserFetch).toHaveBeenCalledTimes(1);
+    expect(requestHeaders(browserFetch.mock.calls[0][1])).toEqual({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: "Bearer verified-browser-token",
+      "New-Api-User": "42",
+    });
+    expect(result.error_code).toBe("user_id_missing");
+    expect(result.message).not.toContain("自动发现");
+  });
+
+  it("does not discover a missing user ID for a browser request context", async () => {
+    const browserFetch = vi.fn();
+    const serviceFetch = vi.fn();
+
+    const result = await new CheckinService(serviceFetch as unknown as typeof fetch).checkin(
+      makeSession({
+        auth_kind: "browser_session",
+        access_token: "",
+        user_id: "",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+      }),
+      10_000,
+      {
+        runId: "browser-missing-user-run",
+        trigger: "automatic",
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: { Authorization: "Bearer verified-browser-token" },
+          userIdHeaderPolicy: "omit",
+          authMode: "browser_bearer",
+        },
+      },
+    );
+
+    expect(result.error_code).toBe("user_id_missing");
+    expect(result.message).toBe("浏览器认证上下文未通过签到用户 ID 校验");
+    expect(browserFetch).not.toHaveBeenCalled();
+    expect(serviceFetch).not.toHaveBeenCalled();
+  });
+
+  it("redacts browser runtime credentials from results and diagnostics", async () => {
+    const events: CheckinDiagnosticAttempt[] = [];
+    const browserFetch = vi.fn().mockResolvedValue(jsonResponse({
+      success: false,
+      message: "rejected verified-browser-token for user 42",
+    }));
+
+    const result = await new CheckinService(vi.fn() as unknown as typeof fetch).checkin(
+      makeSession({
+        auth_kind: "browser_session",
+        access_token: "",
+        user_id: "9001",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+      }),
+      10_000,
+      {
+        runId: "browser-redaction-run",
+        trigger: "automatic",
+        onDiagnostic: (event) => events.push(event),
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: {
+            Authorization: "Bearer verified-browser-token",
+            "New-Api-User": "42",
+          },
+          userIdHeaderPolicy: "legacy_if_required",
+          authMode: "browser_cookie",
+        },
+      },
+    );
+
+    const serialized = JSON.stringify({ result, events });
+    expect(result.error_code).toBe("business_rejected");
+    expect(serialized).not.toContain("verified-browser-token");
+    expect(events[0]?.message_preview).toContain("[REDACTED]");
+  });
+
+  it("does not let a learned VoAPI path bypass the browser request context", async () => {
+    const browserFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+      isStatusRequest(input, init)
+        ? jsonResponse(statusPayload())
+        : jsonResponse({ success: true, message: "签到成功" })
+    ));
+    const serviceFetch = vi.fn().mockResolvedValue(jsonResponse({
+      code: 0,
+      data: { todaySigned: true },
+    }));
+    const onPathInvalidated = vi.fn();
+
+    const result = await new CheckinService(serviceFetch as unknown as typeof fetch).checkin(
+      makeSession({
+        auth_kind: "browser_session",
+        access_token: "manual-token-must-not-win",
+        user_id: "9001",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+      }),
+      10_000,
+      {
+        runId: "browser-learned-path-run",
+        trigger: "automatic",
+        learnedPath: {
+          platform: "voapi_v2",
+          endpoint_path: "/api/check_in",
+          method: "POST",
+          authorization_mode: "raw",
+          cookie_mode: "none",
+          requires_user_id: false,
+          learned_at: "2026-08-15T12:00:00.000Z",
+          credential_updated_at: "",
+        },
+        onPathInvalidated,
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: { Authorization: "Bearer verified-browser-token" },
+          userIdHeaderPolicy: "omit",
+          authMode: "browser_bearer",
+        },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(serviceFetch).not.toHaveBeenCalled();
+    expect(browserFetch).toHaveBeenCalledTimes(2);
+    expect(onPathInvalidated).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let VoAPI URL detection bypass the browser request context", async () => {
+    const browserFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+      isStatusRequest(input, init)
+        ? jsonResponse(statusPayload())
+        : jsonResponse({ success: true, message: "签到成功" })
+    ));
+    const serviceFetch = vi.fn();
+
+    const result = await new CheckinService(serviceFetch as unknown as typeof fetch).checkin(
+      makeSession({
+        base_url: "https://voapi-v2.example.com",
+        auth_kind: "browser_session",
+        access_token: "manual-token-must-not-win",
+        user_id: "9001",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://voapi-v2.example.com",
+      }),
+      10_000,
+      {
+        runId: "browser-voapi-url-run",
+        trigger: "automatic",
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: { Authorization: "Bearer verified-browser-token" },
+          userIdHeaderPolicy: "omit",
+          authMode: "browser_bearer",
+        },
+      },
+    );
+
+    expect(result.status).toBe("success");
+    expect(serviceFetch).not.toHaveBeenCalled();
+    expect(browserFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps manual session-cookie user-id compatibility aliases", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+      isStatusRequest(input, init)
+        ? jsonResponse(statusPayload())
+        : jsonResponse({ success: true, message: "签到成功" })
+    ));
+
+    const result = await new CheckinService(fetchMock as unknown as typeof fetch).checkin(
+      makeSession({
+        auth_kind: "session_cookie",
+        access_token: "manual-session-cookie",
+        user_id: "65",
+      }),
+    );
+
+    expect(result.status).toBe("success");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(requestHeaders(call[1])).toEqual(expect.objectContaining({
+        Cookie: "session=manual-session-cookie",
+        "New-API-User": "65",
+        "Veloera-User": "65",
+        "X-Api-User": "65",
+        "X-User-Id": "65",
+      }));
+    }
+  });
+
   it("uses a learned bearer path without retrying raw authorization", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
       isStatusRequest(input, init)

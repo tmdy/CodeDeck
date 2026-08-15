@@ -1310,13 +1310,13 @@ export class BalanceService {
     try {
       const headers: Record<string, string> = {
         Accept: "application/json",
-        ...options.requestContext?.headers,
         ...extraHeaders,
+        ...options.requestContext?.headers,
       };
       if (options.method === "POST") {
         headers["Content-Type"] = "application/json";
       }
-      if (options.includeAuthorization !== false) {
+      if (options.includeAuthorization !== false && !options.requestContext) {
         headers.Authorization = `Bearer ${apiKey}`;
       }
       const response = await (options.requestContext?.fetch ?? this.fetchImpl)(endpoint, {
@@ -1560,13 +1560,15 @@ export class BalanceService {
     deadline: number,
   ): Promise<BalanceCheckState | null> {
     const endpoint = `${context.base_url}/api/v1/auth/me`;
+    const requestContext = options.managementRequestContext;
     let authToken = (resolvedSession?.access_token ?? apiKey).trim();
-    if (!authToken) {
+    if (!authToken && !requestContext) {
       return assumeFamily ? supportedFailureState(context, endpoint, AUTH_FAILURE_MESSAGE) : null;
     }
 
     if (
-      resolvedSession?.refresh_token
+      !requestContext
+      && resolvedSession?.refresh_token
       && resolvedSession.token_expires_at
       && resolvedSession.token_expires_at <= Date.now() + 30_000
     ) {
@@ -1579,8 +1581,18 @@ export class BalanceService {
       authToken = refreshed.access_token;
     }
 
-    let response = await this.requestJson(endpoint, authToken, timeoutMs, {}, { deadline });
-    if ((response.status === 401 || response.status === 403) && resolvedSession?.refresh_token) {
+    let response = await this.requestJson(
+      endpoint,
+      authToken,
+      timeoutMs,
+      {},
+      { deadline, requestContext },
+    );
+    if (
+      !requestContext
+      && (response.status === 401 || response.status === 403)
+      && resolvedSession?.refresh_token
+    ) {
       const refreshed = await this.refreshSub2ApiSession(
         context, resolvedSession, timeoutMs, options, deadline,
       );
@@ -1702,7 +1714,7 @@ export class BalanceService {
       ? familyHint
       : detectManagementFamilyByUrl(context.base_url);
     const explicitUserId = normalizeUserIdValue(resolvedSession?.user_id);
-    const userIdCandidates = requestContext?.userIdHeaderPolicy === "omit"
+    const userIdCandidates = requestContext
       ? []
       : buildUserIdProbeCandidates(authToken, explicitUserId);
     const preferNewApi = !!resolvedSession;
@@ -1741,12 +1753,12 @@ export class BalanceService {
         endpoint,
         authToken,
         timeoutMs,
-        {
-          ...auth.headers,
-          ...(requestContext?.userIdHeaderPolicy === "omit"
-            ? {}
-            : buildNewApiUserHeadersFromValue(userId)),
-        },
+        requestContext
+          ? {}
+          : {
+              ...auth.headers,
+              ...buildNewApiUserHeadersFromValue(userId),
+            },
         { includeAuthorization: false, deadline, requestContext },
       );
       lastResponse = response;

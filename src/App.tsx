@@ -95,6 +95,7 @@ type BalanceSessionDraftState = {
   access_token: string;
   auth_kind: SiteBalanceAuthKind;
   browser_session_id?: string;
+  browser_slot?: number;
   browser_origin?: string;
   refresh_token: string;
   token_expires_at?: number;
@@ -395,6 +396,7 @@ function normalizeBalanceSessionDraftState(
     access_token: draft.access_token ?? "",
     auth_kind: draft.auth_kind ?? "access_token",
     browser_session_id: draft.browser_session_id,
+    browser_slot: draft.browser_slot,
     browser_origin: draft.browser_origin,
     refresh_token: draft.refresh_token ?? "",
     token_expires_at: draft.token_expires_at,
@@ -756,11 +758,14 @@ function App() {
   const currentCheckinState = currentCheckinAccountKey
     ? state?.checkin_states_by_account[currentCheckinAccountKey] ?? null
     : null;
-  const currentBrowserAuthStatus = currentCheckinState?.status === "login_required"
-    ? "login_required"
-    : currentCheckinAccount?.auth_kind === "browser_session"
-      ? browserAuthStatusByAccount[currentCheckinAccountKey]?.status ?? "unknown"
-      : "unknown";
+  const currentBrowserRuntimeStatus = browserAuthStatusByAccount[currentCheckinAccountKey]?.status;
+  const currentBrowserAuthStatus = currentCheckinAccount?.auth_kind !== "browser_session"
+    ? "unknown"
+    : currentBrowserRuntimeStatus && currentBrowserRuntimeStatus !== "unknown"
+      ? currentBrowserRuntimeStatus
+      : currentCheckinState?.status === "login_required"
+        ? "login_required"
+        : currentBrowserRuntimeStatus ?? "unknown";
   const anyCheckinRunning = Object.values(state?.checkin_states_by_account ?? {})
     .some((checkinState) => (
       checkinState.status === "running" || checkinState.status === "verifying"
@@ -895,9 +900,9 @@ function App() {
       reconcileIfStale();
     };
     const unsubscribe = window.profileManager?.onAppReactivated?.(
-      (_event: AppReactivationEvent) => {
+      (event: AppReactivationEvent) => {
         hiddenAtRef.current = null;
-        void stableReconcileAfterReactivation("second_instance");
+        void stableReconcileAfterReactivation(event.reason);
       },
     );
 
@@ -1321,7 +1326,7 @@ function App() {
   }
 
   async function reconcileAfterReactivation(
-    trigger: "second_instance" | "stale_focus",
+    trigger: AppReactivationEvent["reason"] | "stale_focus",
   ): Promise<void> {
     if (startupPhase !== "ready" || !window.profileManager) {
       return;
@@ -1479,15 +1484,7 @@ function App() {
       return;
     }
 
-    const nextDraft = {
-      label: matched.label,
-      access_token: matched.access_token,
-      auth_kind: matched.auth_kind ?? "access_token",
-      refresh_token: matched.refresh_token ?? "",
-      token_expires_at: matched.token_expires_at,
-      user_id: matched.user_id,
-    };
-    setDraftBalanceSession(nextDraft);
+    setDraftBalanceSession(normalizeBalanceSessionDraftState(matched));
   }, [
     draftBalanceSessionSelection,
     draftSiteBalanceSessions,
@@ -2001,10 +1998,18 @@ function App() {
         && draftBalanceSessionSelection !== "new"
         ? await window.profileManager!.reloginBrowserAccount!(draftUrl, draftBalanceSessionSelection)
         : await window.profileManager!.loginBrowserAccount!(draftUrl, requestedBrowserSlot);
-      await refreshAll(true);
-      setDraftBalanceSessionSelection(saved.id);
-      setDraftBalanceSession(normalizeBalanceSessionDraftState(saved));
-      setDraftBrowserSlotSelection("new");
+      if (editingKey) {
+        if (!window.profileManager!.bindProfileSiteBalanceSession) {
+          throw new Error("当前环境不支持绑定后台账号");
+        }
+        await window.profileManager!.bindProfileSiteBalanceSession(editingKey, draftUrl, saved.id);
+        await refreshAll(true);
+      } else {
+        await refreshAll(false);
+        setDraftBalanceSessionSelection(saved.id);
+        setDraftBalanceSession(normalizeBalanceSessionDraftState(saved));
+        setDraftBrowserSlotSelection("new");
+      }
       setSuccessMessage("浏览器登录成功");
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "浏览器登录失败");
@@ -2030,25 +2035,12 @@ function App() {
     }
   }
 
-  async function handleSelectProfileChannel(channelId: string) {
-    const selectProfileChannel = window.profileManager?.selectProfileChannel;
-    if (!selectProfileChannel || !state?.selected_profile_key || !editingKey) return;
-    const selectedProfile = profiles.find((profile) => itemKey(profile) === state.selected_profile_key);
-    if (!selectedProfile || selectedProfile.activeChannelId === channelId) return;
-    if (!(await resolveUnsavedProfileChanges())) {
-      return;
-    }
-    setIsBusy(true);
-    setErrorMessage(null);
-    try {
-      await selectProfileChannel(state.selected_profile_key, channelId);
-      await refreshAll(true);
-      setSuccessMessage("启动渠道已切换");
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : "切换渠道失败");
-    } finally {
-      setIsBusy(false);
-    }
+  function handleSelectProfileChannel(channelId: string) {
+    const activeChannel = draftChannels.find((channel) => channel.id === channelId);
+    if (!activeChannel || draftActiveChannelId === channelId) return;
+    setDraftActiveChannelId(channelId);
+    setDraftKey(activeChannel.key ?? "");
+    setDraftModel(activeChannel.selectedModelId ?? "");
   }
 
   async function handleProfileOrganizationChange(organization: ProfileOrganization) {
@@ -2157,6 +2149,12 @@ function App() {
 
   async function handleTestBalance() {
     if (!window.profileManager || !state?.selected_profile_key) return;
+    if (isEmptyNewBalanceSessionDraft(draftBalanceSessionSelection, draftBalanceSession)) {
+      setErrorMessage(draftBalanceSession.auth_kind === "browser_session"
+        ? "请先完成浏览器登录，或改用 PAT 兼容模式并保存后台账号"
+        : "请先填写并保存 PAT 后再检测余额，或选择 API Key 自动");
+      return;
+    }
     if (!(await resolveUnsavedProfileChanges())) {
       return;
     }
@@ -3241,7 +3239,10 @@ function App() {
   async function handleOpenBaseUrl() {
     if (!window.profileManager) return;
     try {
-      await window.profileManager.openBaseUrl(draftUrl);
+      const selectedBrowserAccount = draftSiteBalanceSessions.find((session) => (
+        session.id === draftBalanceSessionSelection && session.auth_kind === "browser_session"
+      ));
+      await window.profileManager.openBaseUrl(draftUrl, selectedBrowserAccount?.id);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "打开 Base URL 失败");
     }
@@ -3454,7 +3455,6 @@ function App() {
   }, [state?.balance_checks_by_profile]);
 
   const selectedProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
-  const selectedSavedProfile = profiles.find((profile) => itemKey(profile) === state?.selected_profile_key);
   const workingDirectoryFavorites = state?.working_directory_favorites ?? [];
   const profileDraft = useMemo(() => ({
     name: draftName,
@@ -3581,16 +3581,9 @@ function App() {
       return;
     }
     const matched = draftSiteBalanceSessions.find((session) => session.id === value);
-    setDraftBalanceSession(matched ? {
-      label: matched.label,
-      access_token: matched.access_token,
-      auth_kind: matched.auth_kind ?? "access_token",
-      browser_session_id: matched.browser_session_id,
-      browser_origin: matched.browser_origin,
-      refresh_token: matched.refresh_token ?? "",
-      token_expires_at: matched.token_expires_at,
-      user_id: matched.user_id,
-    } : emptyBalanceSessionDraft());
+    setDraftBalanceSession(matched
+      ? normalizeBalanceSessionDraftState(matched)
+      : emptyBalanceSessionDraft());
   }, [draftSiteBalanceSessions]);
   const handleBalanceSessionDraftChange = useCallback((field: "label" | "access_token" | "auth_kind" | "refresh_token" | "user_id", value: string) => {
     setDraftBalanceSession((current) => ({
@@ -4095,8 +4088,8 @@ function App() {
             }}
             launchPanelProps={{
               provider: activeProvider,
-              channels: selectedSavedProfile?.channels ?? [],
-              activeChannelId: selectedSavedProfile?.activeChannelId ?? "",
+              channels: draftChannels,
+              activeChannelId: draftActiveChannelId,
               onChannelChange: stableSelectProfileChannelAction,
               channelSwitchDisabled: !editingKey,
               preview: launchPanelPreview,

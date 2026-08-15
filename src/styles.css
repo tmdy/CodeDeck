@@ -1341,11 +1341,6 @@ button.profile-group-heading:hover:not(:disabled),
   border-color: var(--app-danger-text);
 }
 
-.profile-saved-extra-arg-row input[type="text"],
-.profile-saved-extra-arg-row input:not([type]) {
-  min-width: 0;
-}
-
 .muted-text {
   color: var(--app-text-muted);
   font-size: 0.76rem;
@@ -1373,8 +1368,7 @@ button.profile-group-heading:hover:not(:disabled),
     justify-self: start;
   }
 
-  .profile-saved-extra-arg-row .saved-extra-arg-chip,
-  .profile-saved-extra-arg-row input:not([type="checkbox"]) {
+  .profile-saved-extra-arg-row .saved-extra-arg-chip {
     min-width: 0;
   }
 

@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { AgentBridgeServer } from "../../agent-bridge/server.js";
+import type {
+  AgentBridgeRequest,
+  AgentScopedRequest,
+} from "../../agent-bridge/types.js";
 
 interface CliResult {
   exitCode: number | null;
@@ -8,7 +15,19 @@ interface CliResult {
   stderr: string;
 }
 
-function runAgentCli(args: string[], env: Record<string, string> = {}): Promise<CliResult> {
+const cleanupPaths: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(cleanupPaths.splice(0).map((target) =>
+    rm(target, { recursive: true, force: true })
+  ));
+});
+
+function runAgentCli(
+  args: string[],
+  env: Record<string, string> = {},
+  prompt = "",
+): Promise<CliResult> {
   const entryPoint = path.join(process.cwd(), "electron", "agent-cli.ts");
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -17,7 +36,7 @@ function runAgentCli(args: string[], env: Record<string, string> = {}): Promise<
       {
         cwd: process.cwd(),
         env: { ...process.env, ...env },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
       },
     );
     let stdout = "";
@@ -30,6 +49,7 @@ function runAgentCli(args: string[], env: Record<string, string> = {}): Promise<
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
     });
+    child.stdin.end(prompt);
     child.once("error", reject);
     child.once("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
   });
@@ -60,6 +80,149 @@ describe("codedeck-agent CLI", () => {
     expect(result.stderr).toContain("--model <id>");
     expect(result.stderr).toContain("--reasoning-effort <level>");
     expect(result.stderr).toContain("--return-policy once|continuous|manual");
+    expect(result.stderr).toContain("--orchestrator");
+    expect(result.stderr).toContain("status-parent");
+    expect(result.stderr).toContain("continue-parent");
     expect(result.stderr).toContain("interrupt-parent");
+  });
+
+  it("forwards the orchestrator flag and one-run overrides in a run request", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "codedeck-agent-cli-"));
+    cleanupPaths.push(directory);
+    const connectionFile = path.join(directory, "connection.json");
+    let received: AgentBridgeRequest | undefined;
+    const server = new AgentBridgeServer({
+      connectionFile,
+      handleRequest: async (request) => {
+        received = request;
+        return {
+          ok: true,
+          status: "running",
+          session_id: "orchestrator-task",
+          provider: "codex",
+          profile_key: "codex::demo",
+          assistant_text: "",
+          question: null,
+          terminal_tail: "",
+          error: null,
+          parent_session_id: null,
+          return_policy: "manual",
+          delivery_status: "not_requested",
+          delivery_error: null,
+        };
+      },
+    });
+    await server.start();
+    try {
+      const result = await runAgentCli([
+        "run",
+        "--profile",
+        "codex::demo",
+        "--orchestrator",
+        "--model",
+        "gpt-5.6-terra",
+        "--reasoning-effort",
+        "low",
+        "--wait-ms",
+        "0",
+      ], {
+        CODEDECK_AGENT_CONNECTION_FILE: connectionFile,
+        CODEDECK_DELEGATED: "0",
+      }, "coordinate the debate");
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        session_id: "orchestrator-task",
+      });
+      expect(received).toMatchObject({
+        command: "run",
+        profile_key: "codex::demo",
+        prompt: "coordinate the debate",
+        orchestrator: true,
+        model: "gpt-5.6-terra",
+        reasoning_effort: "low",
+        wait_ms: 0,
+      });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("routes parent status and continuation through the scoped binding without a session option", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "codedeck-agent-parent-cli-"));
+    cleanupPaths.push(directory);
+    const connectionFile = path.join(directory, "connection.json");
+    const received: AgentScopedRequest[] = [];
+    const server = new AgentBridgeServer({
+      connectionFile,
+      handleRequest: async () => ({
+        ok: true,
+        profiles: [],
+        capacity: { running: 0, limit: 4 },
+      }),
+      handleScopedRequest: async (_token, request) => {
+        received.push(request);
+        return {
+          ok: true,
+          status: request.command === "continue_parent" ? "running" : "completed",
+          session_id: "bound-parent-task",
+          provider: "codex",
+          profile_key: "codex::demo",
+          assistant_text: "",
+          question: null,
+          terminal_tail: "parent tail",
+          error: null,
+          parent_session_id: null,
+          return_policy: "manual",
+          delivery_status: "not_requested",
+          delivery_error: null,
+        };
+      },
+    });
+    const connection = await server.start();
+    const env = {
+      CODEDECK_DELEGATED: "1",
+      CODEDECK_AGENT_SCOPED_PIPE: connection.pipe_name,
+      CODEDECK_AGENT_SCOPED_TOKEN: "child-scoped-token",
+    };
+    try {
+      const statusResult = await runAgentCli(["status-parent"], env);
+      const continueResult = await runAgentCli(
+        ["continue-parent"],
+        env,
+        "B actively starts A's next turn",
+      );
+
+      expect(statusResult.exitCode).toBe(0);
+      expect(JSON.parse(statusResult.stdout)).toMatchObject({
+        session_id: "bound-parent-task",
+        status: "completed",
+        terminal_tail: "parent tail",
+      });
+      expect(continueResult.exitCode).toBe(0);
+      expect(JSON.parse(continueResult.stdout)).toMatchObject({
+        session_id: "bound-parent-task",
+        status: "running",
+      });
+      expect(received).toEqual([
+        expect.objectContaining({ command: "status_parent" }),
+        expect.objectContaining({
+          command: "continue_parent",
+          prompt: "B actively starts A's next turn",
+        }),
+      ]);
+
+      const rejected = await runAgentCli(
+        ["continue-parent", "--session", "arbitrary-parent"],
+        env,
+        "must not route",
+      );
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.stderr).toContain("不接受参数");
+      expect(received).toHaveLength(2);
+    } finally {
+      await server.stop();
+    }
   });
 });

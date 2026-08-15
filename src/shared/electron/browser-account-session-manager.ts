@@ -24,6 +24,14 @@ export interface BrowserAccountStatusSnapshot {
   status: BrowserAccountAuthStatus;
 }
 
+export interface BrowserAccountDiagnosticEvent {
+  event: "login_probe_capability" | "login_probe_result" | "login_canceled";
+  authMode?: ManagementRequestContext["authMode"];
+  httpStatus?: number;
+  result?: "ready" | "retry" | "account_mismatch" | "login_required" | "error";
+  reason?: "window_close_unverified";
+}
+
 export interface BrowserSessionReference {
   browserSessionId: string;
   browserOrigin: string;
@@ -53,6 +61,7 @@ export interface BrowserAccountSessionManagerDependencies {
   loginTimeoutMs?: number;
   pollIntervalMs?: number;
   onStatusChange?: (snapshot: BrowserAccountStatusSnapshot) => void;
+  onDiagnostic?: (event: BrowserAccountDiagnosticEvent) => void;
 }
 
 interface RuntimeState {
@@ -61,6 +70,10 @@ interface RuntimeState {
   bearer?: string;
   bearerExpiresAt?: number;
   sid?: string;
+  legacyBearer?: string;
+  legacyUserId?: string;
+  legacyPlatform?: LegacyIdentityPlatform;
+  legacyRefreshToken?: string;
   generation: number;
 }
 
@@ -70,6 +83,20 @@ interface RefreshBundle {
   sid: string;
 }
 
+interface LegacyIdentityCandidate {
+  platform: LegacyIdentityPlatform;
+  userId: string;
+  bearer?: string;
+  refreshToken?: string;
+}
+
+type LegacyIdentityPlatform = "new_api" | "sub2api";
+
+type LegacyIdentityVerification =
+  | { kind: "ready"; userId: string }
+  | { kind: "account_mismatch" }
+  | { kind: "login_required" };
+
 interface LoginTask {
   request: BrowserAccountLoginRequest;
   promise: Promise<BrowserAccountLoginResult>;
@@ -77,6 +104,8 @@ interface LoginTask {
   window?: BrowserWindow;
   pollTimer?: ReturnType<typeof setTimeout>;
   timeoutTimer?: ReturnType<typeof setTimeout>;
+  probePromise?: Promise<BrowserAccountLoginResult | null>;
+  closeRequested?: boolean;
   finished: boolean;
 }
 
@@ -106,10 +135,12 @@ export class BrowserLoginRequiredError extends Error {
 export class BrowserAccountSessionManager {
   private readonly states = new Map<string, RuntimeState>();
   private readonly refreshes = new Map<string, Promise<ManagementRequestContext>>();
+  private readonly sub2ApiRefreshes = new Map<string, Promise<LegacyIdentityCandidate>>();
   private readonly sessions = new Map<string, Session>();
   private readonly configuredSessions = new WeakSet<Session>();
   private readonly loginTasks = new Map<string, LoginTask>();
   private readonly loginQueue: LoginTask[] = [];
+  private readonly recoveryWindows = new Map<BrowserWindow, string>();
   private activeLoginTask: LoginTask | null = null;
 
   constructor(private readonly dependencies: BrowserAccountSessionManagerDependencies) {}
@@ -207,6 +238,8 @@ export class BrowserAccountSessionManager {
     const state = this.ensureState(accountKey);
     state.generation += 1;
     this.refreshes.delete(accountKey);
+    this.sub2ApiRefreshes.delete(accountKey);
+    this.closeRecoveryWindows(accountKey);
     await this.cancelLogin(accountKey);
     try {
       await this.clearPartition(sanitizeOpaqueId(browserSessionId));
@@ -226,12 +259,20 @@ export class BrowserAccountSessionManager {
   }
 
   async shutdown(): Promise<void> {
+    for (const state of this.states.values()) {
+      state.generation += 1;
+    }
     const tasks = [...this.loginTasks.values()];
     await Promise.all(tasks.map((task) => this.completeLogin(task, {
       status: "canceled",
       message: "应用正在退出",
     })));
+    for (const browserWindow of this.recoveryWindows.keys()) {
+      if (!browserWindow.isDestroyed()) browserWindow.close();
+    }
+    this.recoveryWindows.clear();
     this.refreshes.clear();
+    this.sub2ApiRefreshes.clear();
     this.states.clear();
     this.sessions.clear();
   }
@@ -262,7 +303,7 @@ export class BrowserAccountSessionManager {
       return existing;
     }
     const generation = state.generation;
-    const refresh = this.refreshOrDetect(accountKey, account, generation)
+    const refresh = this.refreshOrDetect(accountKey, account, generation, allowLoginRequired)
       .finally(() => {
         if (this.refreshes.get(accountKey) === refresh) {
           this.refreshes.delete(accountKey);
@@ -276,6 +317,7 @@ export class BrowserAccountSessionManager {
     accountKey: string,
     account: SiteBalanceSession,
     generation: number,
+    allowUnverifiedLegacy: boolean,
   ): Promise<ManagementRequestContext> {
     this.setStatus(accountKey, "checking");
     const browserSession = this.getSession(requireBrowserSessionId(account));
@@ -300,17 +342,26 @@ export class BrowserAccountSessionManager {
       state.bearer = result.bundle.bearer;
       state.bearerExpiresAt = result.bundle.expiresAt;
       state.sid = result.bundle.sid;
+      state.legacyBearer = undefined;
+      state.legacyUserId = undefined;
+      state.legacyPlatform = undefined;
+      state.legacyRefreshToken = undefined;
       this.emitStatus(accountKey);
       return this.buildModernContext(accountKey, account, result.bundle.bearer);
     }
     if (result.kind === "legacy") {
       state.mode = "legacy";
-      state.status = "ready";
       state.bearer = undefined;
       state.bearerExpiresAt = undefined;
       state.sid = undefined;
-      this.emitStatus(accountKey);
-      return this.buildLegacyContext(accountKey, account);
+      state.legacyBearer = undefined;
+      state.legacyUserId = undefined;
+      state.legacyPlatform = undefined;
+      state.legacyRefreshToken = undefined;
+      if (allowUnverifiedLegacy) {
+        return this.buildLegacyContext(accountKey, account, true);
+      }
+      return this.recoverLegacyRequestContext(accountKey, account, generation);
     }
     if (result.kind === "login_required") {
       this.clearTransientState(accountKey, "login_required");
@@ -383,34 +434,50 @@ export class BrowserAccountSessionManager {
     bearer: string,
   ): ManagementRequestContext {
     const boundFetch = this.buildBoundFetch(account);
+    const generation = this.ensureState(accountKey).generation;
     return {
       fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
-        const response = await boundFetch(input, init);
+        const requestBearer = await this.resolveModernBearerForRequest(
+          accountKey,
+          account,
+          generation,
+        );
+        const requestHeaders = withAuthoritativeBearer(init?.headers, requestBearer);
+        const response = await boundFetch(input, { ...init, headers: requestHeaders });
+        this.assertGeneration(accountKey, generation);
         if (response.status !== 401 && response.status !== 403) {
           return response;
         }
-        const state = this.ensureState(accountKey);
-        if (state.bearer !== bearer) {
-          return response;
+
+        const state = this.states.get(accountKey);
+        let retryBearer = state?.mode === "modern"
+          && state.status === "ready"
+          && state.bearer
+          && state.bearer !== requestBearer
+          ? state.bearer
+          : "";
+        if (!retryBearer) {
+          if (state?.bearer === requestBearer) {
+            state.bearer = undefined;
+            state.bearerExpiresAt = undefined;
+          }
+          retryBearer = await this.resolveModernBearerForRequest(
+            accountKey,
+            account,
+            generation,
+          );
         }
-        state.bearer = undefined;
-        state.bearerExpiresAt = undefined;
-        const refreshed = await this.resolveRequestContext(accountKey, account, true);
-        if (refreshed.authMode !== "browser_bearer") {
-          this.clearTransientState(accountKey, "login_required");
-          throw new BrowserLoginRequiredError();
-        }
-        const retryHeaders = new Headers(init?.headers);
-        retryHeaders.delete("Authorization");
-        for (const [name, value] of Object.entries(refreshed.headers)) {
-          retryHeaders.set(name, value);
-        }
+        const retryHeaders = withAuthoritativeBearer(init?.headers, retryBearer);
         const retryResponse = await boundFetch(input, {
           ...init,
           headers: retryHeaders,
         });
+        this.assertGeneration(accountKey, generation);
         if (retryResponse.status === 401 || retryResponse.status === 403) {
-          this.clearTransientState(accountKey, "login_required");
+          const retryState = this.states.get(accountKey);
+          if (retryState?.bearer === retryBearer) {
+            this.clearTransientState(accountKey, "login_required");
+          }
         }
         return retryResponse;
       }) as typeof fetch,
@@ -423,20 +490,270 @@ export class BrowserAccountSessionManager {
   private buildLegacyContext(
     accountKey: string,
     account: SiteBalanceSession,
+    allowUnverified: boolean = false,
   ): ManagementRequestContext {
     const boundFetch = this.buildBoundFetch(account);
+    const state = this.ensureState(accountKey);
+    const generation = state.generation;
+    const legacyBearer = state.legacyBearer;
+    const legacyUserId = state.legacyUserId;
+    const legacyPlatform = state.legacyPlatform;
+    const legacyRefreshToken = state.legacyRefreshToken;
+    const headers = buildLegacyIdentityHeaders(
+      legacyUserId
+        ? {
+            platform: legacyPlatform ?? "new_api",
+            userId: legacyUserId,
+            ...(legacyBearer ? { bearer: legacyBearer } : {}),
+            ...(legacyRefreshToken ? { refreshToken: legacyRefreshToken } : {}),
+          }
+        : null,
+    );
     return {
       fetch: (async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
-        const response = await boundFetch(input, init);
+        const requestState = this.assertLegacyRuntime(accountKey, generation, allowUnverified);
+        const requestCandidate = runtimeCandidate(requestState);
+        const requestHeaders = allowUnverified ? null : new Headers(init?.headers);
+        if (!allowUnverified) {
+          requestHeaders!.delete("Authorization");
+          requestHeaders!.delete("New-Api-User");
+          for (const [name, value] of Object.entries(buildLegacyIdentityHeaders(requestCandidate))) {
+            requestHeaders!.set(name, value);
+          }
+        }
+        const response = await boundFetch(input, requestHeaders
+          ? { ...init, headers: requestHeaders }
+          : init);
+        const liveState = this.assertLegacyRuntime(accountKey, generation, allowUnverified);
         if (response.status === 401 || response.status === 403) {
+          const liveCandidate = runtimeCandidate(liveState);
+          if (
+            liveState.legacyPlatform === "sub2api"
+            && liveState.legacyUserId
+            && liveState.legacyBearer
+            && liveState.legacyRefreshToken
+          ) {
+            const refreshed = sameLegacyIdentityCredentials(requestCandidate, liveCandidate)
+              ? await this.refreshSub2ApiRuntime(
+                  accountKey,
+                  account,
+                  generation,
+                  liveState.legacyUserId,
+                  liveState.legacyBearer,
+                  liveState.legacyRefreshToken,
+                )
+              : liveCandidate;
+            const retryHeaders = new Headers(requestHeaders ?? init?.headers);
+            for (const name of ["Authorization", "New-Api-User"]) {
+              retryHeaders.delete(name);
+            }
+            for (const [name, value] of Object.entries(buildLegacyIdentityHeaders(refreshed))) {
+              retryHeaders.set(name, value);
+            }
+            const retryResponse = await boundFetch(input, { ...init, headers: retryHeaders });
+            if (retryResponse.status === 401 || retryResponse.status === 403) {
+              const retryState = this.assertLegacyRuntime(accountKey, generation, false);
+              if (sameLegacyIdentityCredentials(runtimeCandidate(retryState), refreshed)) {
+                this.clearTransientState(accountKey, "login_required");
+              }
+            }
+            return retryResponse;
+          }
           this.clearTransientState(accountKey, "login_required");
         }
         return response;
       }) as typeof fetch,
-      headers: {},
+      headers,
       userIdHeaderPolicy: "legacy_if_required",
       authMode: "browser_cookie",
     };
+  }
+
+  private async recoverLegacyRequestContext(
+    accountKey: string,
+    account: SiteBalanceSession,
+    generation: number,
+  ): Promise<ManagementRequestContext> {
+    const expectedUserId = positiveIntegerString(account.user_id);
+    const cookieCandidate: LegacyIdentityCandidate | null = expectedUserId
+      ? { platform: "new_api", userId: expectedUserId }
+      : null;
+    const cookieVerification = await this.verifyLegacyIdentity(account, cookieCandidate, expectedUserId);
+    this.assertGeneration(accountKey, generation);
+    if (cookieVerification.kind === "ready") {
+      this.setLegacyRuntime(accountKey, {
+        platform: "new_api",
+        userId: cookieVerification.userId,
+      });
+      return this.buildLegacyContext(accountKey, account);
+    }
+    if (cookieVerification.kind === "account_mismatch") {
+      this.clearTransientState(accountKey, "login_required");
+      throw new BrowserLoginRequiredError("浏览器中登录的账号与目标账号不一致");
+    }
+
+    const recoveredCandidate = await this.recoverLegacyIdentityCandidate(accountKey, account);
+    this.assertGeneration(accountKey, generation);
+    if (!recoveredCandidate || (expectedUserId && recoveredCandidate.userId !== expectedUserId)) {
+      this.clearTransientState(accountKey, "login_required");
+      throw new BrowserLoginRequiredError();
+    }
+    const recoveredVerification = await this.verifyLegacyIdentity(
+      account,
+      recoveredCandidate,
+      expectedUserId,
+    );
+    this.assertGeneration(accountKey, generation);
+    if (recoveredVerification.kind !== "ready") {
+      this.clearTransientState(accountKey, "login_required");
+      throw new BrowserLoginRequiredError(
+        recoveredVerification.kind === "account_mismatch"
+          ? "浏览器中登录的账号与目标账号不一致"
+          : undefined,
+      );
+    }
+    this.setLegacyRuntime(accountKey, {
+      ...recoveredCandidate,
+      userId: recoveredVerification.userId,
+    });
+    return this.buildLegacyContext(accountKey, account);
+  }
+
+  private async verifyLegacyIdentity(
+    account: SiteBalanceSession,
+    candidate: LegacyIdentityCandidate | null,
+    expectedUserId: string | null,
+  ): Promise<LegacyIdentityVerification> {
+    const response = await fetchJson(
+      this.buildBoundFetch(account),
+      `${requireBrowserOrigin(account)}${legacyIdentityEndpoint(candidate)}`,
+      buildLegacyIdentityHeaders(candidate),
+    );
+    if (!isSuccessfulHttpStatus(response.status)) return { kind: "login_required" };
+    const userId = extractBrowserUserId(response.payload);
+    if (!userId) return { kind: "login_required" };
+    if (
+      (candidate && candidate.userId !== userId)
+      || (expectedUserId && expectedUserId !== userId)
+    ) {
+      return { kind: "account_mismatch" };
+    }
+    return { kind: "ready", userId };
+  }
+
+  private refreshSub2ApiRuntime(
+    accountKey: string,
+    account: SiteBalanceSession,
+    generation: number,
+    userId: string,
+    bearer: string,
+    refreshToken: string,
+  ): Promise<LegacyIdentityCandidate> {
+    const existing = this.sub2ApiRefreshes.get(accountKey);
+    if (existing) return existing;
+    const operation = this.performSub2ApiRefresh(
+      accountKey,
+      account,
+      generation,
+      userId,
+      bearer,
+      refreshToken,
+    ).finally(() => {
+      if (this.sub2ApiRefreshes.get(accountKey) === operation) {
+        this.sub2ApiRefreshes.delete(accountKey);
+      }
+    });
+    this.sub2ApiRefreshes.set(accountKey, operation);
+    return operation;
+  }
+
+  private async performSub2ApiRefresh(
+    accountKey: string,
+    account: SiteBalanceSession,
+    generation: number,
+    userId: string,
+    bearer: string,
+    refreshToken: string,
+  ): Promise<LegacyIdentityCandidate> {
+    const state = this.assertLegacyRuntime(accountKey, generation, false);
+    if (
+      state.legacyUserId !== userId
+      || state.legacyBearer !== bearer
+      || state.legacyPlatform !== "sub2api"
+      || state.legacyRefreshToken !== refreshToken
+    ) {
+      throw new BrowserLoginRequiredError();
+    }
+    const origin = requireBrowserOrigin(account);
+    const response = await this.buildBoundFetch(account)(`${origin}/api/v1/auth/refresh`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    this.assertGeneration(accountKey, generation);
+    const payload = await readJsonResponse(response);
+    const refreshedCredentials = response.ok
+      ? parseSub2ApiRefreshCredentials(payload.payload, refreshToken)
+      : null;
+    if (!refreshedCredentials) {
+      this.clearTransientState(accountKey, "login_required");
+      throw new BrowserLoginRequiredError();
+    }
+    const candidate: LegacyIdentityCandidate = {
+      platform: "sub2api",
+      userId,
+      bearer: refreshedCredentials.bearer,
+      refreshToken: refreshedCredentials.refreshToken,
+    };
+    const verification = await this.verifyLegacyIdentity(account, candidate, userId);
+    this.assertGeneration(accountKey, generation);
+    if (verification.kind !== "ready") {
+      this.clearTransientState(accountKey, "login_required");
+      throw new BrowserLoginRequiredError(
+        verification.kind === "account_mismatch"
+          ? "浏览器中登录的账号与目标账号不一致"
+          : undefined,
+      );
+    }
+    this.setLegacyRuntime(accountKey, candidate);
+    return candidate;
+  }
+
+  private async recoverLegacyIdentityCandidate(
+    accountKey: string,
+    account: SiteBalanceSession,
+  ): Promise<LegacyIdentityCandidate | null> {
+    const browserSessionId = requireBrowserSessionId(account);
+    const browserOrigin = requireBrowserOrigin(account);
+    const browserWindow = this.dependencies.createWindow(
+      this.buildWindowOptions(browserPartitionName(browserSessionId)),
+    );
+    this.recoveryWindows.set(browserWindow, accountKey);
+    this.configureRecoveryWindow(browserWindow, browserOrigin);
+    try {
+      await browserWindow.loadURL(browserOrigin);
+      if (browserWindow.isDestroyed()) return null;
+      return await this.readLegacyIdentityCandidateFromWindow(browserWindow, browserOrigin);
+    } catch {
+      return null;
+    } finally {
+      this.recoveryWindows.delete(browserWindow);
+      if (!browserWindow.isDestroyed()) browserWindow.close();
+    }
+  }
+
+  private configureRecoveryWindow(browserWindow: BrowserWindow, allowedOrigin: string): void {
+    browserWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    browserWindow.webContents.on("will-navigate", (event, targetUrl) => {
+      if (!isExactOriginNavigation(targetUrl, allowedOrigin)) event.preventDefault();
+    });
+    browserWindow.webContents.on("will-redirect", (event, targetUrl) => {
+      if (!isExactOriginNavigation(targetUrl, allowedOrigin)) event.preventDefault();
+    });
+    browserWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
   }
 
   private buildBoundFetch(account: SiteBalanceSession): typeof fetch {
@@ -572,15 +889,51 @@ export class BrowserAccountSessionManager {
       if (!isAllowedBrowserNavigation(targetUrl, allowedOrigin)) event.preventDefault();
     });
     browserWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+    browserWindow.on("close", (event) => {
+      if (task.finished) {
+        return;
+      }
+      event.preventDefault();
+      void this.finalizeLoginOnClose(task);
+    });
     browserWindow.on("closed", () => {
-      if (!task.finished) {
+      if (!task.finished && !task.closeRequested) {
         void this.completeLogin(task, { status: "canceled", message: "已取消浏览器登录" });
       }
     });
   }
 
   private async pollLogin(task: LoginTask): Promise<void> {
+    if (task.finished || task.closeRequested) return;
+    const result = await this.runLoginProbe(task);
     if (task.finished) return;
+    if (result) {
+      await this.completeLogin(task, result);
+      return;
+    }
+    if (task.closeRequested) return;
+    task.pollTimer = setTimeout(() => {
+      void this.pollLogin(task);
+    }, this.dependencies.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+  }
+
+  private runLoginProbe(task: LoginTask): Promise<BrowserAccountLoginResult | null> {
+    if (task.finished) {
+      return Promise.resolve(null);
+    }
+    if (task.probePromise) {
+      return task.probePromise;
+    }
+    const operation = this.probeLogin(task).finally(() => {
+      if (task.probePromise === operation) {
+        task.probePromise = undefined;
+      }
+    });
+    task.probePromise = operation;
+    return operation;
+  }
+
+  private async probeLogin(task: LoginTask): Promise<BrowserAccountLoginResult | null> {
     const state = this.ensureState(task.request.accountKey);
     if (state.status === "login_required") {
       state.status = "authenticating";
@@ -588,71 +941,169 @@ export class BrowserAccountSessionManager {
     const account = loginRequestAsAccount(task.request);
     try {
       const context = await this.resolveRequestContext(task.request.accountKey, account, true);
-      if (task.finished) return;
+      if (task.finished) return null;
+      this.emitDiagnostic({
+        event: "login_probe_capability",
+        authMode: context.authMode,
+      });
       const legacyIdentityCandidate = context.authMode === "browser_cookie"
         ? await this.readLegacyIdentityCandidate(task)
         : null;
-      if (task.finished) return;
+      if (task.finished) return null;
       const response = await fetchJson(
         context.fetch,
-        `${task.request.browserOrigin}/api/user/self`,
-        legacyIdentityCandidate
-          ? { ...context.headers, "New-Api-User": legacyIdentityCandidate }
-          : context.headers,
+        `${task.request.browserOrigin}${legacyIdentityEndpoint(legacyIdentityCandidate)}`,
+        { ...context.headers, ...buildLegacyIdentityHeaders(legacyIdentityCandidate) },
       );
-      if (task.finished) return;
-      const userId = extractBrowserUserId(response.payload);
+      if (task.finished) return null;
+      const userId = isSuccessfulHttpStatus(response.status)
+        ? extractBrowserUserId(response.payload)
+        : null;
       if (userId) {
         if (
-          (legacyIdentityCandidate && legacyIdentityCandidate !== userId)
+          (legacyIdentityCandidate && legacyIdentityCandidate.userId !== userId)
           || (task.request.expectedUserId && task.request.expectedUserId !== userId)
         ) {
-          await this.completeLogin(task, {
+          this.emitDiagnostic({
+            event: "login_probe_result",
+            authMode: context.authMode,
+            httpStatus: response.status,
+            result: "account_mismatch",
+          });
+          return {
             status: "account_mismatch",
             message: "浏览器中登录的账号与目标账号不一致",
-          });
-          return;
+          };
         }
         await this.getSession(task.request.browserSessionId).cookies.flushStore();
-        if (task.finished) return;
-        this.setStatus(task.request.accountKey, "ready");
-        await this.completeLogin(task, { status: "ready", userId, message: "浏览器登录成功" });
-        return;
+        if (task.finished) return null;
+        if (context.authMode === "browser_cookie") {
+          this.setLegacyRuntime(task.request.accountKey, legacyIdentityCandidate
+            ? { ...legacyIdentityCandidate, userId }
+            : { platform: "new_api", userId });
+        }
+        this.emitDiagnostic({
+          event: "login_probe_result",
+          authMode: context.authMode,
+          httpStatus: response.status,
+          result: "ready",
+        });
+        return { status: "ready", userId, message: "浏览器登录成功" };
       }
+      this.emitDiagnostic({
+        event: "login_probe_result",
+        authMode: context.authMode,
+        httpStatus: response.status,
+        result: "retry",
+      });
     } catch (error) {
-      if (!(error instanceof BrowserLoginRequiredError)) {
-        // Temporary protocol/network failures remain retryable while the user is interacting.
-      }
+      this.emitDiagnostic({
+        event: "login_probe_result",
+        result: error instanceof BrowserLoginRequiredError ? "login_required" : "error",
+      });
     }
-    if (task.finished) return;
-    task.pollTimer = setTimeout(() => {
-      void this.pollLogin(task);
-    }, this.dependencies.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+    return null;
   }
 
-  private async readLegacyIdentityCandidate(task: LoginTask): Promise<string | null> {
-    const expectedUserId = positiveIntegerString(task.request.expectedUserId);
-    if (expectedUserId) {
-      return expectedUserId;
+  private async finalizeLoginOnClose(task: LoginTask): Promise<void> {
+    if (task.finished || task.closeRequested) {
+      return;
     }
+    task.closeRequested = true;
+    if (task.pollTimer) {
+      clearTimeout(task.pollTimer);
+      task.pollTimer = undefined;
+    }
+    const activeProbe = task.probePromise;
+    let result = await this.runLoginProbe(task);
+    if (!result && activeProbe && !task.finished) {
+      result = await this.runLoginProbe(task);
+    }
+    if (task.finished) {
+      return;
+    }
+    if (result) {
+      await this.completeLogin(task, result);
+      return;
+    }
+    this.emitDiagnostic({
+      event: "login_canceled",
+      reason: "window_close_unverified",
+    });
+    await this.completeLogin(task, { status: "canceled", message: "已取消浏览器登录" });
+  }
+
+  private async readLegacyIdentityCandidate(
+    task: LoginTask,
+  ): Promise<LegacyIdentityCandidate | null> {
+    const expectedUserId = positiveIntegerString(task.request.expectedUserId);
     const browserWindow = task.window;
     if (!browserWindow || browserWindow.isDestroyed()) {
-      return null;
+      return expectedUserId ? { platform: "new_api", userId: expectedUserId } : null;
     }
     try {
       const currentUrl = browserWindow.webContents.getURL();
       if (new URL(currentUrl).origin !== task.request.browserOrigin) {
-        return null;
+        return expectedUserId ? { platform: "new_api", userId: expectedUserId } : null;
       }
-      const expectedOrigin = JSON.stringify(task.request.browserOrigin);
-      const value = await browserWindow.webContents.executeJavaScript(
-        `window.location.origin === ${expectedOrigin} ? window.localStorage.getItem("uid") : null`,
-        true,
-      ) as unknown;
-      return positiveIntegerString(value);
+      return await this.readLegacyIdentityCandidateFromWindow(
+        browserWindow,
+        task.request.browserOrigin,
+      ) ?? (expectedUserId ? { platform: "new_api", userId: expectedUserId } : null);
     } catch {
-      return null;
+      return expectedUserId ? { platform: "new_api", userId: expectedUserId } : null;
     }
+  }
+
+  private async readLegacyIdentityCandidateFromWindow(
+    browserWindow: BrowserWindow,
+    expectedOrigin: string,
+  ): Promise<LegacyIdentityCandidate | null> {
+    const currentUrl = browserWindow.webContents.getURL();
+    if (new URL(currentUrl).origin !== expectedOrigin) return null;
+    const serializedOrigin = JSON.stringify(expectedOrigin);
+    const value = await browserWindow.webContents.executeJavaScript(
+      `(() => {
+        if (window.location.origin !== ${serializedOrigin}) return null;
+        const normalizeId = (value) => {
+          const text = typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
+          if (!/^\\d+$/.test(text)) return null;
+          const normalized = text.replace(/^0+/, "");
+          return normalized || null;
+        };
+        try {
+          const rawUser = window.localStorage.getItem("user");
+          if (rawUser) {
+            const user = JSON.parse(rawUser);
+            const userId = normalizeId(user && user.id);
+            if (userId) {
+              const bearer = typeof user.token === "string" ? user.token.trim() : "";
+              return bearer
+                ? { platform: "new_api", userId, bearer }
+                : { platform: "new_api", userId };
+            }
+          }
+        } catch {}
+        try {
+          const rawAuthUser = window.localStorage.getItem("auth_user");
+          const bearer = (window.localStorage.getItem("auth_token") || "").trim();
+          if (rawAuthUser && bearer) {
+            const authUser = JSON.parse(rawAuthUser);
+            const userId = normalizeId(authUser && authUser.id);
+            if (userId) {
+              const refreshToken = (window.localStorage.getItem("refresh_token") || "").trim();
+              return refreshToken
+                ? { platform: "sub2api", userId, bearer, refreshToken }
+                : { platform: "sub2api", userId, bearer };
+            }
+          }
+        } catch {}
+        const userId = normalizeId(window.localStorage.getItem("uid"));
+        return userId ? { platform: "new_api", userId } : null;
+      })()`,
+      true,
+    ) as unknown;
+    return parseLegacyIdentityCandidate(value);
   }
 
   private async completeLogin(task: LoginTask, result: BrowserAccountLoginResult): Promise<void> {
@@ -663,9 +1114,16 @@ export class BrowserAccountSessionManager {
     this.loginTasks.delete(task.request.accountKey);
     const queuedIndex = this.loginQueue.indexOf(task);
     if (queuedIndex >= 0) this.loginQueue.splice(queuedIndex, 1);
+    if (result.status === "ready") {
+      this.setStatus(task.request.accountKey, "ready");
+    }
     if (task.window && !task.window.isDestroyed()) task.window.close();
     if (result.status !== "ready") {
-      this.setStatus(task.request.accountKey, "login_required");
+      const state = this.ensureState(task.request.accountKey);
+      state.generation += 1;
+      this.refreshes.delete(task.request.accountKey);
+      this.sub2ApiRefreshes.delete(task.request.accountKey);
+      this.clearTransientState(task.request.accountKey, "login_required");
     }
     task.resolve(result);
     if (this.activeLoginTask === task) this.activeLoginTask = null;
@@ -688,7 +1146,82 @@ export class BrowserAccountSessionManager {
     state.bearer = undefined;
     state.bearerExpiresAt = undefined;
     state.sid = undefined;
+    state.legacyBearer = undefined;
+    state.legacyUserId = undefined;
+    state.legacyPlatform = undefined;
+    state.legacyRefreshToken = undefined;
     this.emitStatus(accountKey);
+  }
+
+  private setLegacyRuntime(accountKey: string, candidate: LegacyIdentityCandidate): void {
+    const state = this.ensureState(accountKey);
+    state.mode = "legacy";
+    state.status = "ready";
+    state.bearer = undefined;
+    state.bearerExpiresAt = undefined;
+    state.sid = undefined;
+    state.legacyBearer = candidate.bearer;
+    state.legacyUserId = candidate.userId;
+    state.legacyPlatform = candidate.platform;
+    state.legacyRefreshToken = candidate.refreshToken;
+    this.emitStatus(accountKey);
+  }
+
+  private assertGeneration(accountKey: string, generation: number): void {
+    if (this.states.get(accountKey)?.generation !== generation) {
+      throw new BrowserLoginRequiredError();
+    }
+  }
+
+  private async resolveModernBearerForRequest(
+    accountKey: string,
+    account: SiteBalanceSession,
+    generation: number,
+  ): Promise<string> {
+    this.assertGeneration(accountKey, generation);
+    const state = this.states.get(accountKey);
+    if (state?.mode === "modern" && state.status === "ready" && state.bearer) {
+      return state.bearer;
+    }
+    const refreshed = await this.resolveRequestContext(accountKey, account, true);
+    this.assertGeneration(accountKey, generation);
+    const refreshedBearer = refreshed.authMode === "browser_bearer"
+      ? new Headers(refreshed.headers).get("Authorization")?.replace(/^Bearer\s+/i, "").trim()
+      : "";
+    if (!refreshedBearer) {
+      this.clearTransientState(accountKey, "login_required");
+      throw new BrowserLoginRequiredError();
+    }
+    return refreshedBearer;
+  }
+
+  private assertLegacyRuntime(
+    accountKey: string,
+    generation: number,
+    allowUnverified: boolean,
+  ): RuntimeState {
+    const state = this.states.get(accountKey);
+    if (!state || state.generation !== generation) {
+      throw new BrowserLoginRequiredError();
+    }
+    if (
+      !allowUnverified
+      && (
+        state.mode !== "legacy"
+        || state.status !== "ready"
+      )
+    ) {
+      throw new BrowserLoginRequiredError();
+    }
+    return state;
+  }
+
+  private closeRecoveryWindows(accountKey: string): void {
+    for (const [browserWindow, ownerAccountKey] of this.recoveryWindows) {
+      if (ownerAccountKey !== accountKey) continue;
+      this.recoveryWindows.delete(browserWindow);
+      if (!browserWindow.isDestroyed()) browserWindow.close();
+    }
   }
 
   private async resetAccountRuntime(
@@ -698,6 +1231,8 @@ export class BrowserAccountSessionManager {
     const state = this.ensureState(accountKey);
     state.generation += 1;
     this.refreshes.delete(accountKey);
+    this.sub2ApiRefreshes.delete(accountKey);
+    this.closeRecoveryWindows(accountKey);
     await this.cancelLogin(accountKey);
     this.clearTransientState(accountKey, status);
   }
@@ -710,6 +1245,10 @@ export class BrowserAccountSessionManager {
 
   private emitStatus(accountKey: string): void {
     this.dependencies.onStatusChange?.(this.getStatus(accountKey));
+  }
+
+  private emitDiagnostic(event: BrowserAccountDiagnosticEvent): void {
+    this.dependencies.onDiagnostic?.(event);
   }
 
   private now(): number {
@@ -732,6 +1271,14 @@ export function isAllowedBrowserNavigation(targetUrl: string, allowedOrigin: str
       return true;
     }
     return target.protocol === "https:" && LOGIN_NAVIGATION_ORIGINS.has(target.origin);
+  } catch {
+    return false;
+  }
+}
+
+function isExactOriginNavigation(targetUrl: string, allowedOrigin: string): boolean {
+  try {
+    return new URL(targetUrl).origin === normalizeBrowserOrigin(allowedOrigin);
   } catch {
     return false;
   }
@@ -874,6 +1421,10 @@ function positiveNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function isSuccessfulHttpStatus(status: number): boolean {
+  return status >= 200 && status < 300;
+}
+
 function positiveIntegerString(value: unknown): string | null {
   if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
   if (typeof value === "string" && /^\d+$/.test(value.trim())) {
@@ -881,6 +1432,88 @@ function positiveIntegerString(value: unknown): string | null {
     return normalized || null;
   }
   return null;
+}
+
+function parseLegacyIdentityCandidate(value: unknown): LegacyIdentityCandidate | null {
+  const record = asRecord(value);
+  const platform = record?.platform === "sub2api" ? "sub2api" : "new_api";
+  const userId = positiveIntegerString(record?.userId);
+  if (!userId) return null;
+  const bearer = typeof record?.bearer === "string" ? record.bearer.trim() : "";
+  const refreshToken = platform === "sub2api" && typeof record?.refreshToken === "string"
+    ? record.refreshToken.trim()
+    : "";
+  return {
+    platform,
+    userId,
+    ...(bearer ? { bearer } : {}),
+    ...(refreshToken ? { refreshToken } : {}),
+  };
+}
+
+function legacyIdentityEndpoint(candidate: LegacyIdentityCandidate | null): string {
+  return candidate?.platform === "sub2api" ? "/api/v1/auth/me" : "/api/user/self";
+}
+
+function parseSub2ApiRefreshCredentials(
+  payload: unknown,
+  currentRefreshToken: string,
+): { bearer: string; refreshToken: string } | null {
+  const root = asRecord(payload);
+  const data = asRecord(root?.data);
+  for (const candidate of [root, data]) {
+    const bearer = typeof candidate?.access_token === "string"
+      ? candidate.access_token.trim()
+      : "";
+    if (!bearer) continue;
+    const nextRefreshToken = typeof candidate?.refresh_token === "string"
+      ? candidate.refresh_token.trim()
+      : "";
+    return { bearer, refreshToken: nextRefreshToken || currentRefreshToken };
+  }
+  return null;
+}
+
+function buildLegacyIdentityHeaders(
+  candidate: LegacyIdentityCandidate | null,
+): Readonly<Record<string, string>> {
+  if (!candidate) return {};
+  return {
+    ...(candidate.bearer ? { Authorization: `Bearer ${candidate.bearer}` } : {}),
+    "New-Api-User": candidate.userId,
+  };
+}
+
+function withAuthoritativeBearer(
+  headers: RequestInit["headers"],
+  bearer: string,
+): Record<string, string> {
+  const result = Object.fromEntries(new Headers(headers).entries());
+  for (const name of Object.keys(result)) {
+    if (name.toLowerCase() === "authorization") delete result[name];
+  }
+  result.Authorization = `Bearer ${bearer}`;
+  return result;
+}
+
+function runtimeCandidate(state: RuntimeState): LegacyIdentityCandidate | null {
+  if (!state.legacyUserId || !state.legacyPlatform) return null;
+  return {
+    platform: state.legacyPlatform,
+    userId: state.legacyUserId,
+    ...(state.legacyBearer ? { bearer: state.legacyBearer } : {}),
+    ...(state.legacyRefreshToken ? { refreshToken: state.legacyRefreshToken } : {}),
+  };
+}
+
+function sameLegacyIdentityCredentials(
+  left: LegacyIdentityCandidate | null,
+  right: LegacyIdentityCandidate | null,
+): boolean {
+  return left?.platform === right?.platform
+    && left?.userId === right?.userId
+    && (left?.bearer ?? "") === (right?.bearer ?? "")
+    && (left?.refreshToken ?? "") === (right?.refreshToken ?? "");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

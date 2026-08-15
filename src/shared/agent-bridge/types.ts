@@ -32,6 +32,7 @@ export type AgentBridgeRequest =
       cwd?: string;
       wait_ms?: number;
       show_terminal?: boolean;
+      orchestrator?: boolean;
       model?: string;
       reasoning_effort?: string;
       parent_session_id?: string;
@@ -87,6 +88,8 @@ export type AgentScopedRequest =
       command: "policy";
       return_policy?: AgentReturnPolicy;
     }
+  | { request_id?: string; command: "status_parent" }
+  | { request_id?: string; command: "continue_parent"; prompt: string }
   | { request_id?: string; command: "interrupt_parent" };
 
 export type AgentBridgeResponse =

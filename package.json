@@ -39,7 +39,7 @@
     "tag:ai-research": "npm run build:electron && node ./scripts/apply-ai-research-user-tags.mjs",
     "prepare:package": "node ./scripts/prepare-package.mjs",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
-    "build": "npm run typecheck && vite build && npm run build:electron",
+    "build": "npm run typecheck && vite build && npm run build:electron && electron-builder --win --publish never",
     "dist:win": "npm run build && npm run prepare:package && electron-builder --win nsis --x64 --publish never",
     "dist:win:dir": "npm run build && npm run prepare:package && electron-builder --win dir --x64 --publish never",
     "dist:win:zip": "npm run build && npm run prepare:package && electron-builder --win zip --x64 --publish never",

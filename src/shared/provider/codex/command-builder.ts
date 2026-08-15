@@ -13,6 +13,7 @@ export interface CodexCommandOptions {
   modelOverride?: string;
   wireApi?: string;
   trustedProjectPath?: string;
+  disableHooks?: boolean;
 }
 
 function buildTrustedProjectOverride(projectPath: string): string {
@@ -56,7 +57,9 @@ export function buildCodexArgs(options: CodexCommandOptions): string[] {
   if (options.trustedProjectPath) {
     parts.push("-c", buildTrustedProjectOverride(options.trustedProjectPath));
   }
-  parts.push("--disable", "hooks");
+  if (options.disableHooks === true) {
+    parts.push("--disable", "hooks");
+  }
 
   return parts;
 }

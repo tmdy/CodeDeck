@@ -10,7 +10,6 @@ export interface ProviderParameterDefaults {
 export interface SavedExtraArg {
   id: string;
   value: string;
-  enabled: boolean;
 }
 
 export interface ClaudeCLISettings {
@@ -122,11 +121,11 @@ function normalizeSavedExtraArgs(value: unknown): SavedExtraArg[] {
   return value.flatMap((item, index) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
     const raw = item as Partial<SavedExtraArg>;
-    const value = typeof raw.value === "string" ? raw.value : "";
+    if (typeof raw.value !== "string" || !raw.value.trim()) return [];
     const id = typeof raw.id === "string" && raw.id.trim()
       ? raw.id.trim()
       : `saved-extra-arg-${index + 1}`;
-    return [{ id, value, enabled: raw.enabled !== false }];
+    return [{ id, value: raw.value }];
   });
 }
 

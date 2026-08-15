@@ -138,6 +138,11 @@ declare global {
       ) => Promise<RuntimeSettings>;
       updateWorkingDirectoryFavorites?: (favorites: string[]) => Promise<string[]>;
       saveSiteBalanceSession: (baseUrl: string, draft: SiteBalanceSessionDraft) => Promise<SiteBalanceSession>;
+      bindProfileSiteBalanceSession?: (
+        profileKey: ProfileKey,
+        baseUrl: string,
+        sessionId: string,
+      ) => Promise<Profile>;
       loginBrowserAccount?: (baseUrl: string, browserSlot?: number) => Promise<SiteBalanceSession>;
       reloginBrowserAccount?: (baseUrl: string, sessionId: string) => Promise<SiteBalanceSession>;
       logoutBrowserAccount?: (baseUrl: string, sessionId: string) => Promise<void>;
@@ -152,7 +157,7 @@ declare global {
         enabled: boolean,
       ) => Promise<SiteBalanceSession>;
       pickWorkingDirectory: () => Promise<string | undefined>;
-      openBaseUrl: (baseUrl: string) => Promise<void>;
+      openBaseUrl: (baseUrl: string, balanceSessionId?: string) => Promise<void>;
 
       // Launcher
       previewForDraft: (

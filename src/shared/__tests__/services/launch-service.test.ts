@@ -106,7 +106,7 @@ describe("LaunchService", () => {
 
     expect(plan.valid).toBe(true);
     expect(plan.command).toBe(
-      `codex resume "session-global" --enable hooks -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} --disable hooks`,
+      `codex resume "session-global" --enable hooks -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
     expect(plan.commandArgs).toEqual([
       "resume",
@@ -115,8 +115,6 @@ describe("LaunchService", () => {
       "hooks",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
-      "--disable",
-      "hooks",
     ]);
     expect(plan.env.CODEX_HOME).toBe("C:/tmp/codex-runtime/home");
     expect(plan.requiredEnvKeys).toEqual(["CODEX_HOME"]);
@@ -125,7 +123,7 @@ describe("LaunchService", () => {
     expect(plan.capabilitySummary).toBe("官方 CLI · App Runtime");
   });
 
-  it("should append trusted cwd and the forced hooks override for native and managed Codex paths", () => {
+  it("should append the forced hooks override only for bridge-requested Codex paths", () => {
     const nativeProfile: Profile = {
       provider: "codex",
       name: "Local Codex",
@@ -144,7 +142,12 @@ describe("LaunchService", () => {
       getModelMappingsState: () => makeMappings(),
       codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
     });
-    const build = (profile: Profile, startupMode: "native" | "managed", launchMode: "new" | "resume_selected") =>
+    const build = (
+      profile: Profile,
+      startupMode: "native" | "managed",
+      launchMode: "new" | "resume_selected",
+      disableHooks = false,
+    ) =>
       launchService.buildExecutionPlan({
         profile_key: itemKey(profile),
         provider: "codex",
@@ -155,6 +158,7 @@ describe("LaunchService", () => {
           extra_args: "--enable hooks",
         }),
         ...(launchMode === "resume_selected" ? { session_id: "session-ordered" } : {}),
+        ...(disableHooks ? { disable_codex_hooks: true } : {}),
       });
 
     expect(build(nativeProfile, "native", "new").commandArgs).toEqual([
@@ -162,10 +166,8 @@ describe("LaunchService", () => {
       "hooks",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
-      "--disable",
-      "hooks",
     ]);
-    expect(build(nativeProfile, "native", "resume_selected").commandArgs).toEqual([
+    expect(build(nativeProfile, "native", "resume_selected", true).commandArgs).toEqual([
       "resume",
       "session-ordered",
       "--enable",
@@ -182,10 +184,8 @@ describe("LaunchService", () => {
       "site-a632b8ac583c81de",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
-      "--disable",
-      "hooks",
     ]);
-    expect(build(managedProfile, "managed", "resume_selected").commandArgs).toEqual([
+    expect(build(managedProfile, "managed", "resume_selected", true).commandArgs).toEqual([
       "resume",
       "session-ordered",
       "--enable",
@@ -228,12 +228,10 @@ describe("LaunchService", () => {
     expect(plan.commandArgs).toEqual([
       "-c",
       trustedProjectOverride,
-      "--disable",
-      "hooks",
     ]);
     expect(plan.commandArgs[1]).not.toContain('"');
     expect(plan.command).toBe(
-      `codex -c "${trustedProjectOverride}" --disable hooks`,
+      `codex -c "${trustedProjectOverride}"`,
     );
     expect(runtime).toEqual(originalRuntime);
   });
@@ -817,7 +815,7 @@ describe("LaunchService", () => {
 
     expect(preview.valid).toBe(true);
     expect(preview.command).toBe(
-      `cc --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} --disable hooks`,
+      `cc --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
     expect(preview.cwd).toBe("C:/workspace/current-project");
     expect(preview.command).not.toContain("--model");
@@ -839,8 +837,6 @@ describe("LaunchService", () => {
       "site-a632b8ac583c81de",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
-      "--disable",
-      "hooks",
     ]);
     expect(plan.codexConfig?.content).toContain('model = "glm-4.6"');
     expect(plan.codexConfig?.content).toContain('base_url = "https://open.bigmodel.cn/api/paas/v4"');
@@ -924,11 +920,9 @@ describe("LaunchService", () => {
       "never",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
-      "--disable",
-      "hooks",
     ]);
     expect(plan.command).toBe(
-      `codex --profile site-0fa7d5b4930bc063 --sandbox danger-full-access --ask-for-approval never -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} --disable hooks`,
+      `codex --profile site-0fa7d5b4930bc063 --sandbox danger-full-access --ask-for-approval never -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
   });
 
@@ -1005,7 +999,7 @@ describe("LaunchService", () => {
     expect(plan.valid).toBe(true);
     expect(plan.codexConfig?.content).toContain('model = "kimi-k2-0711-preview"');
     expect(plan.command).toBe(
-      `codex --profile site-39b645351a70122a -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} --disable hooks`,
+      `codex --profile site-39b645351a70122a -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
     expect(plan.commandArgs).not.toContain("--model");
     expect(plan.codexConfig?.workerAgentContent).toContain('name = "worker"');
@@ -1040,7 +1034,7 @@ describe("LaunchService", () => {
 
     expect(plan.valid).toBe(true);
     expect(plan.command).toBe(
-      `codex --profile site-a5f93b45c3f2dd18 -c model_reasoning_effort=ultra -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} --disable hooks`,
+      `codex --profile site-a5f93b45c3f2dd18 -c model_reasoning_effort=ultra -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
     expect(plan.commandArgs).toEqual([
       "--profile",
@@ -1049,8 +1043,6 @@ describe("LaunchService", () => {
       "model_reasoning_effort=ultra",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
-      "--disable",
-      "hooks",
     ]);
   });
 
@@ -1081,10 +1073,10 @@ describe("LaunchService", () => {
     });
 
     expect(continuePlan.command).toBe(
-      `codex resume --last --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} --disable hooks`,
+      `codex resume --last --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
     expect(selectedPlan.command).toBe(
-      `codex resume "019df0ff-0001" --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} --disable hooks`,
+      `codex resume "019df0ff-0001" --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
   });
 
@@ -1378,7 +1370,7 @@ describe("LaunchService", () => {
 
     expect(plan.valid).toBe(true);
     expect(plan.command).toBe(
-      `codex --profile site-2badb974b243c949 -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} --disable hooks`,
+      `codex --profile site-2badb974b243c949 -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
     expect(plan.commandArgs).not.toContain("--model");
     expect(plan.codexConfig?.content).toContain('base_url = "https://api.openai.com/v1"');

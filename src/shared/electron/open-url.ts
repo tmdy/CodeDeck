@@ -1,4 +1,6 @@
-export function resolveBaseUrlExternalTarget(baseUrl: string): string {
+export const DEFAULT_PROFILE_BROWSER_PARTITION = "persist:codedeck-profile-browser";
+
+export function resolveBaseUrlBrowserTarget(baseUrl: string): string {
   const trimmed = baseUrl.trim();
   if (!trimmed) {
     throw new Error("Base URL 不能为空");

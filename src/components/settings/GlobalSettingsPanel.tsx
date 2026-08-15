@@ -113,6 +113,15 @@ export function GlobalSettingsPanel({
           />
           隐藏 Codex 子代理会话
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.close_to_tray}
+            onChange={(event) => onChange({ close_to_tray: event.target.checked })}
+            disabled={disabled}
+          />
+          关闭主窗口时最小化到托盘
+        </label>
       </GlassCard>
       <PermissionSettingsCard
         title="Claude Code 默认权限"

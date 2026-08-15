@@ -18,6 +18,7 @@ describe("agent bridge protocol", () => {
       parent_session_id: " terminal-parent ",
       parent_token: " parent-secret ",
       return_policy: "continuous",
+      orchestrator: true,
       env: { SECRET: "forbidden" },
     })).toEqual({
       command: "run",
@@ -30,6 +31,7 @@ describe("agent bridge protocol", () => {
       parent_session_id: "terminal-parent",
       parent_token: "parent-secret",
       return_policy: "continuous",
+      orchestrator: true,
     });
   });
 
@@ -61,7 +63,7 @@ describe("agent bridge protocol", () => {
     })).toThrow("wait_ms");
   });
 
-  it("parses bound child and scoped parent interrupt requests", () => {
+  it("parses bound child and scoped parent control requests", () => {
     expect(parseAgentBridgeRequest({
       command: "interrupt",
       session_id: " child-task ",
@@ -76,9 +78,41 @@ describe("agent bridge protocol", () => {
     expect(parseAgentScopedRequest({ command: "interrupt_parent" })).toEqual({
       command: "interrupt_parent",
     });
+    expect(parseAgentScopedRequest({ command: "status_parent" })).toEqual({
+      command: "status_parent",
+    });
+    expect(parseAgentScopedRequest({
+      command: "continue_parent",
+      prompt: " resume the debate ",
+    })).toEqual({
+      command: "continue_parent",
+      prompt: "resume the debate",
+    });
+    expect(() => parseAgentScopedRequest({
+      command: "continue_parent",
+      prompt: " ",
+    })).toThrow("prompt");
   });
 
   it("removes terminal escape and control sequences", () => {
     expect(cleanTerminalText("\u001b[31manswer\u001b[0m\r\n\u0007done")).toBe("answer\ndone");
+  });
+
+  it("renders carriage returns, cursor movement, and screen clears as visible terminal text", () => {
+    expect(cleanTerminalText(
+      "progress 1\rprogress 2\nold\u001b[1A\rnew\u001b[2J\u001b[Hfinal\nready",
+    )).toBe("final\nready");
+  });
+
+  it("replays VT erase and delete operations without leaking replaced text", () => {
+    expect(cleanTerminalText("abcdef\r\u001b[2C\u001b[2X")).toBe("ab  ef");
+    expect(cleanTerminalText("abcdef\r\u001b[2C\u001b[2P")).toBe("abef");
+    expect(cleanTerminalText("visible\u001b[3J")).toBe("visible");
+  });
+
+  it("removes terminal title updates instead of leaking OSC payloads", () => {
+    expect(cleanTerminalText("before\n\u001b]0;Working - CodeDeck\u0007after")).toBe(
+      "before\nafter",
+    );
   });
 });

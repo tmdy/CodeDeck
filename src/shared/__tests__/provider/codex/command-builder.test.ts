@@ -13,7 +13,7 @@ describe("buildCodexCommand", () => {
       model: "gpt-5.4",
     });
 
-    expect(cmd).toBe("codex resume --last --search --disable hooks");
+    expect(cmd).toBe("codex resume --last --search");
   });
 
   it("should omit the model flag because config.toml carries the selected model", () => {
@@ -25,7 +25,7 @@ describe("buildCodexCommand", () => {
       model: "gpt-5.4",
     });
 
-    expect(cmd).toBe("codex --disable hooks");
+    expect(cmd).toBe("codex");
   });
 
   it("should include an explicit one-run model override", () => {
@@ -37,7 +37,7 @@ describe("buildCodexCommand", () => {
       modelOverride: "gpt-5.4",
     });
 
-    expect(cmd).toBe("codex --model gpt-5.4 --disable hooks");
+    expect(cmd).toBe("codex --model gpt-5.4");
   });
 
   it("should handle new launch mode", () => {
@@ -48,7 +48,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com",
     });
 
-    expect(cmd).toBe("codex --disable hooks");
+    expect(cmd).toBe("codex");
   });
 
   it("should handle resume_picker mode", () => {
@@ -59,7 +59,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com/v1",
     });
 
-    expect(cmd).toBe("codex resume --disable hooks");
+    expect(cmd).toBe("codex resume");
   });
 
   it("should handle resume_picker_all mode", () => {
@@ -70,7 +70,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com/v1",
     });
 
-    expect(cmd).toBe("codex resume --all --disable hooks");
+    expect(cmd).toBe("codex resume --all");
   });
 
   it("should handle resume_selected mode with a quoted session id", () => {
@@ -82,7 +82,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com/v1",
     });
 
-    expect(cmd).toBe('codex resume "session-456" --disable hooks');
+    expect(cmd).toBe('codex resume "session-456"');
   });
 
   it("should force hooks disabled after user feature arguments", () => {
@@ -91,6 +91,7 @@ describe("buildCodexCommand", () => {
       launchMode: "new",
       extraArgs: "--enable hooks --search",
       baseUrl: "https://example.com/v1",
+      disableHooks: true,
     });
 
     expect(cmd).toBe("codex --enable hooks --search --disable hooks");
@@ -112,6 +113,7 @@ describe("buildCodexCommand", () => {
       sessionId: "session-456",
       baseUrl: "https://example.com/v1",
       trustedProjectPath,
+      disableHooks: true,
     });
 
     expect(args).toEqual([
@@ -141,7 +143,7 @@ describe("buildCodexCommand", () => {
     });
 
     expect(command).toContain(trustedProjectOverride);
-    expect(command).toBe(`codex -c "${trustedProjectOverride}" --disable hooks`);
+    expect(command).toBe(`codex -c "${trustedProjectOverride}"`);
   });
 
   it("should use native separators for a Windows trusted project key", () => {
@@ -156,8 +158,6 @@ describe("buildCodexCommand", () => {
     expect(args).toEqual([
       "-c",
       "projects.D:\\CodeDeck.trust_level=trusted",
-      "--disable",
-      "hooks",
     ]);
   });
 
@@ -169,7 +169,7 @@ describe("buildCodexCommand", () => {
       baseUrl: "https://example.com",
     });
 
-    expect(cmd).toBe("codex --disable hooks");
+    expect(cmd).toBe("codex");
   });
 
   it("should normalize base URL for command", () => {

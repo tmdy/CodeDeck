@@ -199,7 +199,7 @@ describe("BalanceService", () => {
     const result = await service.query(
       makeProfile("https://new-api.example.com/v1"),
       8000,
-      makeResolvedSession(),
+      makeResolvedSession({ auth_kind: "access_token" }),
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -216,6 +216,172 @@ describe("BalanceService", () => {
     );
     expect(result.success).toBe(true);
     expect(result.items[0].remaining).toBe(3);
+  });
+
+  it("keeps browser cookie request-context headers authoritative", async () => {
+    const browserFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          quota: 1_500_000,
+          used_quota: 500_000,
+        },
+      }),
+    );
+    const serviceFetch = vi.fn();
+    const service = new BalanceService(serviceFetch as unknown as typeof fetch);
+
+    const result = await service.query(
+      makeProfile("https://new-api.example.com/v1"),
+      8000,
+      makeResolvedSession({
+        access_token: "",
+        user_id: "9001",
+        auth_kind: "browser_session",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+      }),
+      {
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: {
+            Authorization: "Bearer legacy-browser-token",
+            "New-Api-User": "42",
+          },
+          userIdHeaderPolicy: "legacy_if_required",
+          authMode: "browser_cookie",
+        },
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(serviceFetch).not.toHaveBeenCalled();
+    expect(browserFetch).toHaveBeenCalledTimes(1);
+    const headers = (browserFetch.mock.calls[0][1]?.headers ?? {}) as Record<string, string>;
+    expect(headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer legacy-browser-token",
+      "New-Api-User": "42",
+    });
+    expect(headers).not.toHaveProperty("Veloera-User");
+    expect(headers).not.toHaveProperty("X-Api-User");
+  });
+
+  it("does not expand or retry browser headers when the site asks for another user id", async () => {
+    const browserFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        success: false,
+        message: "missing required New-API-User header",
+      }, 400),
+    );
+    const service = new BalanceService(vi.fn() as unknown as typeof fetch);
+
+    const result = await service.query(
+      makeProfile("https://new-api.example.com/v1"),
+      8000,
+      makeResolvedSession({
+        access_token: "",
+        user_id: "9001",
+        auth_kind: "browser_session",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+      }),
+      {
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: {
+            Authorization: "Bearer legacy-browser-token",
+            "New-Api-User": "42",
+          },
+          userIdHeaderPolicy: "legacy_if_required",
+          authMode: "browser_cookie",
+        },
+      },
+    );
+
+    expect(browserFetch).toHaveBeenCalledTimes(1);
+    expect(browserFetch.mock.calls[0][1]?.headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer legacy-browser-token",
+      "New-Api-User": "42",
+    });
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("用户 ID");
+  });
+
+  it("reports rejected browser credentials as an expired session without PAT fallback", async () => {
+    const browserFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        success: false,
+        message: "Unauthorized, invalid access token",
+      }, 401),
+    );
+    const serviceFetch = vi.fn();
+    const service = new BalanceService(serviceFetch as unknown as typeof fetch);
+
+    const result = await service.query(
+      makeProfile("https://new-api.example.com/v1"),
+      8000,
+      makeResolvedSession({
+        access_token: "",
+        auth_kind: "browser_session",
+        browser_session_id: "browser-session-a",
+        browser_slot: 1,
+        browser_origin: "https://new-api.example.com",
+      }),
+      {
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: {
+            Authorization: "Bearer legacy-browser-token",
+            "New-Api-User": "42",
+          },
+          userIdHeaderPolicy: "legacy_if_required",
+          authMode: "browser_cookie",
+        },
+      },
+    );
+
+    expect(browserFetch).toHaveBeenCalledTimes(1);
+    expect(serviceFetch).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("会话可能已过期");
+    expect(result.message).not.toContain("API Key");
+  });
+
+  it("keeps explicit session-cookie transport and user-id compatibility aliases", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          quota: 1_500_000,
+          used_quota: 500_000,
+        },
+      }),
+    );
+    const service = new BalanceService(fetchMock as unknown as typeof fetch);
+
+    const result = await service.query(
+      makeProfile("https://new-api.example.com/v1"),
+      8000,
+      makeResolvedSession({
+        access_token: "manual-session-cookie",
+        user_id: "65",
+        auth_kind: "session_cookie",
+      }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]?.headers).toEqual(expect.objectContaining({
+      Accept: "application/json",
+      Cookie: "session=manual-session-cookie",
+      "New-API-User": "65",
+      "Veloera-User": "65",
+    }));
+    expect(fetchMock.mock.calls[0][1]?.headers).not.toHaveProperty("Authorization");
+    expect(result.success).toBe(true);
   });
 
   it("does not blame the profile API key when a saved session token is rejected", async () => {
@@ -407,6 +573,54 @@ describe("BalanceService", () => {
         unit: "$",
       },
     ]);
+  });
+
+  it("uses a browser request context for Sub2API without requiring or persisting a session token", async () => {
+    const serviceFetch = vi.fn();
+    const browserFetch = vi.fn().mockResolvedValue(jsonResponse({
+      id: 42,
+      balance: 12.34,
+      subscriptions: [],
+    }));
+    const service = new BalanceService(serviceFetch as unknown as typeof fetch);
+    const browserSession = makeResolvedSession({
+      base_url: "https://sub2api.example.com",
+      access_token: "",
+      refresh_token: undefined,
+      auth_kind: "browser_session",
+      browser_session_id: "sub2-browser-reference",
+      browser_slot: 1,
+      browser_origin: "https://sub2api.example.com",
+    });
+
+    const result = await service.query(
+      makeProfile("https://sub2api.example.com/v1"),
+      8_000,
+      browserSession,
+      {
+        managementRequestContext: {
+          fetch: browserFetch as unknown as typeof fetch,
+          headers: {
+            Authorization: "Bearer runtime-only-sub2-token",
+            "New-Api-User": "42",
+          },
+          userIdHeaderPolicy: "legacy_if_required",
+          authMode: "browser_cookie",
+        },
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(serviceFetch).not.toHaveBeenCalled();
+    expect(browserFetch).toHaveBeenCalledTimes(1);
+    expect(browserFetch.mock.calls[0][0]).toBe("https://sub2api.example.com/api/v1/auth/me");
+    expect((browserFetch.mock.calls[0][1]?.headers as Record<string, string>)).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer runtime-only-sub2-token",
+      "New-Api-User": "42",
+    });
+    expect(browserSession.access_token).toBe("");
+    expect(browserSession.refresh_token).toBeUndefined();
   });
 
   it("detects Sub2API balances from the endpoint response when the url has no platform hint", async () => {
