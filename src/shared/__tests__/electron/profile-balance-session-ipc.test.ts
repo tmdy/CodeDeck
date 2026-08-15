@@ -36,6 +36,10 @@ describe("profile balance session IPC", () => {
     expect(mainSource).toContain("await openProfileSiteBrowser(baseUrl, balanceSessionId);");
     expect(mainSource).toContain("getBrowserAccountSessionManager().getPartitionName(selectedAccount)");
     expect(mainSource).toContain("DEFAULT_PROFILE_BROWSER_PARTITION");
+    expect(mainSource).toContain("configureInteractiveWindow: installBrowserNavigationMenu");
+    expect(mainSource).toContain("runBrowserNavigationAction(browserWindow.webContents, action)");
+    expect(mainSource).toContain('{ label: "后退", accelerator: "Alt+Left"');
+    expect(mainSource).toContain('{ label: "前进", accelerator: "Alt+Right"');
     expect(mainSource).not.toContain("shell.openExternal");
     expect(preloadSource).toContain(
       'openBaseUrl: (baseUrl: string, balanceSessionId?: string): Promise<void> =>\n    ipcRenderer.invoke("profile:open-base-url", baseUrl, balanceSessionId)',

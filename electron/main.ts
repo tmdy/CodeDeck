@@ -105,6 +105,10 @@ import {
   resolveBaseUrlBrowserTarget,
 } from "../src/shared/electron/open-url.js";
 import {
+  runBrowserNavigationAction,
+  type BrowserNavigationAction,
+} from "../src/shared/electron/browser-navigation.js";
+import {
   TerminalSessionManager,
   type CreatePtyProcessOptions,
   type TerminalSessionAutoContinueEvent,
@@ -943,6 +947,7 @@ function getBrowserAccountSessionManager(): BrowserAccountSessionManager {
     browserAccountSessionManager = new BrowserAccountSessionManager({
       createSession: (partition) => electronSession.fromPartition(partition, { cache: false }),
       createWindow: (options) => new BrowserWindow(options),
+      configureInteractiveWindow: installBrowserNavigationMenu,
       getParentWindow: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
       windowIcon: resolveWindowIconPath(),
       onStatusChange: emitBrowserAccountStatus,
@@ -2037,6 +2042,7 @@ async function openProfileSiteBrowser(rawBaseUrl: string, balanceSessionId?: str
     },
   });
   profileBrowserWindows.add(browserWindow);
+  installBrowserNavigationMenu(browserWindow);
   browserWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isHttpUrl(url)) void browserWindow.loadURL(url).catch(() => undefined);
     return { action: "deny" };
@@ -2059,6 +2065,23 @@ async function openProfileSiteBrowser(rawBaseUrl: string, balanceSessionId?: str
     if (!browserWindow.isDestroyed()) browserWindow.close();
     throw error;
   }
+}
+
+function installBrowserNavigationMenu(browserWindow: BrowserWindow): void {
+  const navigate = (action: BrowserNavigationAction) => {
+    if (!browserWindow.isDestroyed()) {
+      runBrowserNavigationAction(browserWindow.webContents, action);
+    }
+  };
+  browserWindow.setMenu(Menu.buildFromTemplate([
+    { label: "后退", accelerator: "Alt+Left", click: () => navigate("back") },
+    { label: "前进", accelerator: "Alt+Right", click: () => navigate("forward") },
+    { label: "刷新", accelerator: "CmdOrCtrl+R", click: () => navigate("reload") },
+    { label: "停止", accelerator: "Esc", click: () => navigate("stop") },
+    { label: "关闭", accelerator: "CmdOrCtrl+W", click: () => browserWindow.close() },
+  ]));
+  browserWindow.setAutoHideMenuBar(false);
+  browserWindow.setMenuBarVisibility(true);
 }
 
 function isHttpUrl(value: string): boolean {

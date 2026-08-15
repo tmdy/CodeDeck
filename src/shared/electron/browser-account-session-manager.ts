@@ -54,12 +54,16 @@ export interface BrowserAccountLoginResult {
 export interface BrowserAccountSessionManagerDependencies {
   createSession: (partition: string) => Session;
   createWindow: (options: BrowserWindowConstructorOptions) => BrowserWindow;
+  configureInteractiveWindow?: (browserWindow: BrowserWindow) => void;
   getParentWindow?: () => BrowserWindow | null;
   windowIcon?: string;
   randomId?: () => string;
   now?: () => number;
   loginTimeoutMs?: number;
   pollIntervalMs?: number;
+  navigationTimeoutMs?: number;
+  probeTimeoutMs?: number;
+  closeProbeTimeoutMs?: number;
   onStatusChange?: (snapshot: BrowserAccountStatusSnapshot) => void;
   onDiagnostic?: (event: BrowserAccountDiagnosticEvent) => void;
 }
@@ -122,6 +126,9 @@ const LOGIN_NAVIGATION_ORIGINS = new Set([
 const REFRESH_SKEW_MS = 30_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 10 * 60 * 1_000;
 const DEFAULT_POLL_INTERVAL_MS = 1_200;
+const DEFAULT_NAVIGATION_TIMEOUT_MS = 30_000;
+const DEFAULT_PROBE_TIMEOUT_MS = 8_000;
+const DEFAULT_CLOSE_PROBE_TIMEOUT_MS = 2_000;
 
 export class BrowserLoginRequiredError extends Error {
   readonly code = "login_required";
@@ -388,7 +395,7 @@ export class BrowserAccountSessionManager {
   > {
     let response: Response;
     try {
-      response = await browserSession.fetch(`${origin}/api/user/auth/refresh`, {
+      response = await fetchWithTimeout(browserSession.fetch.bind(browserSession), `${origin}/api/user/auth/refresh`, {
         method: "POST",
         credentials: "include",
         cache: "no-store",
@@ -400,11 +407,14 @@ export class BrowserAccountSessionManager {
           ...(sid ? { "X-Auth-Session": sid } : {}),
         },
         body: "{}",
-      });
+      }, this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS);
     } catch {
       return { kind: "error", message: "浏览器登录状态检查失败，请稍后重试" };
     }
-    const payload = await readJsonResponse(response);
+    const payload = await readJsonResponseWithin(
+      response,
+      this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+    );
     const bundle = parseRefreshBundle(payload.payload);
     if (response.ok && bundle) {
       return { kind: "bundle", bundle };
@@ -628,9 +638,10 @@ export class BrowserAccountSessionManager {
       this.buildBoundFetch(account),
       `${requireBrowserOrigin(account)}${legacyIdentityEndpoint(candidate)}`,
       buildLegacyIdentityHeaders(candidate),
+      this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
     );
     if (!isSuccessfulHttpStatus(response.status)) return { kind: "login_required" };
-    const userId = extractBrowserUserId(response.payload);
+    const userId = extractBrowserUserId(response.payload, candidate?.platform ?? "new_api");
     if (!userId) return { kind: "login_required" };
     if (
       (candidate && candidate.userId !== userId)
@@ -685,16 +696,19 @@ export class BrowserAccountSessionManager {
       throw new BrowserLoginRequiredError();
     }
     const origin = requireBrowserOrigin(account);
-    const response = await this.buildBoundFetch(account)(`${origin}/api/v1/auth/refresh`, {
+    const response = await fetchWithTimeout(this.buildBoundFetch(account), `${origin}/api/v1/auth/refresh`, {
       method: "POST",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ refresh_token: refreshToken }),
-    });
+    }, this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS);
     this.assertGeneration(accountKey, generation);
-    const payload = await readJsonResponse(response);
+    const payload = await readJsonResponseWithin(
+      response,
+      this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+    );
     const refreshedCredentials = response.ok
       ? parseSub2ApiRefreshCredentials(payload.payload, refreshToken)
       : null;
@@ -734,7 +748,11 @@ export class BrowserAccountSessionManager {
     this.recoveryWindows.set(browserWindow, accountKey);
     this.configureRecoveryWindow(browserWindow, browserOrigin);
     try {
-      await browserWindow.loadURL(browserOrigin);
+      await loadWindowUrlWithTimeout(
+        browserWindow,
+        browserOrigin,
+        this.dependencies.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
+      );
       if (browserWindow.isDestroyed()) return null;
       return await this.readLegacyIdentityCandidateFromWindow(browserWindow, browserOrigin);
     } catch {
@@ -836,12 +854,17 @@ export class BrowserAccountSessionManager {
       const browserWindow = this.dependencies.createWindow(this.buildWindowOptions(partition));
       task.window = browserWindow;
       this.configureLoginWindow(task, browserWindow);
+      this.dependencies.configureInteractiveWindow?.(browserWindow);
       task.timeoutTimer = setTimeout(() => {
         void this.completeLogin(task, { status: "failed", message: "浏览器登录已超时" });
       }, this.dependencies.loginTimeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS);
       browserWindow.show();
       browserWindow.focus();
-      await browserWindow.loadURL(task.request.browserOrigin);
+      await loadWindowUrlWithTimeout(
+        browserWindow,
+        task.request.browserOrigin,
+        this.dependencies.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
+      );
       if (task.finished) {
         return;
       }
@@ -860,7 +883,7 @@ export class BrowserAccountSessionManager {
       minWidth: 840,
       minHeight: 620,
       show: false,
-      autoHideMenuBar: true,
+      autoHideMenuBar: false,
       ...(parent && !parent.isDestroyed() ? { parent } : {}),
       ...(this.dependencies.windowIcon ? { icon: this.dependencies.windowIcon } : {}),
       webPreferences: {
@@ -889,6 +912,7 @@ export class BrowserAccountSessionManager {
       if (!isAllowedBrowserNavigation(targetUrl, allowedOrigin)) event.preventDefault();
     });
     browserWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+    browserWindow.webContents.on("will-prevent-unload", (event) => event.preventDefault());
     browserWindow.on("close", (event) => {
       if (task.finished) {
         return;
@@ -954,10 +978,11 @@ export class BrowserAccountSessionManager {
         context.fetch,
         `${task.request.browserOrigin}${legacyIdentityEndpoint(legacyIdentityCandidate)}`,
         { ...context.headers, ...buildLegacyIdentityHeaders(legacyIdentityCandidate) },
+        this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       );
       if (task.finished) return null;
       const userId = isSuccessfulHttpStatus(response.status)
-        ? extractBrowserUserId(response.payload)
+        ? extractBrowserUserId(response.payload, legacyIdentityCandidate?.platform ?? "new_api")
         : null;
       if (userId) {
         if (
@@ -1014,11 +1039,19 @@ export class BrowserAccountSessionManager {
       clearTimeout(task.pollTimer);
       task.pollTimer = undefined;
     }
-    const activeProbe = task.probePromise;
-    let result = await this.runLoginProbe(task);
-    if (!result && activeProbe && !task.finished) {
-      result = await this.runLoginProbe(task);
-    }
+    const closeProbe = (async (): Promise<BrowserAccountLoginResult | null> => {
+      const activeProbe = task.probePromise;
+      let result = await this.runLoginProbe(task);
+      if (!result && activeProbe && !task.finished) {
+        result = await this.runLoginProbe(task);
+      }
+      return result;
+    })();
+    const result = await settleWithin(
+      closeProbe,
+      this.dependencies.closeProbeTimeoutMs ?? DEFAULT_CLOSE_PROBE_TIMEOUT_MS,
+      null,
+    );
     if (task.finished) {
       return;
     }
@@ -1072,19 +1105,6 @@ export class BrowserAccountSessionManager {
           return normalized || null;
         };
         try {
-          const rawUser = window.localStorage.getItem("user");
-          if (rawUser) {
-            const user = JSON.parse(rawUser);
-            const userId = normalizeId(user && user.id);
-            if (userId) {
-              const bearer = typeof user.token === "string" ? user.token.trim() : "";
-              return bearer
-                ? { platform: "new_api", userId, bearer }
-                : { platform: "new_api", userId };
-            }
-          }
-        } catch {}
-        try {
           const rawAuthUser = window.localStorage.getItem("auth_user");
           const bearer = (window.localStorage.getItem("auth_token") || "").trim();
           if (rawAuthUser && bearer) {
@@ -1095,6 +1115,19 @@ export class BrowserAccountSessionManager {
               return refreshToken
                 ? { platform: "sub2api", userId, bearer, refreshToken }
                 : { platform: "sub2api", userId, bearer };
+            }
+          }
+        } catch {}
+        try {
+          const rawUser = window.localStorage.getItem("user");
+          if (rawUser) {
+            const user = JSON.parse(rawUser);
+            const userId = normalizeId(user && user.id);
+            if (userId) {
+              const bearer = typeof user.token === "string" ? user.token.trim() : "";
+              return bearer
+                ? { platform: "new_api", userId, bearer }
+                : { platform: "new_api", userId };
             }
           }
         } catch {}
@@ -1117,7 +1150,10 @@ export class BrowserAccountSessionManager {
     if (result.status === "ready") {
       this.setStatus(task.request.accountKey, "ready");
     }
-    if (task.window && !task.window.isDestroyed()) task.window.close();
+    if (task.window && !task.window.isDestroyed()) {
+      task.window.webContents.stop();
+      task.window.close();
+    }
     if (result.status !== "ready") {
       const state = this.ensureState(task.request.accountKey);
       state.generation += 1;
@@ -1298,9 +1334,13 @@ export function parseRefreshBundle(payload: unknown): RefreshBundle | null {
   return { bearer, expiresAt: expiresAtSeconds * 1000, sid };
 }
 
-export function extractBrowserUserId(payload: unknown): string | null {
+export function extractBrowserUserId(
+  payload: unknown,
+  platform: LegacyIdentityPlatform = "new_api",
+): string | null {
   const root = asRecord(payload);
   if (!root || root.success === false) return null;
+  if (platform === "sub2api") return positiveIntegerString(root.id);
   const data = asRecord(root.data) ?? root;
   const user = asRecord(data.user);
   for (const value of [data.id, data.user_id, data.userId, user?.id]) {
@@ -1367,29 +1407,89 @@ function sanitizeOpaqueId(value: string): string {
 }
 
 async function readJsonResponse(response: Response): Promise<JsonResponse> {
+  const status = typeof response?.status === "number" ? response.status : 0;
   try {
     const text = (await response.text()).trim();
-    return { status: response.status, payload: text ? JSON.parse(text) as unknown : null };
+    return { status, payload: text ? JSON.parse(text) as unknown : null };
   } catch {
-    return { status: response.status, payload: null };
+    return { status, payload: null };
   }
+}
+
+async function readJsonResponseWithin(response: Response, timeoutMs: number): Promise<JsonResponse> {
+  return settleWithin(
+    readJsonResponse(response),
+    timeoutMs,
+    { status: typeof response?.status === "number" ? response.status : 0, payload: null },
+  );
 }
 
 async function fetchJson(
   fetchImpl: typeof fetch,
   endpoint: string,
   headers: Readonly<Record<string, string>>,
+  timeoutMs: number = DEFAULT_PROBE_TIMEOUT_MS,
 ): Promise<JsonResponse> {
   try {
-    const response = await fetchImpl(endpoint, {
+    const response = await fetchWithTimeout(fetchImpl, endpoint, {
       method: "GET",
       headers: { Accept: "application/json", ...headers },
       cache: "no-store",
       credentials: "include",
-    });
-    return readJsonResponse(response);
+    }, timeoutMs);
+    return readJsonResponseWithin(response, timeoutMs);
   } catch {
     return { status: 0, payload: null };
+  }
+}
+
+async function fetchWithTimeout(
+  fetchImpl: (input: string, init?: RequestInit) => Promise<Response>,
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  try {
+    return await fetchImpl(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function loadWindowUrlWithTimeout(
+  browserWindow: BrowserWindow,
+  url: string,
+  timeoutMs: number,
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      browserWindow.loadURL(url),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          browserWindow.webContents.stop();
+          reject(new Error("浏览器页面加载超时"));
+        }, Math.max(1, timeoutMs));
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function settleWithin<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => resolve(fallback), Math.max(1, timeoutMs));
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 

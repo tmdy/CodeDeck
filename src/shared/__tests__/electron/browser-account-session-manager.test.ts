@@ -67,6 +67,7 @@ function createLoginWindowMock(options: {
     webContents: {
       setWindowOpenHandler: vi.fn(),
       on: vi.fn(),
+      stop: vi.fn(),
       getURL: vi.fn(() => options.currentUrl ?? "https://panel.example.com/oauth/callback"),
       executeJavaScript: vi.fn(async (script: string) => {
         const currentUrl = options.currentUrl ?? "https://panel.example.com/oauth/callback";
@@ -465,6 +466,54 @@ describe("BrowserAccountSessionManager", () => {
     expect(serializedPublicValues).not.toContain("must-not-cross-ipc");
   });
 
+  it("prefers strict Sub2API storage when a page also has a generic New API user", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockResolvedValueOnce(response(401, { message: "cookie expired" }))
+      .mockImplementationOnce(async (input, init?: RequestInit) => {
+        expect(String(input)).toBe("https://panel.example.com/api/v1/auth/me");
+        expect(new Headers(init?.headers).get("Authorization"))
+          .toBe("Bearer sub2-memory-token");
+        return response(200, { id: 42 });
+      });
+    const recoveryWindow = createLoginWindowMock({
+      localStorageUser: JSON.stringify({ id: 42, token: "wrong-new-api-token" }),
+      localStorageAuthUser: JSON.stringify({ id: 42 }),
+      localStorageAuthToken: "sub2-memory-token",
+      localStorageRefreshToken: "sub2-refresh-token",
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow: vi.fn(() => recoveryWindow),
+    });
+
+    await expect(manager.getRequestContext("account-key", browserAccount()))
+      .resolves.toMatchObject({
+        authMode: "browser_cookie",
+        headers: { Authorization: "Bearer sub2-memory-token" },
+      });
+  });
+
+  it("does not accept a nested Sub2API identity in place of the root id", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockResolvedValueOnce(response(401, { message: "cookie expired" }))
+      .mockResolvedValueOnce(response(200, { data: { id: 42 } }));
+    const recoveryWindow = createLoginWindowMock({
+      localStorageAuthUser: JSON.stringify({ id: 42 }),
+      localStorageAuthToken: "sub2-memory-token",
+      localStorageRefreshToken: "sub2-refresh-token",
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow: vi.fn(() => recoveryWindow),
+    });
+
+    await expect(manager.getRequestContext("account-key", browserAccount()))
+      .rejects.toBeInstanceOf(BrowserLoginRequiredError);
+    expect(fetchMock.mock.calls[2][0]).toBe("https://panel.example.com/api/v1/auth/me");
+  });
+
   it("refreshes an expired Sub2API runtime bearer without persisting or returning either token", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response(404, { message: "legacy" }))
@@ -730,6 +779,25 @@ describe("BrowserAccountSessionManager", () => {
     expect(recoveryWindow.close).toHaveBeenCalledTimes(1);
   });
 
+  it("bounds a stalled hidden recovery navigation and closes its window", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockResolvedValueOnce(response(401, { message: "cookie expired" }));
+    const recoveryWindow = createLoginWindowMock({
+      loadURL: () => new Promise<void>(() => undefined),
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow: vi.fn(() => recoveryWindow),
+      navigationTimeoutMs: 5,
+    });
+
+    await expect(manager.getRequestContext("account-key", browserAccount()))
+      .rejects.toBeInstanceOf(BrowserLoginRequiredError);
+    expect(recoveryWindow.webContents.stop).toHaveBeenCalledTimes(1);
+    expect(recoveryWindow.close).toHaveBeenCalledTimes(1);
+  });
+
   it("closes an in-flight hidden recovery window when the account logs out", async () => {
     let finishNavigation!: () => void;
     const navigation = new Promise<void>((resolve) => {
@@ -811,6 +879,28 @@ describe("BrowserAccountSessionManager", () => {
       expect(manager.getStatus("slow-account").status).toBe("login_required");
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails and closes a login window when initial navigation never settles", async () => {
+    const browserWindow = createLoginWindowMock({
+      loadURL: () => new Promise<void>(() => undefined),
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(vi.fn())),
+      createWindow: vi.fn(() => browserWindow),
+      navigationTimeoutMs: 5,
+    });
+
+    await expect(manager.openLogin({
+      accountKey: "stalled-navigation",
+      browserSessionId: "stalled-reference",
+      browserOrigin: "https://panel.example.com",
+    })).resolves.toEqual({
+      status: "failed",
+      message: "浏览器登录窗口加载失败",
+    });
+    expect(browserWindow.webContents.stop).toHaveBeenCalled();
+    expect(browserWindow.isDestroyed()).toBe(true);
   });
 
   it("keeps modern interactive login isolated from legacy identity storage and headers", async () => {
@@ -1041,6 +1131,39 @@ describe("BrowserAccountSessionManager", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(session.cookies.flushStore).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the final close probe so an unresponsive site cannot trap the window", async () => {
+    let resolveIdentity!: (value: Response) => void;
+    const pendingIdentity = new Promise<Response>((resolve) => {
+      resolveIdentity = resolve;
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockImplementationOnce(() => pendingIdentity);
+    const browserWindow = createLoginWindowMock({ localStorageUid: "42" });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow: vi.fn(() => browserWindow),
+      pollIntervalMs: 60_000,
+      probeTimeoutMs: 60_000,
+      closeProbeTimeoutMs: 5,
+    });
+
+    const login = manager.openLogin({
+      accountKey: "unresponsive-account",
+      browserSessionId: "unresponsive-reference",
+      browserOrigin: "https://panel.example.com",
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    browserWindow.close();
+
+    await expect(login).resolves.toEqual({
+      status: "canceled",
+      message: "已取消浏览器登录",
+    });
+    expect(browserWindow.isDestroyed()).toBe(true);
+    resolveIdentity(response(200, { success: true, data: { id: 42 } }));
   });
 
   it("runs one final probe before treating a manual window close as cancellation", async () => {
