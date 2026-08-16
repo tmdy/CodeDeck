@@ -113,3 +113,24 @@ Trust the selected Codex cwd per launch, preserve hooks disablement, normalize W
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 统一 Codex Home 与共享会话
+
+**Date**: 2026-08-16
+**Task**: 统一 Codex Home 与共享会话
+**Branch**: `main`
+
+### Summary
+
+统一 CodeDeck 与原生 Codex 使用用户 ~/.codex；第三方站点保留 Profile，恢复不再复制会话；旧 Runtime 本阶段忽略；完成测试、类型检查并在独立发布目录生成安装包。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db450d3` | (see git log) |
+
+### Status
+
+[OK] **Completed**
