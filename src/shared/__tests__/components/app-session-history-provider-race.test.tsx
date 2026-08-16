@@ -241,6 +241,17 @@ function createFavoritesFixture() {
     updated_at: "2026-06-13T08:00:00.000Z",
     preview: "Claude favorite session",
   };
+  const runtimeFavorite: FavoriteSessionSummaryForTest = {
+    favorite_key: "codex|app_runtime|C:/runtime|runtime-favorite",
+    favorited_at: "2026-06-13T10:00:00.000Z",
+    provider: "codex",
+    session_id: "runtime-favorite",
+    cwd: "C:/repo-codex",
+    updated_at: "2026-06-13T09:00:00.000Z",
+    preview: "Legacy runtime favorite",
+    source_kind: "app_runtime",
+    source_home: "C:/runtime",
+  };
 
   let state: LocalState = {
     ...defaultLocalState(),
@@ -259,7 +270,10 @@ function createFavoritesFixture() {
       [codexKey]: runtime("C:/repo-codex", "codex"),
     },
   };
-  (state as unknown as { session_favorites: FavoriteSessionSummaryForTest[] }).session_favorites = [claudeFavorite];
+  (state as unknown as { session_favorites: FavoriteSessionSummaryForTest[] }).session_favorites = [
+    claudeFavorite,
+    runtimeFavorite,
+  ];
 
   const manager: MockProfileManager = {
     checkEncryptedConfig: vi.fn(async () => true),
@@ -810,6 +824,10 @@ describe("App session history provider switching", () => {
     });
 
     await waitForText(container, "Claude favorite session");
+    expect(container.textContent).not.toContain("Legacy runtime favorite");
+    expect(fixture.manager.getSessionDetail).not.toHaveBeenCalledWith(expect.objectContaining({
+      session_id: "runtime-favorite",
+    }));
     const favoriteSessionButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (button) => button.classList.contains("session-item") && button.textContent?.includes("Claude favorite session"),
     );

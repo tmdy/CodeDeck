@@ -7,6 +7,7 @@ import {
   isSessionAfterCursor,
   paginatedSessions,
 } from "../session-pagination.js";
+import { resolveCanonicalCodexHome } from "./codex-home.js";
 
 export type SessionListScope = "project" | "global_recent";
 export type SessionDetailLevel = "summary" | "full";
@@ -1464,9 +1465,7 @@ export async function listCodexSessions(
   codexHome?: string,
 ): Promise<SessionSummary[]> {
   const path = await import("node:path");
-  const os = await import("node:os");
-
-  const root = codexHome || path.join(os.homedir(), ".codex");
+  const root = codexHome || resolveCanonicalCodexHome();
   const normalizedCwd = request.scope === "project"
     ? normalizeComparablePath(requireProjectCwd(request))
     : "";
@@ -1561,9 +1560,7 @@ export async function findMonitoredTerminalSessionTitle(
     : await listClaudeSessions(request, options.claudeHome);
   const startedAtMs = parseStartedAtMs(options.startedAt);
   if (provider === PROVIDER_CODEX && !sessionId) {
-    const path = await import("node:path");
-    const os = await import("node:os");
-    const codexRoot = options.codexHome || path.join(os.homedir(), ".codex");
+    const codexRoot = options.codexHome || resolveCanonicalCodexHome();
     const merged = new Map(sessions.map((session) => [session.session_id, session]));
     for (const session of await listRecentCodexSessionsForMonitor(
       codexRoot,
@@ -1640,7 +1637,7 @@ export async function resolveMonitoredTerminalSessionFile(
   }
 
   if (provider === PROVIDER_CODEX) {
-    const root = options.codexHome || path.join(os.homedir(), ".codex");
+    const root = options.codexHome || resolveCanonicalCodexHome();
     const summary = await findCodexSessionFile(path.join(root, "sessions"), sessionId);
     return summary?.filePath;
   }
@@ -1747,13 +1744,12 @@ export async function getCodexSessionDetail(
   codexHome?: string,
 ): Promise<SessionSummary | null> {
   const path = await import("node:path");
-  const os = await import("node:os");
   const sessionId = request.session_id.trim();
   if (!sessionId) {
     return null;
   }
 
-  const root = request.source_home?.trim() || codexHome || path.join(os.homedir(), ".codex");
+  const root = codexHome || resolveCanonicalCodexHome();
   const fileSummary = (await summarizeKnownCodexSessionFile(
     root,
     request.source_file_relative_path ?? "",
@@ -1767,7 +1763,7 @@ export async function getCodexSessionDetail(
 
   return {
     ...sessionSummaryFromFileSummary(fileSummary),
-    ...(request.source_kind ? { source_kind: request.source_kind } : {}),
+    source_kind: "global_codex",
     source_home: root,
   };
 }
@@ -1828,6 +1824,16 @@ async function mergeCodexIndexEntry(
 }
 
 export type CopyCodexSessionResult = "copied" | "already_present";
+
+export function assertCanonicalCodexSessionSource(sourceKind: unknown): void {
+  if (sourceKind === undefined || sourceKind === null || sourceKind === "" || sourceKind === "global_codex") {
+    return;
+  }
+  if (sourceKind === "app_runtime") {
+    throw new Error("旧 App Runtime 会话不可用，请从用户全局 Codex Home 重新选择会话。");
+  }
+  throw new Error("Codex 会话来源无效，请刷新会话列表后重试。");
+}
 
 export function resolveCodexSessionTransferHomes(options: {
   sourceKind: unknown;

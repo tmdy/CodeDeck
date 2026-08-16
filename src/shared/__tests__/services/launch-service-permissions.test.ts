@@ -245,7 +245,7 @@ describe("LaunchService permissions", () => {
     expect(settings.sandbox?.network?.deniedDomains).toEqual(["*"]);
   });
 
-  it("should add Codex managed rules and shell environment policy for common protection switches", () => {
+  it("should keep the profile-local shell environment policy without generating global Codex rules", () => {
     const profile: Profile = {
       provider: "codex",
       name: "Codex Guarded",
@@ -271,10 +271,7 @@ describe("LaunchService permissions", () => {
     });
 
     expect(plan.valid).toBe(true);
-    expect(plan.codexConfig?.rulesContent).toContain('pattern = ["git", "push"]');
-    expect(plan.codexConfig?.rulesContent).toContain('decision = "forbidden"');
-    expect(plan.codexConfig?.rulesContent).toContain('pattern = ["rm", "-rf"]');
-    expect(plan.codexConfig?.rulesContent).toContain('pattern = ["Remove-Item", "-Recurse"]');
+    expect(plan.codexConfig).not.toHaveProperty("rulesContent");
     expect(plan.codexConfig?.content).toContain("[shell_environment_policy]");
     expect(plan.codexConfig?.content).toContain('exclude = ["*KEY*", "*TOKEN*", "*SECRET*", "*PASSWORD*", "CODEX_SITE_API_KEY_*"]');
   });

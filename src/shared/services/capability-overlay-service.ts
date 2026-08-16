@@ -6,6 +6,7 @@ import {
   buildCodexProfileDirectoryName,
   buildLegacyCodexProfileDirectoryName,
 } from "./model-mapping-config-service.js";
+import { resolveCanonicalCodexHome } from "./codex-home.js";
 
 export interface CapabilityOverlayServiceOptions {
   overlayRoot: string;
@@ -79,7 +80,7 @@ export class CapabilityOverlayService {
     this.overlayRoot = path.resolve(options.overlayRoot);
     this.claudeHome = path.resolve(options.claudeHome ?? path.join(home, ".claude"));
     this.claudeGlobalStatePath = path.resolve(options.claudeGlobalStatePath ?? path.join(home, ".claude.json"));
-    this.codexHome = path.resolve(options.codexHome ?? path.join(home, ".codex"));
+    this.codexHome = path.resolve(options.codexHome ?? resolveCanonicalCodexHome(home));
     this.agentsHome = path.resolve(options.agentsHome ?? path.join(home, ".agents"));
     this.onDirectoryLinkFallback = options.onDirectoryLinkFallback;
   }
@@ -113,6 +114,9 @@ export class CapabilityOverlayService {
   }
 
   async prepareCodexOverlay(options: { profileId: string; profileHome: string }): Promise<CodexCapabilityOverlay> {
+    if (path.resolve(options.profileHome) === this.codexHome) {
+      return { globalMcpToml: "", skillLinks: [], pluginLinks: [] };
+    }
     const profileOverlayRoot = this.profileOverlayRoot("codex", options.profileId);
     await this.clearManagedOverlay(profileOverlayRoot);
     await ensureDirectory(profileOverlayRoot);

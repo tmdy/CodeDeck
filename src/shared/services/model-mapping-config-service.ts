@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   normalizeModelMappingsState,
@@ -8,9 +8,11 @@ import {
   type ModelMappingsState,
 } from "../model-mapping/config-types.js";
 import { ensureDirectory, pathExists, readJson, writeJson } from "../filesystem.js";
+import { resolveCanonicalCodexHome } from "./codex-home.js";
 
 export interface ModelMappingConfigServiceOptions {
   appDataRoot: string;
+  codexHome?: string;
 }
 
 export interface WriteCodexProfileOptions {
@@ -24,12 +26,7 @@ export interface WriteCodexProfileOptions {
   wireApi?: string;
   skipGitRepoCheck?: boolean;
   content?: string;
-  rulesContent?: string;
-  globalConfigContent?: string;
-  workerAgentContent?: string;
 }
-
-const MANAGED_CODEX_WORKER_AGENT_FILE = "codedeck-worker.toml";
 
 export function sanitizeCodexProfileId(profileId: string): string {
   return buildLegacyCodexProfileDirectoryName(profileId);
@@ -70,12 +67,12 @@ async function backupIfExists(targetPath: string): Promise<void> {
 export class ModelMappingConfigService {
   private readonly filePath: string;
   private readonly codexProfilesRoot: string;
-  private readonly codexRuntimeHome: string;
+  private readonly codexHome: string;
 
   constructor(private readonly options: ModelMappingConfigServiceOptions) {
     this.filePath = path.join(options.appDataRoot, "model-mappings.json");
     this.codexProfilesRoot = path.join(options.appDataRoot, "codex-profiles");
-    this.codexRuntimeHome = path.join(options.appDataRoot, "codex-runtime", "home");
+    this.codexHome = options.codexHome?.trim() || resolveCanonicalCodexHome();
   }
 
   async load(): Promise<ModelMappingsState> {
@@ -115,43 +112,12 @@ export class ModelMappingConfigService {
   }
 
   async writeCodexProfile(options: WriteCodexProfileOptions): Promise<string> {
-    const runtimeHome = await this.ensureCodexRuntimeHome();
-    const baseConfigPath = path.join(runtimeHome, "config.toml");
+    const codexHome = await this.ensureCodexHome();
     const profileName = options.profileName ?? buildCodexSiteProfileName(options.profileId);
-    const profileConfigPath = path.join(runtimeHome, `${profileName}.config.toml`);
+    const profileConfigPath = path.join(codexHome, `${profileName}.config.toml`);
     const rawProfileContent = options.content ?? this.buildCodexProfileContent(options);
     const profileContent = normalizeTomlContent(toStandaloneCodexProfileContent(rawProfileContent, profileName));
 
-    const existingBaseConfig = await readTextIfExists(baseConfigPath);
-    const cleanedBaseConfig = cleanCodexBaseConfig(existingBaseConfig, new Set([options.providerId]));
-    const globalConfigContent = normalizeTomlContent([
-      extractCodexGlobalConfigContent(rawProfileContent),
-      options.globalConfigContent ?? "",
-    ].filter((item) => item.trim()).join("\n"));
-    const globalHeaders = collectTomlHeaders(globalConfigContent);
-    const nextBaseConfig = globalHeaders.size > 0
-      ? mergeTomlBlocks(cleanedBaseConfig, globalConfigContent, globalHeaders)
-      : cleanedBaseConfig;
-
-    await ensureDirectory(runtimeHome);
-    if (existingBaseConfig || nextBaseConfig.trim()) {
-      await writeTextWithBackupIfChanged(baseConfigPath, nextBaseConfig);
-    }
-    if (options.rulesContent !== undefined) {
-      await writeTextWithBackupIfChanged(
-        path.join(runtimeHome, "rules", "managed-permissions.rules"),
-        normalizeTomlContent(options.rulesContent),
-      );
-    }
-    const workerAgentPath = path.join(runtimeHome, "agents", MANAGED_CODEX_WORKER_AGENT_FILE);
-    if (options.workerAgentContent?.trim()) {
-      await writeTextWithBackupIfChanged(
-        workerAgentPath,
-        normalizeTomlContent(options.workerAgentContent),
-      );
-    } else {
-      await fs.rm(workerAgentPath, { force: true });
-    }
     await writeTextWithBackupIfChanged(profileConfigPath, profileContent);
     return profileConfigPath;
   }
@@ -189,7 +155,11 @@ export class ModelMappingConfigService {
   }
 
   getCodexRuntimeHome(): string {
-    return this.codexRuntimeHome;
+    return this.codexHome;
+  }
+
+  getCodexHome(): string {
+    return this.codexHome;
   }
 
   getCodexProfileRoot(profileId: string): string {
@@ -208,41 +178,12 @@ export class ModelMappingConfigService {
   }
 
   async ensureCodexRuntimeHome(): Promise<string> {
-    const runtimeHome = this.codexRuntimeHome;
-    await ensureDirectory(runtimeHome);
-    await this.migrateCodexProfileHistories(runtimeHome);
-    return runtimeHome;
+    return this.ensureCodexHome();
   }
 
-  private async migrateCodexProfileHistories(runtimeHome: string): Promise<void> {
-    if (!(await pathExists(this.codexProfilesRoot))) {
-      return;
-    }
-    const entries = await fs.readdir(this.codexProfilesRoot, { withFileTypes: true });
-    const profileEntries = entries
-      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-      .sort((left, right) => {
-        const leftHash = left.name.startsWith("codex-profile-") ? 1 : 0;
-        const rightHash = right.name.startsWith("codex-profile-") ? 1 : 0;
-        return leftHash - rightHash || left.name.localeCompare(right.name);
-      });
-
-    for (const entry of profileEntries) {
-      const profileRoot = path.join(this.codexProfilesRoot, entry.name);
-      this.assertProfilePathInRoot(profileRoot);
-      await mergeJsonlByLine(
-        path.join(profileRoot, "history.jsonl"),
-        path.join(runtimeHome, "history.jsonl"),
-      );
-      await mergeSessionIndex(
-        path.join(profileRoot, "session_index.jsonl"),
-        path.join(runtimeHome, "session_index.jsonl"),
-      );
-      await copySessionFiles(
-        path.join(profileRoot, "sessions"),
-        path.join(runtimeHome, "sessions"),
-      );
-    }
+  async ensureCodexHome(): Promise<string> {
+    await ensureDirectory(this.codexHome);
+    return this.codexHome;
   }
 
   private assertProfilePathInRoot(targetPath: string): void {
@@ -276,7 +217,14 @@ async function writeTextWithBackupIfChanged(targetPath: string, content: string)
   if (existing) {
     await backupIfExists(targetPath);
   }
-  await fs.writeFile(targetPath, content, "utf8");
+  const temporaryPath = `${targetPath}.tmp-${process.pid}-${randomUUID()}`;
+  await fs.writeFile(temporaryPath, content, "utf8");
+  try {
+    await fs.rename(temporaryPath, targetPath);
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 function normalizeTomlContent(content: string): string {
@@ -319,10 +267,6 @@ function toStandaloneCodexProfileContent(content: string, profileName: string): 
     ...(normalizedTopLevelLines.some((line) => line.trim()) ? [{ lines: normalizedTopLevelLines }] : []),
     ...standaloneBlocks,
   ]);
-}
-
-function extractCodexGlobalConfigContent(content: string): string {
-  return renderTomlBlocks(splitTomlBlocks(content).filter((block) => block.header && isCodexGlobalConfigHeader(block.header)));
 }
 
 function isTargetProfileHeader(header: string, profileName: string): boolean {
@@ -377,242 +321,6 @@ function renderTomlBlocks(blocks: TomlBlock[]): string {
   return rendered ? `${rendered}\n` : "";
 }
 
-function collectTomlHeaders(content: string): Set<string> {
-  return new Set(splitTomlBlocks(content)
-    .map((block) => block.header)
-    .filter((header): header is string => Boolean(header)));
-}
-
-function cleanCodexBaseConfig(existing: string, providerIdsToRemove: Set<string>): string {
-  const blocks = splitTomlBlocks(existing);
-  const keptBlocks: TomlBlock[] = [];
-  for (const block of blocks) {
-    if (!block.header) {
-      const lines = block.lines.filter((line) => !/^\s*profile\s*=/.test(line));
-      if (lines.some((line) => line.trim())) {
-        keptBlocks.push({ lines });
-      }
-      continue;
-    }
-    if (isLegacyCodexProfileHeader(block.header)) {
-      continue;
-    }
-    if (isManagedProviderHeader(block.header, providerIdsToRemove)) {
-      continue;
-    }
-    keptBlocks.push(block);
-  }
-  return renderTomlBlocks(keptBlocks);
-}
-
 function isLegacyCodexProfileHeader(header: string): boolean {
   return header === "profiles" || header.startsWith("profiles.");
-}
-
-function isManagedProviderHeader(header: string, providerIdsToRemove: Set<string>): boolean {
-  for (const providerId of providerIdsToRemove) {
-    if (header === `model_providers.${providerId}`) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function mergeTomlBlocks(existing: string, incoming: string, replaceHeaders: Set<string>): string {
-  const existingBlocks = splitTomlBlocks(existing);
-  const incomingBlocks = splitTomlBlocks(incoming);
-  const existingHeaders = new Set(existingBlocks.map((block) => block.header).filter((header): header is string => Boolean(header)));
-  const keptBlocks = existingBlocks.filter((block) => !block.header || !replaceHeaders.has(block.header));
-  const appendedBlocks = incomingBlocks.filter((block) => {
-    if (!block.header) {
-      return false;
-    }
-    return replaceHeaders.has(block.header) || !existingHeaders.has(block.header);
-  });
-  const blocks = [...keptBlocks, ...appendedBlocks];
-  return renderTomlBlocks(blocks);
-}
-
-async function readJsonlLines(filePath: string): Promise<string[]> {
-  if (!(await pathExists(filePath))) {
-    return [];
-  }
-  const content = await fs.readFile(filePath, "utf8");
-  return content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-async function mergeJsonlByLine(sourcePath: string, targetPath: string): Promise<void> {
-  const sourceLines = await readJsonlLines(sourcePath);
-  if (sourceLines.length === 0) {
-    return;
-  }
-  const targetLines = await readJsonlLines(targetPath);
-  const seen = new Set(targetLines);
-  const nextLines = [...targetLines];
-  for (const line of sourceLines) {
-    if (seen.has(line)) {
-      continue;
-    }
-    seen.add(line);
-    nextLines.push(line);
-  }
-  if (nextLines.length === targetLines.length) {
-    return;
-  }
-  await ensureDirectory(path.dirname(targetPath));
-  await fs.writeFile(targetPath, `${nextLines.join("\n")}\n`, "utf8");
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function firstString(...values: unknown[]): string {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-  return "";
-}
-
-function indexRecordId(record: Record<string, unknown>): string {
-  return firstString(record.id, record.session_id, record.sessionId);
-}
-
-function indexRecordUpdatedAt(record: Record<string, unknown>): number {
-  const timestamp = Date.parse(firstString(record.updated_at, record.updatedAt));
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function indexRecordCompleteness(record: Record<string, unknown>): number {
-  return [
-    firstString(record.cwd, record.project_path, record.projectPath),
-    firstString(record.thread_name, record.title, record.name, record.preview),
-    firstString(record.updated_at, record.updatedAt),
-  ].filter(Boolean).length;
-}
-
-function shouldPreferIndexRecord(candidate: Record<string, unknown>, current: Record<string, unknown>): boolean {
-  const candidateTime = indexRecordUpdatedAt(candidate);
-  const currentTime = indexRecordUpdatedAt(current);
-  if (candidateTime !== currentTime) {
-    return candidateTime > currentTime;
-  }
-  return indexRecordCompleteness(candidate) > indexRecordCompleteness(current);
-}
-
-function mergeIndexRecord(primary: Record<string, unknown>, secondary: Record<string, unknown>): Record<string, unknown> {
-  const merged = { ...primary };
-  for (const [key, value] of Object.entries(secondary)) {
-    if ((merged[key] === undefined || merged[key] === "") && value !== undefined && value !== "") {
-      merged[key] = value;
-    }
-  }
-  return merged;
-}
-
-async function readIndexRecords(filePath: string): Promise<Array<Record<string, unknown>>> {
-  const lines = await readJsonlLines(filePath);
-  const records: Array<Record<string, unknown>> = [];
-  for (const line of lines) {
-    try {
-      const record = asRecord(JSON.parse(line));
-      if (record && indexRecordId(record)) {
-        records.push(record);
-      }
-    } catch {
-      // 忽略单条损坏索引，避免阻断其他历史迁移。
-    }
-  }
-  return records;
-}
-
-async function mergeSessionIndex(sourcePath: string, targetPath: string): Promise<void> {
-  const sourceRecords = await readIndexRecords(sourcePath);
-  if (sourceRecords.length === 0) {
-    return;
-  }
-  const targetRecords = await readIndexRecords(targetPath);
-  const byId = new Map<string, Record<string, unknown>>();
-
-  for (const record of targetRecords) {
-    byId.set(indexRecordId(record), record);
-  }
-  for (const record of sourceRecords) {
-    const id = indexRecordId(record);
-    const current = byId.get(id);
-    if (!current) {
-      byId.set(id, record);
-      continue;
-    }
-    const primary = shouldPreferIndexRecord(record, current) ? record : current;
-    const secondary = primary === record ? current : record;
-    byId.set(id, mergeIndexRecord(primary, secondary));
-  }
-
-  const nextRecords = Array.from(byId.values()).sort(
-    (left, right) => indexRecordUpdatedAt(right) - indexRecordUpdatedAt(left),
-  );
-  await ensureDirectory(path.dirname(targetPath));
-  await fs.writeFile(targetPath, `${nextRecords.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
-}
-
-async function copySessionFiles(sourceRoot: string, targetRoot: string): Promise<void> {
-  if (!(await pathExists(sourceRoot))) {
-    return;
-  }
-
-  async function visit(currentRoot: string): Promise<void> {
-    const entries = await fs.readdir(currentRoot, { withFileTypes: true });
-    for (const entry of entries) {
-      const sourcePath = path.join(currentRoot, entry.name);
-      if (entry.isDirectory()) {
-        await visit(sourcePath);
-        continue;
-      }
-      if (!entry.isFile()) {
-        continue;
-      }
-      const relativePath = path.relative(sourceRoot, sourcePath);
-      const targetPath = path.join(targetRoot, relativePath);
-      await copySessionFile(sourcePath, targetPath);
-    }
-  }
-
-  await visit(sourceRoot);
-}
-
-async function copySessionFile(sourcePath: string, targetPath: string): Promise<void> {
-  await ensureDirectory(path.dirname(targetPath));
-  if (!(await pathExists(targetPath))) {
-    await fs.copyFile(sourcePath, targetPath);
-    return;
-  }
-
-  const [sourceContent, targetContent] = await Promise.all([
-    fs.readFile(sourcePath),
-    fs.readFile(targetPath),
-  ]);
-  if (sourceContent.equals(targetContent)) {
-    return;
-  }
-
-  const hash = createHash("sha256").update(sourceContent).digest("hex").slice(0, 8);
-  const extension = path.extname(targetPath);
-  const basePath = extension ? targetPath.slice(0, -extension.length) : targetPath;
-  const conflictPath = `${basePath}.conflict-${hash}${extension || ".jsonl"}`;
-  if (await pathExists(conflictPath)) {
-    const conflictContent = await fs.readFile(conflictPath);
-    if (sourceContent.equals(conflictContent)) {
-      return;
-    }
-  }
-  await fs.copyFile(sourcePath, conflictPath);
 }

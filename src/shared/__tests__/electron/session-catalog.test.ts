@@ -234,12 +234,40 @@ describe("SessionCatalog", () => {
     expect(page.sessions).toEqual([claudeSummary]);
   });
 
-  it("invalidates version 1 catalog snapshots", async () => {
+  it("filters stored Codex entries to the active canonical home before pagination", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codedeck-session-active-home-"));
+    tempDirs.push(root);
+    const catalog = new SessionCatalog({ filePath: path.join(root, "catalog.json") });
+    const globalHome = path.join(root, ".codex");
+    const runtimeHome = path.join(root, "app-data", "codex-runtime", "home");
+    const globalSummary = {
+      ...summary("same-id", "2026-08-11T10:00:00.000Z"),
+      source_home: globalHome,
+      preview: "canonical",
+    };
+    const runtimeSummary: SessionSummary = {
+      ...summary("same-id", "2026-08-12T10:00:00.000Z"),
+      source_kind: "app_runtime",
+      source_home: runtimeHome,
+      preview: "legacy runtime",
+    };
+    await catalog.refresh("codex", [{ kind: "global_codex", home: globalHome }]);
+
+    const page = await catalog.createPage({
+      provider: "codex",
+      scope: "global_recent",
+      limit: 1,
+    }, [{ kind: "global_codex", home: globalHome }], [runtimeSummary, globalSummary]);
+
+    expect(page.sessions).toEqual([globalSummary]);
+  });
+
+  it("invalidates version 2 catalog snapshots", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codedeck-session-old-snapshot-"));
     tempDirs.push(root);
     const catalogPath = path.join(root, "catalog.json");
     await writeFile(catalogPath, JSON.stringify({
-      version: 1,
+      version: 2,
       revision: 10,
       scanned_at_by_source: {},
       entries: [{

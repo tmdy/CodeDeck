@@ -22,6 +22,7 @@ async function makeTempDir(): Promise<string> {
 function createService(root: string): ModelMappingConfigService {
   return new ModelMappingConfigService({
     appDataRoot: path.join(root, "app-data"),
+    codexHome: path.join(root, ".codex"),
   });
 }
 
@@ -97,16 +98,28 @@ describe("ModelMappingConfigService", () => {
     expect(saved.model_mappings).toBeUndefined();
   });
 
-  it("should write standalone Codex profile configs while keeping base config global-only", async () => {
+  it("should write standalone Codex profile configs without changing the user base config", async () => {
     const root = await makeTempDir();
     const service = createService(root);
     const configPath = path.join(service.getCodexRuntimeHome(), "config.toml");
     await mkdir(path.dirname(configPath), { recursive: true });
-    await writeFile(
-      configPath,
-      '[mcp_servers.playwright]\ncommand = "cmd"\n\n[projects."C:/repo"]\ntrust_level = "trusted"\n',
-      "utf8",
-    );
+    const baseConfig = [
+      'profile = "personal"',
+      "",
+      "[profiles.personal]",
+      'model = "gpt-user"',
+      "",
+      "[model_providers.personal]",
+      'name = "Personal"',
+      "",
+      "[mcp_servers.playwright]",
+      'command = "cmd"',
+      "",
+      '[projects."C:/repo"]',
+      'trust_level = "trusted"',
+      "",
+    ].join("\n");
+    await writeFile(configPath, baseConfig, "utf8");
 
     const firstPath = await service.writeCodexProfile({
       profileId: "codex::demo",
@@ -156,10 +169,7 @@ describe("ModelMappingConfigService", () => {
 
     expect(firstPath).toBe(path.join(service.getCodexRuntimeHome(), `${buildCodexSiteProfileName("codex::demo")}.config.toml`));
     expect(secondPath).toBe(path.join(service.getCodexRuntimeHome(), `${secondProfileName}.config.toml`));
-    expect(baseContent).toContain('[mcp_servers.playwright]');
-    expect(baseContent).toContain('[projects."C:/repo"]');
-    expect(baseContent).not.toContain("[profiles.");
-    expect(baseContent).not.toContain("profile =");
+    expect(baseContent).toBe(baseConfig);
     expect(firstContent).toContain('model = "glm-4.5"');
     expect(firstContent).toContain(`model_provider = ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}`);
     expect(firstContent).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
@@ -182,7 +192,7 @@ describe("ModelMappingConfigService", () => {
     expect(directoryName).toBe("codex-profile-dc74f0e0abf0f9c2");
     expect(directoryName).not.toContain("999Code");
     expect(profileRoot).toBe(path.join(root, "app-data", "codex-profiles", directoryName));
-    expect(service.getCodexRuntimeHome()).toBe(path.join(root, "app-data", "codex-runtime", "home"));
+    expect(service.getCodexHome()).toBe(path.join(root, ".codex"));
     expect(buildCodexSiteProfileName("codex::999Code")).toBe("site-dc74f0e0abf0f9c2");
     expect(buildCodexSiteProviderId("codex::999Code")).toBe("site_provider_dc74f0e0abf0f9c2");
     expect(buildCodexSiteApiKeyEnv("codex::999Code")).toBe("CODEX_SITE_API_KEY_DC74F0E0ABF0F9C2");
@@ -190,25 +200,17 @@ describe("ModelMappingConfigService", () => {
     expect(buildCodexSiteProviderId("codex::999Code")).not.toContain("999Code");
   });
 
-  it("should copy legacy Codex profile history into the shared runtime home without removing old directories", async () => {
+  it("should only create the canonical Codex home without migrating legacy profile history", async () => {
     const root = await makeTempDir();
     const service = createService(root);
     const legacyRoot = service.getLegacyCodexProfileRoot("codex::999Code");
-    const hashRoot = service.getCodexProfileRoot("codex::999Code");
     const sharedHome = service.getCodexRuntimeHome();
     await mkdir(path.join(legacyRoot, "sessions", "2026", "05", "06"), { recursive: true });
-    await mkdir(path.join(hashRoot, "sessions", "2026", "05", "07"), { recursive: true });
     await writeFile(path.join(legacyRoot, "config.toml"), 'model = "old"\n', "utf8");
     await writeFile(path.join(legacyRoot, "history.jsonl"), "{\"text\":\"old\"}\n", "utf8");
-    await writeFile(path.join(hashRoot, "history.jsonl"), "{\"text\":\"new\"}\n{\"text\":\"old\"}\n", "utf8");
     await writeFile(
       path.join(legacyRoot, "session_index.jsonl"),
       `${JSON.stringify({ id: "session-a", thread_name: "旧标题", updated_at: "2026-05-06T10:00:00.000Z" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      path.join(hashRoot, "session_index.jsonl"),
-      `${JSON.stringify({ id: "session-b", thread_name: "新标题", cwd: "C:/repo", updated_at: "2026-05-07T10:00:00.000Z" })}\n`,
       "utf8",
     );
     await writeFile(
@@ -216,22 +218,13 @@ describe("ModelMappingConfigService", () => {
       "{\"type\":\"session_meta\",\"payload\":{\"id\":\"session-a\"}}\n",
       "utf8",
     );
-    await writeFile(
-      path.join(hashRoot, "sessions", "2026", "05", "07", "session-b.jsonl"),
-      "{\"type\":\"session_meta\",\"payload\":{\"id\":\"session-b\"}}\n",
-      "utf8",
-    );
-
     await expect(service.ensureCodexRuntimeHome()).resolves.toBe(sharedHome);
 
-    expect(await readFile(path.join(sharedHome, "history.jsonl"), "utf8")).toBe("{\"text\":\"old\"}\n{\"text\":\"new\"}\n");
-    expect(await readFile(path.join(sharedHome, "sessions", "2026", "05", "06", "session-a.jsonl"), "utf8"))
-      .toContain("session-a");
-    expect(await readFile(path.join(sharedHome, "sessions", "2026", "05", "07", "session-b.jsonl"), "utf8"))
-      .toContain("session-b");
-    const indexContent = await readFile(path.join(sharedHome, "session_index.jsonl"), "utf8");
-    expect(indexContent).toContain("session-a");
-    expect(indexContent).toContain("session-b");
+    await expect(readFile(path.join(sharedHome, "history.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(sharedHome, "session_index.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(sharedHome, "sessions", "2026", "05", "06", "session-a.jsonl"), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(legacyRoot, "history.jsonl"), "utf8")).toBe("{\"text\":\"old\"}\n");
     expect(await readFile(path.join(legacyRoot, "config.toml"), "utf8")).toBe('model = "old"\n');
   });
 
@@ -300,9 +293,7 @@ describe("ModelMappingConfigService", () => {
     const profileName = buildCodexSiteProfileName("codex::demo");
     const baseConfigPath = path.join(service.getCodexRuntimeHome(), "config.toml");
     await mkdir(path.dirname(baseConfigPath), { recursive: true });
-    await writeFile(
-      baseConfigPath,
-      [
+    const originalBaseConfig = [
         `profile = ${JSON.stringify(profileName)}`,
         "",
         `[profiles.${JSON.stringify(profileName)}]`,
@@ -314,9 +305,8 @@ describe("ModelMappingConfigService", () => {
         '[projects."C:/repo"]',
         'trust_level = "trusted"',
         "",
-      ].join("\n"),
-      "utf8",
-    );
+      ].join("\n");
+    await writeFile(baseConfigPath, originalBaseConfig, "utf8");
 
     const configPath = await service.writeCodexProfile({
       profileId: "codex::demo",
@@ -365,12 +355,8 @@ describe("ModelMappingConfigService", () => {
     expect(profileContent).toContain('writable_roots = ["C:/repo"]');
     expect(profileContent).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
     expect(profileContent).not.toContain("[profiles.");
-    expect(baseContent).toContain("[mcp_servers.playwright]\ncommand = \"cmd\"");
-    expect(baseContent).toContain('[projects."C:/repo"]');
-    expect(baseContent).not.toContain("[profiles.");
-    expect(baseContent).not.toContain("profile =");
-    expect(baseContent).not.toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
-    expect((await readdir(path.dirname(configPath))).some((name) => /^config\.toml\.bak\./.test(name))).toBe(true);
+    expect(baseContent).toBe(originalBaseConfig);
+    expect((await readdir(path.dirname(configPath))).some((name) => /^config\.toml\.bak\./.test(name))).toBe(false);
   });
 
   it("should preserve Windows sandbox config when rewriting Codex profile configs", async () => {
@@ -408,11 +394,15 @@ describe("ModelMappingConfigService", () => {
     expect(profileContent).toContain("[windows]\nsandbox = \"elevated\"");
   });
 
-  it("should write inherited Codex plugin config into the shared runtime config", async () => {
+  it("should not merge inherited Codex plugin config into the user base config", async () => {
     const root = await makeTempDir();
     const service = createService(root);
     const profileName = buildCodexSiteProfileName("codex::demo");
 
+    const baseConfigPath = path.join(service.getCodexHome(), "config.toml");
+    const originalBaseConfig = '[plugins."user-plugin@personal"]\nenabled = true\n';
+    await mkdir(path.dirname(baseConfigPath), { recursive: true });
+    await writeFile(baseConfigPath, originalBaseConfig, "utf8");
     const configPath = await service.writeCodexProfile({
       profileId: "codex::demo",
       profileName,
@@ -441,19 +431,21 @@ describe("ModelMappingConfigService", () => {
       ].join("\n"),
     });
 
-    const baseContent = await readFile(path.join(service.getCodexRuntimeHome(), "config.toml"), "utf8");
+    const baseContent = await readFile(baseConfigPath, "utf8");
     const profileContent = await readFile(configPath, "utf8");
 
-    expect(baseContent).toContain("[marketplaces.openai-bundled]");
-    expect(baseContent).toContain('[plugins."computer-use@openai-bundled"]');
+    expect(baseContent).toBe(originalBaseConfig);
     expect(profileContent).not.toContain("[marketplaces.openai-bundled]");
     expect(profileContent).not.toContain('[plugins."computer-use@openai-bundled"]');
   });
 
-  it("should write managed Codex permission rules into the runtime rules directory", async () => {
+  it("should leave existing global Codex permission rules unchanged", async () => {
     const root = await makeTempDir();
     const service = createService(root);
 
+    const rulesPath = path.join(service.getCodexHome(), "rules", "managed-permissions.rules");
+    await mkdir(path.dirname(rulesPath), { recursive: true });
+    await writeFile(rulesPath, "# user-owned rules\n", "utf8");
     await service.writeCodexProfile({
       profileId: "codex::demo",
       providerId: buildCodexSiteProviderId("codex::demo"),
@@ -461,25 +453,12 @@ describe("ModelMappingConfigService", () => {
       baseUrl: "https://api.openai.com/v1",
       apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
       targetModel: "gpt-5.4",
-      rulesContent: [
-        "# Managed by CodeDeck.",
-        "prefix_rule(",
-        '    pattern = ["git", "push"],',
-        '    decision = "forbidden",',
-        '    justification = "git push is disabled by profile permissions.",',
-        ")",
-        "",
-      ].join("\n"),
     });
 
-    const rulesPath = path.join(service.getCodexRuntimeHome(), "rules", "managed-permissions.rules");
-    const rulesContent = await readFile(rulesPath, "utf8").catch(() => "");
-
-    expect(rulesContent).toContain('pattern = ["git", "push"]');
-    expect(rulesContent).toContain('decision = "forbidden"');
+    expect(await readFile(rulesPath, "utf8")).toBe("# user-owned rules\n");
   });
 
-  it("should write and clear the managed Codex worker agent", async () => {
+  it("should leave an existing global Codex worker agent unchanged", async () => {
     const root = await makeTempDir();
     const service = createService(root);
     const options = {
@@ -491,23 +470,11 @@ describe("ModelMappingConfigService", () => {
       targetModel: "gpt-5.6",
     };
 
-    await service.writeCodexProfile({
-      ...options,
-      workerAgentContent: [
-        "# Managed by CodeDeck. Do not edit by hand.",
-        'name = "worker"',
-        'description = "Execution-focused subagent."',
-        'model = "gpt-5.6-terra"',
-        'developer_instructions = "Execute the assigned task."',
-        "",
-      ].join("\n"),
-    });
-
-    const workerPath = path.join(service.getCodexRuntimeHome(), "agents", "codedeck-worker.toml");
-    expect(await readFile(workerPath, "utf8")).toContain('model = "gpt-5.6-terra"');
-
+    const workerPath = path.join(service.getCodexHome(), "agents", "codedeck-worker.toml");
+    await mkdir(path.dirname(workerPath), { recursive: true });
+    await writeFile(workerPath, 'model = "user-model"\n', "utf8");
     await service.writeCodexProfile(options);
-    await expect(readFile(workerPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(workerPath, "utf8")).toBe('model = "user-model"\n');
   });
 
   it("should avoid backup churn when Codex config content is unchanged", async () => {

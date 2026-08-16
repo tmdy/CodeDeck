@@ -128,23 +128,23 @@ import {
   type LearnedCheckinPath,
 } from "../src/shared/site-capability-cache.js";
 import {
+  assertCanonicalCodexSessionSource,
   findMonitoredTerminalSessionTitle,
   getClaudeSessionDetail,
   getCodexSessionDetail,
   getSessionDetailForProvider,
-  copyCodexSessionBetweenHomes,
   invalidateCodexSessionCache,
   listClaudeSessions,
   listCodexSessions,
   listCodexSessionsFromHomes,
   listSessionsForProvider,
   readLastAssistantTextFromSessionFile,
-  resolveCodexSessionTransferHomes,
   resolveMonitoredTerminalSessionFile,
   type CodexSessionHome,
   type GetSessionDetailRequest,
   type ListSessionsRequest,
 } from "../src/shared/services/session-service.js";
+import { resolveCanonicalCodexHome } from "../src/shared/services/codex-home.js";
 import {
   type BootstrapResult,
   type LocalState,
@@ -1033,75 +1033,45 @@ function logBrowserAccountDiagnostic(event: BrowserAccountDiagnosticEvent): void
   });
 }
 
-async function ensureConfiguredCodexRuntimeHome(): Promise<string> {
-  return getModelMappingConfigService().ensureCodexRuntimeHome();
+async function ensureConfiguredCodexHome(): Promise<string> {
+  return getModelMappingConfigService().ensureCodexHome();
 }
 
 async function resolveCodexSessionHome(request: ListSessionsRequest): Promise<string | undefined> {
   if (request.provider.trim().toLowerCase() !== "codex") {
     return undefined;
   }
-  return ensureConfiguredCodexRuntimeHome();
+  return getModelMappingConfigService().getCodexHome();
 }
 
 async function resolveCodexSessionHomes(request: ListSessionsRequest): Promise<CodexSessionHome[]> {
-  const appRuntimeHome = await resolveCodexSessionHome(request);
-  if (!appRuntimeHome) {
+  const canonicalHome = await resolveCodexSessionHome(request);
+  if (!canonicalHome) {
     return [];
   }
-  const globalHome = path.join(os.homedir(), ".codex");
-  const homes: CodexSessionHome[] = [
-    { kind: "app_runtime", home: appRuntimeHome },
-  ];
-  if (path.resolve(globalHome) !== path.resolve(appRuntimeHome)) {
-    homes.push({ kind: "global_codex", home: globalHome });
-  }
-  return homes;
+  return [{ kind: "global_codex", home: canonicalHome }];
 }
 
-async function synchronizeCodexSessionForLaunch(
-  request: LaunchRequest,
-  configuredRuntimeHome?: string,
-): Promise<void> {
-  if (request.provider.trim().toLowerCase() !== "codex") {
+async function validateCodexResumeSession(request: LaunchRequest): Promise<void> {
+  if (
+    request.provider.trim().toLowerCase() !== "codex"
+    || request.runtime_settings.launch_mode !== "resume_selected"
+  ) {
     return;
   }
-  if (request.runtime_settings.launch_mode !== "resume_selected") {
-    return;
-  }
-  const sourceKind = request.session_source?.source_kind;
-  if (!sourceKind) {
-    return;
-  }
-  if (sourceKind === "app_runtime") {
-    return;
-  }
-  const sourceFileRelativePath = request.session_source?.source_file_relative_path;
   const sessionId = request.session_id?.trim() ?? "";
   if (!sessionId) {
     throw new Error("恢复指定会话时必须提供 sessionId。");
   }
-  const runtimeHome = configuredRuntimeHome ?? await ensureConfiguredCodexRuntimeHome();
-  const globalHome = path.join(os.homedir(), ".codex");
-  const { sourceHome, targetHome } = resolveCodexSessionTransferHomes({
-    sourceKind,
-    appRuntimeHome: runtimeHome,
-    globalHome,
-  });
-  const result = await copyCodexSessionBetweenHomes({
-    sessionId,
-    sourceHome,
-    targetHome,
-    sourceFileRelativePath,
-  });
-  appLogger.info("launcher", "codex_session_synchronized", "Codex session prepared for restore", {
-    context: {
-      sessionId,
-      sourceKind,
-      targetKind: "app_runtime",
-      result,
-    },
-  });
+  assertCanonicalCodexSessionSource(request.session_source?.source_kind);
+  const session = await getCodexSessionDetail({
+    provider: "codex",
+    scope: "global_recent",
+    session_id: sessionId,
+  }, getModelMappingConfigService().getCodexHome());
+  if (!session) {
+    throw new Error("用户全局 Codex Home 中未找到该会话，请刷新会话列表后重试。");
+  }
 }
 
 function getProfileStateAccessor(): StateAccessor {
@@ -1289,7 +1259,7 @@ async function prepareCapabilityOverlay(request: LaunchRequest): Promise<LaunchR
     };
   }
   if (provider === "codex") {
-    const profileHome = await ensureConfiguredCodexRuntimeHome();
+    const profileHome = await ensureConfiguredCodexHome();
     return {
       codex: await getCapabilityOverlayService().prepareCodexOverlay({
         profileId: request.profile_key,
@@ -1304,6 +1274,7 @@ async function prepareLaunchExecution(request: LaunchRequest): Promise<{
   planRequest: LaunchRequest;
   plan: ReturnType<LaunchService["buildExecutionPlan"]>;
 }> {
+  await validateCodexResumeSession(request);
   const capability_overlay = await prepareCapabilityOverlay(request);
   const planRequest: LaunchRequest = {
     ...request,
@@ -1325,10 +1296,6 @@ async function prepareLaunchExecution(request: LaunchRequest): Promise<{
   if (!plan.valid) {
     throw new Error(plan.error || "无法生成启动命令");
   }
-  const codexRuntimeHome = request.provider.trim().toLowerCase() === "codex"
-    ? await ensureConfiguredCodexRuntimeHome()
-    : undefined;
-  await synchronizeCodexSessionForLaunch(request, codexRuntimeHome);
   if (plan.claudeSettings) {
     await writeManagedLaunchTextFile(plan.claudeSettings.settingsPath, plan.claudeSettings.content);
     appLogger.info("launcher", "claude_permissions_written", "Claude managed permission settings written", {
@@ -1349,8 +1316,6 @@ async function prepareLaunchExecution(request: LaunchRequest): Promise<{
       apiKeyEnv: plan.codexConfig.apiKeyEnv,
       targetModel: plan.codexConfig.targetModel,
       content: plan.codexConfig.content,
-      rulesContent: plan.codexConfig.rulesContent,
-      workerAgentContent: plan.codexConfig.workerAgentContent,
     });
     appLogger.info("launcher", "codex_config_written", "Codex profile config written", {
       context: {
@@ -1413,10 +1378,12 @@ async function initProfileServices(): Promise<void> {
 
   // 本地状态存储
   const statePath = path.join(appDataDir, LOCAL_STATE_FILE);
+  const codexHome = resolveCanonicalCodexHome();
   localStateStore = new LocalStateStore(statePath);
-  modelMappingConfigService = new ModelMappingConfigService({ appDataRoot: appDataDir });
+  modelMappingConfigService = new ModelMappingConfigService({ appDataRoot: appDataDir, codexHome });
   capabilityOverlayService = new CapabilityOverlayService({
     overlayRoot: path.join(appDataDir, "runtime-overlays"),
+    codexHome,
     onDirectoryLinkFallback: ({ sourcePath, targetPath, reason }) => {
       appLogger.warn("capabilities", "directory_link_fallback", "Directory junction creation failed; copied directory instead", {
         context: { sourcePath, targetPath, reason },
@@ -1516,7 +1483,7 @@ async function activateProfileServices(
   launchService = new LaunchService(profileService, {
     getModelMappingsState: () => currentModelMappingsState(),
     codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
-    codexRuntimeHome: getModelMappingConfigService().getCodexRuntimeHome(),
+    codexHome: getModelMappingConfigService().getCodexHome(),
   });
   settingsStateService = new SettingsStateService(stateAccessor, syncStore);
   startCheckinScheduler();
@@ -4075,7 +4042,7 @@ function registerAllIpcHandlers(): void {
         getClaudeSessionDetail,
         getCodexSessionDetail: (detailRequest) => getCodexSessionDetail(
           detailRequest,
-          detailRequest.source_home || codexHome,
+          codexHome,
         ),
       });
       appLogger.info("sessions", "session_detail_finished", "Session detail loaded", {

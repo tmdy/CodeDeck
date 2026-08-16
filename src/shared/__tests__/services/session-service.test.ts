@@ -3,8 +3,10 @@ import path from "node:path";
 import { appendFile, mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  assertCanonicalCodexSessionSource,
   encodeClaudeProjectPath,
   findMonitoredTerminalSessionTitle,
+  getCodexSessionDetail,
   copyCodexSessionBetweenHomes,
   invalidateCodexSessionCache,
   type ListSessionsRequest,
@@ -60,6 +62,13 @@ describe("session-service", () => {
       appRuntimeHome: "C:/codex/runtime",
       globalHome: "C:/codex/global",
     })).toThrow("Codex 会话来源无效，请刷新会话列表后重试。");
+  });
+
+  it("rejects stale App Runtime sources even when a session id may also exist globally", () => {
+    expect(() => assertCanonicalCodexSessionSource("app_runtime"))
+      .toThrow("旧 App Runtime 会话不可用");
+    expect(() => assertCanonicalCodexSessionSource("global_codex")).not.toThrow();
+    expect(() => assertCanonicalCodexSessionSource(undefined)).not.toThrow();
   });
 
   afterEach(async () => {
@@ -1445,6 +1454,40 @@ describe("session-service", () => {
       preview: "Global only",
       source_kind: "global_codex",
       source_home: globalHome,
+    });
+  });
+
+  it("resolves Codex detail only from the supplied canonical home and normalizes source metadata", async () => {
+    const canonicalHome = await createTempDir("codedeck-codex-canonical-detail-");
+    const runtimeHome = await createTempDir("codedeck-codex-runtime-detail-");
+    tempDirs.push(canonicalHome, runtimeHome);
+    for (const [home, title] of [[canonicalHome, "Canonical"], [runtimeHome, "Legacy runtime"]] as const) {
+      await writeJsonl(
+        path.join(home, "sessions", "2026", "08", "16", "rollout-shared-detail.jsonl"),
+        [{
+          type: "session_meta",
+          payload: {
+            id: "shared-detail",
+            cwd: "C:/workspace/project",
+            updated_at: "2026-08-16T10:00:00.000Z",
+            thread_name: title,
+          },
+        }],
+      );
+    }
+
+    const detail = await getCodexSessionDetail({
+      provider: "codex",
+      scope: "global_recent",
+      session_id: "shared-detail",
+      source_kind: "app_runtime",
+      source_home: runtimeHome,
+    }, canonicalHome);
+
+    expect(detail).toMatchObject({
+      preview: "Canonical",
+      source_kind: "global_codex",
+      source_home: canonicalHome,
     });
   });
 

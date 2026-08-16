@@ -142,4 +142,42 @@ describe("ProfileEditForm rendering", () => {
     });
     container.remove();
   });
+
+  it("marks Codex worker model mapping as disabled in the shared Home mode", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onAdvancedModelMappingChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          {...stableProps}
+          provider="codex"
+          draft={{
+            ...stableProps.draft,
+            name: "Codex Site",
+            selectedModelId: "gpt-5.6",
+            advancedModelMapping: {
+              ...makeAdvancedMapping(),
+              enabled: true,
+              codex: { subagentTarget: "worker-model" },
+            },
+          }}
+          runtime={{ ...stableProps.runtime, command_base: "codex" }}
+          onAdvancedModelMappingChange={onAdvancedModelMappingChange}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("当前版本不提供 Codex Worker 子代理模型覆盖");
+    const mappingInput = container.querySelector('input[value="worker-model"]') as HTMLInputElement | null;
+    expect(mappingInput?.disabled).toBe(true);
+    expect(onAdvancedModelMappingChange).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
 });

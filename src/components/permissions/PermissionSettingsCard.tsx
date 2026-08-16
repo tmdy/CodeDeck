@@ -168,24 +168,26 @@ export const PermissionSettingsCard = memo(function PermissionSettingsCard({
           />
           禁读 env/key 文件
         </label>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={normalized.common.denyGitPush}
-            onChange={(e) => updateCommon("denyGitPush", e.target.checked)}
-            disabled={controlsDisabled}
-          />
-          禁止 git push
-        </label>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={normalized.common.denyDangerousDelete}
-            onChange={(e) => updateCommon("denyDangerousDelete", e.target.checked)}
-            disabled={controlsDisabled}
-          />
-          禁止危险删除
-        </label>
+        {provider === "claude" && <>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={normalized.common.denyGitPush}
+              onChange={(e) => updateCommon("denyGitPush", e.target.checked)}
+              disabled={controlsDisabled}
+            />
+            禁止 git push
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={normalized.common.denyDangerousDelete}
+              onChange={(e) => updateCommon("denyDangerousDelete", e.target.checked)}
+              disabled={controlsDisabled}
+            />
+            禁止危险删除
+          </label>
+        </>}
         <label className="checkbox-label">
           <input
             type="checkbox"

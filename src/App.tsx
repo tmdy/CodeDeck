@@ -691,15 +691,21 @@ function App() {
     ),
     [sessionFavorites],
   );
+  const visibleSessionFavorites = useMemo(
+    () => sortedSessionFavorites.filter((session) => !(
+      session.provider === PROVIDER_CODEX && session.source_kind === "app_runtime"
+    )),
+    [sortedSessionFavorites],
+  );
   const sessionFavoriteKeys = useMemo(
     () => new Set(sessionFavorites.map((session) => session.favorite_key)),
     [sessionFavorites],
   );
   const visibleHistorySessions = useMemo(
     () => sessionsView === "favorites"
-      ? sortedSessionFavorites
+      ? visibleSessionFavorites
       : historySessions.filter((session) => session.provider === activeProvider),
-    [activeProvider, historySessions, sessionsView, sortedSessionFavorites],
+    [activeProvider, historySessions, sessionsView, visibleSessionFavorites],
   );
   const selectedHistorySession = visibleHistorySessions.find(
     (session) => getSessionFavoriteKey(session) === historySelectedSessionId,

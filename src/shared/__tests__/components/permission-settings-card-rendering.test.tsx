@@ -2,6 +2,7 @@
 
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PermissionSettingsCard } from "../../../components/permissions/PermissionSettingsCard.jsx";
 import { defaultProfilePermissions } from "../../profile/permissions.js";
@@ -63,5 +64,21 @@ describe("PermissionSettingsCard rendering", () => {
       root.unmount();
     });
     container.remove();
+  });
+
+  it("does not claim global git push or dangerous delete enforcement for Codex", () => {
+    const html = renderToStaticMarkup(
+      <PermissionSettingsCard
+        title="Codex 权限"
+        provider="codex"
+        permissions={defaultProfilePermissions("codex")}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(html).not.toContain("禁止 git push");
+    expect(html).not.toContain("禁止危险删除");
+    expect(html).toContain("禁读 env/key 文件");
+    expect(html).toContain("允许联网");
   });
 });

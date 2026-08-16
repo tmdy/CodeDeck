@@ -14,7 +14,7 @@ import {
   type SessionSummary,
 } from "../services/session-service.js";
 
-const CATALOG_VERSION = 2;
+const CATALOG_VERSION = 3;
 const CATALOG_REFRESH_TTL_MS = 60_000;
 
 interface StoredCatalogEntry extends SessionCatalogFileEntry {
@@ -338,15 +338,22 @@ export class SessionCatalog {
     this.notify(provider, codexHomes);
   }
 
-  private mergeFastSessions(provider: string, sessions: SessionSummary[]): boolean {
+  private mergeFastSessions(
+    provider: string,
+    sessions: SessionSummary[],
+    codexHomes: CodexSessionHome[],
+  ): boolean {
     const normalizedProvider = normalizeProvider(provider) as "claude" | "codex";
+    const fallbackSource = normalizedProvider === "codex" && codexHomes.length === 1
+      ? codexHomes[0]
+      : undefined;
     const byIdentity = new Map(this.snapshot.entries.map((entry) => [entryIdentity(entry), entry]));
     let changed = false;
     for (const summary of sessions) {
-      const sourceHome = summary.source_home ?? "";
+      const sourceHome = summary.source_home ?? fallbackSource?.home ?? "";
       const candidate: StoredCatalogEntry = {
         provider: normalizedProvider,
-        source_kind: summary.source_kind,
+        source_kind: summary.source_kind ?? fallbackSource?.kind,
         source_home: sourceHome || undefined,
         summary,
         file_path: "",
@@ -376,7 +383,7 @@ export class SessionCatalog {
     fastSessions: SessionSummary[],
   ): Promise<SessionPageResult> {
     await this.ensureLoaded();
-    const changed = this.mergeFastSessions(request.provider, fastSessions);
+    const changed = this.mergeFastSessions(request.provider, fastSessions, codexHomes);
     if (changed) {
       await this.queueSave().catch(() => undefined);
     }
@@ -386,8 +393,10 @@ export class SessionCatalog {
 
     const normalizedProvider = normalizeProvider(request.provider);
     const normalizedCwd = normalizeComparablePath(request.cwd);
+    const activeSourceKeys = new Set(this.sourceKeysFor(request.provider, codexHomes));
     const matching = this.snapshot.entries
       .filter((entry) => entry.provider === normalizedProvider)
+      .filter((entry) => normalizedProvider !== "codex" || codexHomes.length === 0 || activeSourceKeys.has(entrySourceKey(entry)))
       .map(publicSummary)
       .filter((summary) => request.scope !== "project" || normalizeComparablePath(summary.cwd) === normalizedCwd)
       .filter((summary) => !(

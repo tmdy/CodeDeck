@@ -159,6 +159,28 @@ describe("CapabilityOverlayService", () => {
     expect(overlay.pluginLinks.every((item) => item.targetPath.includes("codex-runtime"))).toBe(true);
   });
 
+  it("should no-op when the Codex profile home is the canonical user home", async () => {
+    const root = await makeTempDir();
+    const codexHome = path.join(root, ".codex");
+    const overlayRoot = path.join(root, "overlays");
+    await createSkill(path.join(codexHome, "skills"), "existing-skill");
+    await writeFile(path.join(codexHome, "config.toml"), "[mcp_servers.user]\ncommand = \"cmd\"\n", "utf8");
+    const service = new CapabilityOverlayService({ overlayRoot, codexHome });
+
+    const overlay = await service.prepareCodexOverlay({
+      profileId: "codex::shared",
+      profileHome: codexHome,
+    });
+
+    expect(overlay).toEqual({ globalMcpToml: "", skillLinks: [], pluginLinks: [] });
+    await expect(readFile(
+      path.join(overlayRoot, "codex", buildCodexProfileDirectoryName("codex::shared"), "manifest.json"),
+      "utf8",
+    )).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(codexHome, "config.toml"), "utf8"))
+      .toBe("[mcp_servers.user]\ncommand = \"cmd\"\n");
+  });
+
   it("should refuse to clear an overlay outside the configured overlay root", async () => {
     const root = await makeTempDir();
     const service = new CapabilityOverlayService({ overlayRoot: path.join(root, "overlays") });

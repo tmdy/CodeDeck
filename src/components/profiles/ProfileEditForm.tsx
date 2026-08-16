@@ -298,21 +298,6 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     setBulkEnvStatus("");
   }, [bulkEnvText, onRuntimeChange, runtimeEnv]);
 
-  const updateAdvancedMapping = useCallback((changes: Partial<AdvancedModelMapping>) => {
-    onAdvancedModelMappingChange({
-      ...advancedMapping,
-      ...changes,
-      claude: {
-        ...advancedMapping.claude,
-        ...(changes.claude ?? {}),
-      },
-      codex: {
-        ...advancedMapping.codex,
-        ...(changes.codex ?? {}),
-      },
-    });
-  }, [advancedMapping, onAdvancedModelMappingChange]);
-
   const updateClaudeAliasMode = useCallback((aliasMode: ClaudeModelAliasMode) => {
     onAdvancedModelMappingChange({
       ...advancedMapping,
@@ -617,23 +602,29 @@ export const ProfileEditForm = memo(function ProfileEditForm({
           {!isNativeStartup && claudeCompatibilityCard}
 
           {!isNativeStartup && provider === "codex" && (
-            <GlassCard title="Codex 子代理模型映射" subtitle="默认关闭；启用后仅覆盖 Codex 内置 worker 子代理的模型">
+            <GlassCard
+              title="Codex 子代理模型映射"
+              subtitle="共享用户 Codex Home 模式下已停用；不会写入全局 Worker Agent"
+            >
+              <p className="settings-hint">
+                为避免站点模型泄漏到直接 Codex 会话，当前版本不提供 Codex Worker 子代理模型覆盖。
+              </p>
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={advancedMapping.enabled}
-                  onChange={(e) => updateAdvancedMapping({ enabled: e.target.checked })}
-                  disabled={disabled}
+                  checked={false}
+                  readOnly
+                  disabled
                 />
-                启用子代理模型映射
+                启用子代理模型映射（已停用）
               </label>
               <label>
                 子代理模型
                 <input
                   value={advancedMapping.codex?.subagentTarget ?? ""}
-                  onChange={(e) => updateAdvancedMapping({ enabled: true, codex: { subagentTarget: e.target.value } })}
                   placeholder={draft.selectedModelId || "例如 gpt-5.6-terra"}
-                  disabled={disabled || !advancedMapping.enabled}
+                  readOnly
+                  disabled
                 />
               </label>
             </GlassCard>

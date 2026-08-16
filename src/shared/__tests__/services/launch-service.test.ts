@@ -78,7 +78,7 @@ describe("LaunchService", () => {
     expect(plan.permissionSummary).toBeUndefined();
   });
 
-  it("should launch Codex natively with the App Runtime home and resume arguments", () => {
+  it("should launch Codex natively with the canonical user home and resume arguments", () => {
     const profile: Profile = {
       provider: "codex",
       name: "Local Codex",
@@ -89,6 +89,7 @@ describe("LaunchService", () => {
     const launchService = new LaunchService(service, {
       getModelMappingsState: () => makeMappings(),
       codexProfilesRoot: "C:/tmp/codex-profiles",
+      codexHome: "C:/Users/test/.codex",
     });
 
     const plan = launchService.buildExecutionPlan({
@@ -116,11 +117,11 @@ describe("LaunchService", () => {
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
     ]);
-    expect(plan.env.CODEX_HOME).toBe("C:/tmp/codex-runtime/home");
+    expect(plan.env.CODEX_HOME).toBe("C:/Users/test/.codex");
     expect(plan.requiredEnvKeys).toEqual(["CODEX_HOME"]);
     expect(plan.codexConfig).toBeUndefined();
     expect(plan.permissionSummary).toBeUndefined();
-    expect(plan.capabilitySummary).toBe("官方 CLI · App Runtime");
+    expect(plan.capabilitySummary).toBe("官方 CLI · 用户 Codex Home");
   });
 
   it("should append the forced hooks override only for bridge-requested Codex paths", () => {
@@ -141,6 +142,7 @@ describe("LaunchService", () => {
     const launchService = new LaunchService(service, {
       getModelMappingsState: () => makeMappings(),
       codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+      codexHome: "C:/Users/test/.codex",
     });
     const build = (
       profile: Profile,
@@ -804,6 +806,7 @@ describe("LaunchService", () => {
     const launchService = new LaunchService(service, {
       getModelMappingsState: () => makeMappings(),
       codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+      codexHome: "C:/Users/test/.codex",
     });
 
     const preview = launchService.buildPreview(profile, makeRuntime({ command_base: "cc" }));
@@ -823,7 +826,7 @@ describe("LaunchService", () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: "CODEX_HOME",
-          displayValue: "C:/workspace/app-data/codex-runtime/home",
+          displayValue: "C:/Users/test/.codex",
         }),
         expect.objectContaining({
           name: "CODEX_SITE_API_KEY_A632B8AC583C81DE",
@@ -844,7 +847,8 @@ describe("LaunchService", () => {
     expect(plan.codexConfig?.content).not.toContain("[profiles.");
     expect(plan.codexConfig?.content).not.toContain("trust_level");
     expect(plan.codexConfig?.profileName).toBe("site-a632b8ac583c81de");
-    expect(plan.env.CODEX_HOME).toBe("C:/workspace/app-data/codex-runtime/home");
+    expect(plan.codexConfig?.configFilePath).toBe("C:/Users/test/.codex/site-a632b8ac583c81de.config.toml");
+    expect(plan.env.CODEX_HOME).toBe("C:/Users/test/.codex");
     expect(plan.env.CODEX_SITE_API_KEY_A632B8AC583C81DE).toBe("sk-glm");
   });
 
@@ -872,6 +876,7 @@ describe("LaunchService", () => {
     const launchService = new LaunchService(service, {
       getModelMappingsState: () => makeMappings(),
       codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+      codexHome: "C:/Users/test/.codex",
     });
 
     const plan = launchService.buildExecutionPlan({
@@ -946,6 +951,7 @@ describe("LaunchService", () => {
     const launchService = new LaunchService(service, {
       getModelMappingsState: () => makeMappings(),
       codexProfilesRoot: "C:/workspace/app-data/codex-profiles",
+      codexHome: "C:/Users/test/.codex",
     });
     const apiKeyEnv = "CODEX_SITE_API_KEY_A632B8AC583C81DE";
 
@@ -966,11 +972,11 @@ describe("LaunchService", () => {
     expect(plan.valid).toBe(true);
     expect(plan.env.PROFILE_ONLY).toBe("profile");
     expect(plan.env.SHARED_ENV).toBe("profile-value");
-    expect(plan.env.CODEX_HOME).toBe("C:/workspace/app-data/codex-runtime/home");
+    expect(plan.env.CODEX_HOME).toBe("C:/Users/test/.codex");
     expect(plan.env[apiKeyEnv]).toBe("sk-glm");
   });
 
-  it("should generate a Codex worker subagent mapping without overriding the main command model", () => {
+  it("should not generate a global Codex worker mapping from a site model", () => {
     const profile: Profile = {
       provider: "codex",
       name: "Kimi",
@@ -1002,8 +1008,7 @@ describe("LaunchService", () => {
       `codex --profile site-39b645351a70122a -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
     expect(plan.commandArgs).not.toContain("--model");
-    expect(plan.codexConfig?.workerAgentContent).toContain('name = "worker"');
-    expect(plan.codexConfig?.workerAgentContent).toContain('model = "gpt-5.5"');
+    expect(plan.codexConfig).not.toHaveProperty("workerAgentContent");
   });
 
   it("should pass structured Codex reasoning effort as a config override", () => {
@@ -1461,7 +1466,7 @@ describe("LaunchService", () => {
     const launchService = new LaunchService(service, {
       getModelMappingsState: makeMappings,
       codexProfilesRoot: "C:/profiles",
-      codexRuntimeHome: "C:/runtime/codex",
+      codexHome: "C:/Users/test/.codex",
     });
 
     const plan = launchService.buildExecutionPlan({

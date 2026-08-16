@@ -72,8 +72,9 @@ export function ParameterSettingsPanel({
             }
             disabled={disabled}
           />
-          启动时继承全局 MCP 和 Skills
+          Claude 启动时继承全局 MCP 和 Skills
         </label>
+        <p className="settings-hint">Codex 始终直接使用用户 Codex Home 中的 MCP、Plugins 和 Skills。</p>
         <label>
           余额检测超时 (毫秒)
           <input

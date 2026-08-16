@@ -2,7 +2,6 @@
 
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { APP_NAME } from "../branding.js";
 import type { CommandPreview, LaunchRequest, PreviewEnvVar } from "../launcher/types.js";
 import {
   DEFAULT_CLAUDE_COMMAND,
@@ -38,19 +37,18 @@ import {
   buildCodexSiteProviderId,
 } from "./model-mapping-config-service.js";
 import type { AutoContinueIntervalMode, CodexTerminalMode } from "../parameter/types.js";
+import { resolveCanonicalCodexHome } from "./codex-home.js";
 
 export interface CodexConfigWritePlan {
   profilePath: string;
   configFilePath: string;
   profileName: string;
   content: string;
-  rulesContent: string;
   baseUrl: string;
   providerId: string;
   providerName: string;
   apiKeyEnv: string;
   targetModel: string;
-  workerAgentContent?: string;
 }
 
 export interface ClaudeSettingsWritePlan {
@@ -96,7 +94,7 @@ export interface CodexAutoContinuePlan {
 export interface LaunchServiceOptions {
   getModelMappingsState: () => ModelMappingsState;
   codexProfilesRoot: string;
-  codexRuntimeHome?: string;
+  codexHome?: string;
 }
 
 interface ProviderLaunchArtifacts {
@@ -293,7 +291,6 @@ export class LaunchService {
             normalizedSessionId,
             selectedModelId,
             permissions,
-            capabilityOverlay?.codex,
             disableCodexHooks,
           );
     }
@@ -322,7 +319,7 @@ export class LaunchService {
       codexAutoContinue: profile.provider === PROVIDER_CLAUDE ? undefined : this.buildCodexAutoContinuePlan(),
       permissionSummary: artifacts.permissionSummary,
       capabilitySummary: isNativeStartup
-        ? (profile.provider === PROVIDER_CODEX ? "官方 CLI · App Runtime" : "原生 CLI 配置")
+        ? (profile.provider === PROVIDER_CODEX ? "官方 CLI · 用户 Codex Home" : "原生 CLI 配置")
         : this.buildCapabilitySummary(capabilityOverlay),
       terminalSummary: this.buildTerminalSummary(profile.provider, terminalMode),
     };
@@ -385,7 +382,7 @@ export class LaunchService {
       commandArgs: buildCodexArgs(options),
       command: buildCodexCommand(options),
       env: {
-        CODEX_HOME: this.toDisplayPath(this.getCodexRuntimeHome()),
+        CODEX_HOME: this.toDisplayPath(this.getCodexHome()),
       },
       requiredEnvKeys: ["CODEX_HOME"],
     };
@@ -484,21 +481,17 @@ export class LaunchService {
     sessionId: string,
     selectedModelId: string,
     permissions: ProfilePermissions,
-    overlay?: LaunchCapabilityOverlay["codex"],
     disableCodexHooks = false,
   ): ProviderLaunchArtifacts {
-    const subagentTarget = profile.advancedModelMapping?.enabled
-      ? profile.advancedModelMapping.codex?.subagentTarget?.trim() ?? ""
-      : "";
     const reasoningEffort = normalizeCodexReasoningEffort(profile.advancedModelMapping?.codex?.reasoningEffort);
     const profileKey = itemKey(profile);
     const siteProfileName = buildCodexSiteProfileName(profileKey);
     const apiKeyEnv = buildCodexSiteApiKeyEnv(profileKey);
     const providerId = buildCodexSiteProviderId(profileKey);
     const providerName = `${profile.name} Site`;
-    const codexRuntimeHome = this.getCodexRuntimeHome();
-    const profilePath = this.toDisplayPath(codexRuntimeHome);
-    const configFilePath = this.toDisplayPath(this.getCodexConfigFilePath(codexRuntimeHome));
+    const codexHome = this.getCodexHome();
+    const profilePath = this.toDisplayPath(codexHome);
+    const configFilePath = this.toDisplayPath(this.getCodexConfigFilePath(codexHome, siteProfileName));
     const extraArgs = [
       this.getCombinedExtraArgs(runtime),
       `--profile ${JSON.stringify(siteProfileName)}`,
@@ -544,17 +537,12 @@ export class LaunchService {
           wireApi,
           skipGitRepoCheck: codexSettings.skip_git_repo_check,
           permissions,
-          globalMcpToml: overlay?.globalMcpToml ?? "",
         }),
-        rulesContent: this.buildCodexRulesContent(permissions),
         baseUrl: profile.url,
         providerId,
         providerName,
         apiKeyEnv,
         targetModel: selectedModelId,
-        workerAgentContent: subagentTarget
-          ? this.buildCodexWorkerAgentContent(subagentTarget)
-          : undefined,
       },
       permissionSummary: summarizePermissions(profile.provider, permissions),
     };
@@ -784,15 +772,15 @@ export class LaunchService {
     return targetPath.replace(/\\/g, "/");
   }
 
-  private getCodexRuntimeHome(): string {
-    if (this.options.codexRuntimeHome?.trim()) {
-      return this.options.codexRuntimeHome;
+  private getCodexHome(): string {
+    if (this.options.codexHome?.trim()) {
+      return this.options.codexHome;
     }
-    return path.join(path.dirname(this.options.codexProfilesRoot), "codex-runtime", "home");
+    return resolveCanonicalCodexHome();
   }
 
-  private getCodexConfigFilePath(codexRuntimeHome: string): string {
-    return path.join(codexRuntimeHome, "config.toml");
+  private getCodexConfigFilePath(codexHome: string, profileName: string): string {
+    return path.join(codexHome, `${profileName}.config.toml`);
   }
 
   private buildCodexConfigContent(options: {
@@ -805,7 +793,6 @@ export class LaunchService {
     wireApi: string;
     skipGitRepoCheck: boolean;
     permissions: ProfilePermissions;
-    globalMcpToml?: string;
   }): string {
     const targetModel = options.targetModel.trim();
     const codexPermissions = toCodexPermissionConfig(options.permissions);
@@ -846,7 +833,6 @@ export class LaunchService {
           `web_search = ${JSON.stringify(webSearchMode)}`,
           "",
         ];
-    const globalMcpToml = options.globalMcpToml?.trim() ? `${options.globalMcpToml.trim()}\n` : "";
     return [
       ...topLevelLines,
       ...workspaceLines,
@@ -859,42 +845,6 @@ export class LaunchService {
       "",
       "[windows]",
       'sandbox = "elevated"',
-      "",
-      globalMcpToml,
-    ].join("\n");
-  }
-
-  private buildCodexRulesContent(permissions: ProfilePermissions): string {
-    const rules: string[] = [];
-    if (permissions.common.denyGitPush) {
-      rules.push(renderCodexPrefixRule(
-        ["git", "push"],
-        "git push is disabled by profile permissions.",
-      ));
-    }
-    if (permissions.common.denyDangerousDelete) {
-      for (const pattern of CODEX_DANGEROUS_DELETE_PATTERNS) {
-        rules.push(renderCodexPrefixRule(
-          pattern,
-          "Dangerous deletion is disabled by profile permissions.",
-        ));
-      }
-    }
-    return [
-      `# Managed by ${APP_NAME}. Do not edit by hand.`,
-      "# This file is regenerated from the selected profile's permission switches.",
-      "",
-      ...rules,
-    ].join("\n").trimEnd() + "\n";
-  }
-
-  private buildCodexWorkerAgentContent(targetModel: string): string {
-    return [
-      `# Managed by ${APP_NAME}. Do not edit by hand.`,
-      'name = "worker"',
-      'description = "Execution-focused subagent for implementation and fixes."',
-      `model = ${JSON.stringify(targetModel.trim())}`,
-      'developer_instructions = "Own the assigned task end to end. Make focused changes, validate them, and report concrete results to the parent agent."',
       "",
     ].join("\n");
   }
@@ -991,21 +941,6 @@ const CLAUDE_NETWORK_DENY_RULES = [
   "PowerShell(iwr *)",
 ];
 
-const CODEX_DANGEROUS_DELETE_PATTERNS = [
-  ["rm", "-rf"],
-  ["rm", "-fr"],
-  ["rm", "-r"],
-  ["rm", "--recursive"],
-  ["del", "/s"],
-  ["erase", "/s"],
-  ["rmdir", "/s"],
-  ["rd", "/s"],
-  ["Remove-Item", "-Recurse"],
-  ["Remove-Item", "-r"],
-  ["remove-item", "-Recurse"],
-  ["remove-item", "-r"],
-];
-
 function buildClaudeManagedSettings(
   permissions: ProfilePermissions,
 ): ClaudeManagedSettings | undefined {
@@ -1043,16 +978,6 @@ function buildClaudeManagedSettings(
     };
   }
   return settings;
-}
-
-function renderCodexPrefixRule(pattern: string[], justification: string): string {
-  return [
-    "prefix_rule(",
-    `    pattern = [${pattern.map((item) => JSON.stringify(item)).join(", ")}],`,
-    '    decision = "forbidden",',
-    `    justification = ${JSON.stringify(justification)},`,
-    ")",
-  ].join("\n");
 }
 
 function hashProfileKey(profileKey: string): string {
