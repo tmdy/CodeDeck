@@ -92,3 +92,24 @@ Trust the selected Codex cwd per launch, preserve hooks disablement, normalize W
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: 修复站点登录态浏览器分区
+
+**Date**: 2026-08-16
+**Task**: 修复站点登录态浏览器分区
+**Branch**: `main`
+
+### Summary
+
+修复打开 Base URL 与浏览器登录检测分区不一致导致页面已登录但识别 403 的问题；新增结构化 ProfileBrowserTarget、pending 分区生命周期、主进程分区路由、默认最低浏览器槽位选择及回归测试。定向 39 项与 typecheck 通过；全量测试唯一失败属于并行 ProfileEditForm 映射断言。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bd69a2a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
