@@ -66,6 +66,7 @@ import {
 import { APP_NAME } from "./shared/branding.js";
 import type { EncryptionSetupStatus } from "./shared/encryption-status.js";
 import type { BrowserAccountStatusSnapshot } from "./shared/electron/browser-account-session-manager.js";
+import type { ProfileBrowserTarget } from "./shared/electron/open-url.js";
 import {
   shouldReconcileAfterHidden,
   type AppReactivationEvent,
@@ -402,6 +403,14 @@ function normalizeBalanceSessionDraftState(
     token_expires_at: draft.token_expires_at,
     user_id: draft.user_id ?? "",
   };
+}
+
+function parseBrowserSlotSelection(value: string): number | undefined {
+  if (!value.startsWith("slot:")) {
+    return undefined;
+  }
+  const slot = Number(value.slice("slot:".length));
+  return Number.isSafeInteger(slot) && slot > 0 ? slot : undefined;
 }
 
 function withDefaultWorkingDirectory(
@@ -1997,9 +2006,10 @@ function App() {
     setIsBusy(true);
     setErrorMessage(null);
     try {
-      const requestedBrowserSlot = draftBrowserSlotSelection.startsWith("slot:")
-        ? Number(draftBrowserSlotSelection.slice("slot:".length))
-        : undefined;
+      const requestedBrowserSlot = parseBrowserSlotSelection(draftBrowserSlotSelection);
+      if (draftBrowserSlotSelection !== "new" && requestedBrowserSlot === undefined) {
+        throw new Error("浏览器账号槽位无效");
+      }
       const saved = draftBalanceSessionSelection !== "auto"
         && draftBalanceSessionSelection !== "new"
         ? await window.profileManager!.reloginBrowserAccount!(draftUrl, draftBalanceSessionSelection)
@@ -3248,7 +3258,24 @@ function App() {
       const selectedBrowserAccount = draftSiteBalanceSessions.find((session) => (
         session.id === draftBalanceSessionSelection && session.auth_kind === "browser_session"
       ));
-      await window.profileManager.openBaseUrl(draftUrl, selectedBrowserAccount?.id);
+      let target: ProfileBrowserTarget = { kind: "default" };
+      if (selectedBrowserAccount) {
+        target = { kind: "saved_session", session_id: selectedBrowserAccount.id };
+      } else if (
+        draftBalanceSessionSelection === "new"
+        && draftBalanceSession.auth_kind === "browser_session"
+      ) {
+        if (draftBrowserSlotSelection === "new") {
+          target = { kind: "pending_browser_account" };
+        } else {
+          const slot = parseBrowserSlotSelection(draftBrowserSlotSelection);
+          if (slot === undefined) {
+            throw new Error("浏览器账号槽位无效");
+          }
+          target = { kind: "browser_slot", slot };
+        }
+      }
+      await window.profileManager.openBaseUrl(draftUrl, target);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "打开 Base URL 失败");
     }
@@ -3580,7 +3607,14 @@ function App() {
   const handleBalanceSessionSelectionChange = useCallback((value: string) => {
     setDraftBalanceSessionSelection(value);
     if (value === "auto" || value === "new") {
-      setDraftBrowserSlotSelection("new");
+      const lowestExistingBrowserSlot = value === "new"
+        ? browserIdentitySlots.reduce<number | undefined>((lowest, identity) => (
+          lowest === undefined || identity.slot < lowest ? identity.slot : lowest
+        ), undefined)
+        : undefined;
+      setDraftBrowserSlotSelection(lowestExistingBrowserSlot === undefined
+        ? "new"
+        : `slot:${lowestExistingBrowserSlot}`);
       setDraftBalanceSession(emptyBalanceSessionDraft(
         value === "new" ? "browser_session" : "access_token",
       ));
@@ -3590,7 +3624,7 @@ function App() {
     setDraftBalanceSession(matched
       ? normalizeBalanceSessionDraftState(matched)
       : emptyBalanceSessionDraft());
-  }, [draftSiteBalanceSessions]);
+  }, [browserIdentitySlots, draftSiteBalanceSessions]);
   const handleBalanceSessionDraftChange = useCallback((field: "label" | "access_token" | "auth_kind" | "refresh_token" | "user_id", value: string) => {
     setDraftBalanceSession((current) => ({
       ...current,

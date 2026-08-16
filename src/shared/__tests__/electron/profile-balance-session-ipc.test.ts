@@ -33,8 +33,11 @@ describe("profile balance session IPC", () => {
       readFile(path.join(process.cwd(), "src", "App.tsx"), "utf8"),
     ]).then((sources) => sources.map(normalizeNewlines));
 
-    expect(mainSource).toContain("await openProfileSiteBrowser(baseUrl, balanceSessionId);");
-    expect(mainSource).toContain("getBrowserAccountSessionManager().getPartitionName(selectedAccount)");
+    expect(mainSource).toContain("await openProfileSiteBrowser(baseUrl, target);");
+    expect(mainSource).toContain("resolveProfileBrowserPartitionRequest(rawBaseUrl, targetInput");
+    expect(mainSource).toContain(".prepare(normalizedBaseUrl)");
+    expect(mainSource).toContain("getBrowserSlotPartition: browserPartitionName");
+    expect(mainSource).toContain("getBrowserAccountSessionManager().getPartitionName(account)");
     expect(mainSource).toContain("DEFAULT_PROFILE_BROWSER_PARTITION");
     expect(mainSource).toContain("configureInteractiveWindow: installBrowserNavigationMenu");
     expect(mainSource).toContain("runBrowserNavigationAction(browserWindow.webContents, action)");
@@ -42,14 +45,14 @@ describe("profile balance session IPC", () => {
     expect(mainSource).toContain('{ label: "前进", accelerator: "Alt+Right"');
     expect(mainSource).not.toContain("shell.openExternal");
     expect(preloadSource).toContain(
-      'openBaseUrl: (baseUrl: string, balanceSessionId?: string): Promise<void> =>\n    ipcRenderer.invoke("profile:open-base-url", baseUrl, balanceSessionId)',
+      'openBaseUrl: (baseUrl: string, target: ProfileBrowserTarget): Promise<void> =>\n    ipcRenderer.invoke("profile:open-base-url", baseUrl, target)',
     );
     expect(envSource).toContain(
-      "openBaseUrl: (baseUrl: string, balanceSessionId?: string) => Promise<void>;",
+      "openBaseUrl: (baseUrl: string, target: ProfileBrowserTarget) => Promise<void>;",
     );
     expect(appSource).toContain("session.auth_kind === \"browser_session\"");
-    expect(appSource).toContain(
-      "window.profileManager.openBaseUrl(draftUrl, selectedBrowserAccount?.id)",
-    );
+    expect(appSource).toContain('{ kind: "pending_browser_account" }');
+    expect(appSource).toContain('{ kind: "browser_slot", slot }');
+    expect(appSource).toContain("window.profileManager.openBaseUrl(draftUrl, target)");
   });
 });

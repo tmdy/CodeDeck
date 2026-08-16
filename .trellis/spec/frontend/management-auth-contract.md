@@ -33,6 +33,12 @@ interface BrowserSiteBalanceSession {
   user_id: string;
 }
 
+type ProfileBrowserTarget =
+  | { kind: "default" }
+  | { kind: "saved_session"; session_id: string }
+  | { kind: "browser_slot"; slot: number }
+  | { kind: "pending_browser_account" };
+
 class BrowserAccountSessionManager {
   logout(accountKey: string, account: BrowserSiteBalanceSession): Promise<void>;
   deleteAccount(
@@ -51,6 +57,7 @@ class ProfileService {
 }
 
 class PendingBrowserAccountReferenceRegistry {
+  prepare(baseUrl: string): PendingBrowserAccountReference;
   run<T>(
     baseUrl: string,
     operation: (pending: PendingBrowserAccountReference) => Promise<T>,
@@ -89,7 +96,8 @@ class PendingBrowserAccountReferenceRegistry {
 - CodeDeck browser windows expose `back`, `forward`, `reload`, `stop`, and `close` navigation actions through the visible window menu, backed by Electron `webContents.navigationHistory`; browser navigation controls never use the system default browser.
 - A verified browser login persists the sanitized account first. Existing Profiles bind through `ProfileService.bindProfileSiteBalanceSession`, which may change only `balance_session_id`; unsaved new Profiles keep the saved session selected only in renderer draft state.
 - Balance testing must reject an empty `selection === "new"` draft before generic empty-new-to-auto normalization. Browser mode prompts for login; PAT mode prompts for credentials/save. A complete PAT draft may continue through the existing save-then-test flow, while explicit `selection === "auto"` remains unchanged.
-- Profile Base URL opening uses a sandboxed CodeDeck BrowserWindow. A selected `browser_session` supplies its opaque persistent partition; otherwise use the dedicated application browser partition. This action never calls `shell.openExternal`.
+- Profile Base URL opening uses a sandboxed CodeDeck BrowserWindow and a strict `ProfileBrowserTarget`. Saved sessions reuse their verified account partition, existing slots reuse their global opaque partition, and a new browser identity prepares/reuses a bounded pending partition before login. Auto/PAT browsing uses the dedicated application browser partition. Malformed targets, missing sessions/slots, and saved-session origin mismatches fail closed; this action never calls `shell.openExternal`.
+- Entering a new browser-session draft defaults to the lowest numbered existing identity slot. It falls back to a new identity only when no slot exists, and later data refreshes must not overwrite an explicit user selection.
 - `GET /api/user/checkin?month=YYYY-MM` may return `data.checkin_nonce`; the following POST must send `{ "checkin_nonce": "..." }`.
 
 ### 4. Validation & Error Matrix
@@ -112,12 +120,14 @@ class PendingBrowserAccountReferenceRegistry {
 - `manual_required` remains CAPTCHA-specific and must not be used for expired login state.
 - API redirect -> expose the redirect response to authentication handling; never auto-follow it across origins.
 - Canceled/failed new-account login -> retain the tentative reference only for the bounded retry lifetime; expiry/shutdown clears storage/cache/Cookies and drops runtime state.
+- Malformed Profile browser target, missing slot/session, or saved-session origin mismatch -> reject the open request; never fall back to the default partition.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: Profile A and Profile B both bind their first backend account to slot 1 and reuse one LinuxDo login; deleting either binding preserves the other, while deleting the final binding clears the partition and frees slot 1.
+- Good: a new browser-session draft opens the site in its pending/selected-slot partition, and the later login probe observes that exact same Chromium storage.
 - Base: a PAT account continues using explicit Bearer transport and never touches browser-session state.
-- Bad: deleting one shared binding clears the whole slot, or deleting slot 1 compacts slot 2 into slot 1.
+- Bad: opening a new browser-session draft in the generic Profile partition, silently falling back after an invalid target, deleting one shared binding's whole slot, or compacting slot 2 after deleting slot 1.
 
 ### Forbidden Patterns
 
@@ -154,7 +164,8 @@ class PendingBrowserAccountReferenceRegistry {
 - Balance and check-in tests assert browser request-context headers cannot be overridden, do not trigger user-ID alias retries, and preserve manual PAT/Cookie compatibility probing, including learned and scheduled check-in paths.
 - Scheduler/state tests cover explicit `login_required` and no-window/no-retry behavior.
 - Profile service/IPC tests prove binding validates normalized URL/session existence and changes only `balance_session_id` plus related balance caches.
-- Renderer tests prove existing Profiles bind without saving unrelated draft fields, unsaved new Profiles remain unsaved, browser reference fields survive hydration, empty new browser/PAT drafts never route to API auto during balance testing, and complete PAT drafts save before testing.
+- Profile browser routing tests cover strict target parsing, default/saved/slot/pending partitions, missing slots, saved-session origin mismatch, normalized pending keys, and no silent default fallback.
+- Renderer tests prove existing Profiles bind without saving unrelated draft fields, unsaved new Profiles remain unsaved, browser reference fields survive hydration, empty new browser/PAT drafts never route to API auto during balance testing, complete PAT drafts save before testing, and new browser drafts default to the lowest existing slot without overwriting later manual choices.
 
 ### 7. Wrong vs Correct
 
@@ -199,6 +210,9 @@ if (isEmptyNewBalanceSessionDraft(selection, draft)) return showActionableError(
 // Wrong: loses the browser account partition and opens outside CodeDeck.
 await shell.openExternal(baseUrl);
 
-// Correct: reuse the selected browser account partition in a sandboxed window.
-await openProfileSiteBrowser(baseUrl, selectedBrowserSessionId);
+// Correct: describe the intended partition explicitly and validate it in main.
+await openProfileSiteBrowser(baseUrl, {
+  kind: "saved_session",
+  session_id: selectedBrowserSessionId,
+});
 ```

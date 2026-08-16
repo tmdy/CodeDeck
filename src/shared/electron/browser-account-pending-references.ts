@@ -59,6 +59,17 @@ export class PendingBrowserAccountReferenceRegistry {
     return attempt;
   }
 
+  /**
+   * Reserve a tentative account partition for an interactive browser flow.
+   * The reservation starts its bounded retry lifetime immediately; a later
+   * `run` call clears that timer while the login probe is in flight.
+   */
+  prepare(baseUrl: string): PendingBrowserAccountReference {
+    const entry = this.acquire(baseUrl);
+    this.retainTemporarily(entry);
+    return entry;
+  }
+
   async shutdown(): Promise<void> {
     const entries = [...this.entries.values()];
     this.entries.clear();

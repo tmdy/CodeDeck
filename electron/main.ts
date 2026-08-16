@@ -65,6 +65,7 @@ import {
   BrowserLoginRequiredError,
   type BrowserAccountDiagnosticEvent,
   type BrowserAccountStatusSnapshot,
+  browserPartitionName,
 } from "../src/shared/electron/browser-account-session-manager.js";
 import { PendingBrowserAccountReferenceRegistry } from "../src/shared/electron/browser-account-pending-references.js";
 import {
@@ -77,6 +78,7 @@ import {
   type SiteBalanceSessionsByBaseUrl,
   type BrowserIdentitySlot,
   type EncryptedProfileConfig,
+  normalizeBrowserOrigin,
   normalizeEncryptedProfileConfig,
   normalizeBrowserSlot,
 } from "../src/shared/balance/site-balance-sessions.js";
@@ -104,6 +106,7 @@ import {
   DEFAULT_PROFILE_BROWSER_PARTITION,
   resolveBaseUrlBrowserTarget,
 } from "../src/shared/electron/open-url.js";
+import { resolveProfileBrowserPartitionRequest } from "../src/shared/electron/profile-browser-partition.js";
 import {
   runBrowserNavigationAction,
   type BrowserNavigationAction,
@@ -1979,14 +1982,31 @@ function findCheckinAccount(rawBaseUrl: string, sessionId: string): SiteBalanceS
   return account;
 }
 
-async function openProfileSiteBrowser(rawBaseUrl: string, balanceSessionId?: string): Promise<void> {
+function resolveProfileBrowserPartition(
+  rawBaseUrl: string,
+  targetInput: unknown,
+): { partition: string } {
+  return resolveProfileBrowserPartitionRequest(rawBaseUrl, targetInput, {
+    defaultPartition: DEFAULT_PROFILE_BROWSER_PARTITION,
+    normalizeBaseUrl: normalizeBalanceBaseUrl,
+    normalizeBrowserOrigin,
+    findSavedSession: findCheckinAccount,
+    getSavedSessionPartition: (account) => (
+      getBrowserAccountSessionManager().getPartitionName(account)
+    ),
+    findBrowserSlot: (slot) => getProfileService().getBrowserIdentitySlots().find(
+      (candidate) => candidate.slot === slot,
+    ),
+    getBrowserSlotPartition: browserPartitionName,
+    preparePendingPartition: (normalizedBaseUrl) => (
+      getPendingBrowserAccountReferences().prepare(normalizedBaseUrl).reference.partition
+    ),
+  });
+}
+
+async function openProfileSiteBrowser(rawBaseUrl: string, targetInput: unknown): Promise<void> {
   const targetUrl = resolveBaseUrlBrowserTarget(rawBaseUrl);
-  const selectedAccount = balanceSessionId
-    ? findCheckinAccount(rawBaseUrl, balanceSessionId)
-    : null;
-  const partition = selectedAccount?.auth_kind === "browser_session"
-    ? getBrowserAccountSessionManager().getPartitionName(selectedAccount)
-    : DEFAULT_PROFILE_BROWSER_PARTITION;
+  const { partition } = resolveProfileBrowserPartition(rawBaseUrl, targetInput);
   const browserSession = electronSession.fromPartition(partition);
   browserSession.setPermissionCheckHandler(() => false);
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -3864,9 +3884,9 @@ function registerAllIpcHandlers(): void {
   handleIpc("profile:open-base-url", async (
     _event,
     baseUrl: string,
-    balanceSessionId?: string,
+    target: unknown,
   ) => {
-    await openProfileSiteBrowser(baseUrl, balanceSessionId);
+    await openProfileSiteBrowser(baseUrl, target);
   });
 
   // Launcher

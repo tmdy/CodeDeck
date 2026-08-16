@@ -77,6 +77,9 @@ function createProfileManagerFixture(
   initialSiteBalanceSessionsByBaseUrl: SiteBalanceSessionsByBaseUrl = {},
   browserIdentitySlots: BrowserIdentitySlot[] = [],
 ) {
+  let appReactivatedCallback: Parameters<
+    NonNullable<MockProfileManager["onAppReactivated"]>
+  >[0] | null = null;
   const runtime: RuntimeSettings = {
     cwd: "",
     command_base: "claude",
@@ -232,6 +235,12 @@ function createProfileManagerFixture(
     updateParameterSettings: vi.fn(async (patch) => ({ ...state.parameter_settings, ...patch })),
     promptUnsavedProfileAction: vi.fn(async () => "save" as const),
     promptLaunchWithUnsavedChanges: vi.fn(async () => "save_and_launch" as const),
+    onAppReactivated: vi.fn((callback) => {
+      appReactivatedCallback = callback;
+      return () => {
+        appReactivatedCallback = null;
+      };
+    }),
     onStateChanged: vi.fn(() => () => undefined),
     onBalanceProgress: vi.fn(() => () => undefined),
     onUnlockError: vi.fn(() => () => undefined),
@@ -243,6 +252,12 @@ function createProfileManagerFixture(
     bindProfileSiteBalanceSession,
     saveProfile,
     testBalance,
+    reactivate: (reason: "second_instance" | "tray" = "second_instance") => {
+      appReactivatedCallback?.({
+        reason,
+        reactivated_at: "2026-08-16T09:00:00.000Z",
+      });
+    },
   };
 }
 
@@ -336,6 +351,20 @@ describe("App balance session autosave", () => {
     return select as HTMLSelectElement;
   }
 
+  function findBrowserIdentitySelect(container: HTMLElement) {
+    const select = Array.from(container.querySelectorAll("select")).find((candidate) =>
+      candidate.parentElement?.textContent?.includes("浏览器身份"),
+    );
+    expect(select).toBeInstanceOf(HTMLSelectElement);
+    return select as HTMLSelectElement;
+  }
+
+  async function flushAsyncWork(times = 4) {
+    for (let index = 0; index < times; index += 1) {
+      await Promise.resolve();
+    }
+  }
+
   async function selectBalanceSessionOption(select: HTMLSelectElement, value: string) {
     await act(async () => {
       const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
@@ -369,7 +398,109 @@ describe("App balance session autosave", () => {
 
     expect(fixture.manager.openBaseUrl).toHaveBeenCalledWith(
       "https://new-api.example.com/v1",
-      "browser-account",
+      { kind: "saved_session", session_id: "browser-account" },
+    );
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("opens a new browser account in its pending identity partition", async () => {
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    expect(findBrowserIdentitySelect(container).value).toBe("new");
+    await act(async () => {
+      clickExactButtonByText(container, "打开");
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.openBaseUrl).toHaveBeenCalledWith(
+      "https://new-api.example.com/v1",
+      { kind: "pending_browser_account" },
+    );
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("opens a reused browser identity slot in the same partition", async () => {
+    const fixture = createProfileManagerFixture(undefined, {}, [
+      { slot: 3, browser_session_id: "slot-three" },
+      { slot: 1, browser_session_id: "slot-one" },
+    ]);
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    const identitySelect = findBrowserIdentitySelect(container);
+    expect(identitySelect.value).toBe("slot:1");
+    await act(async () => {
+      clickExactButtonByText(container, "打开");
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.openBaseUrl).toHaveBeenCalledWith(
+      "https://new-api.example.com/v1",
+      { kind: "browser_slot", slot: 1 },
+    );
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("preserves an explicit browser identity choice after profile data refresh", async () => {
+    const browserIdentitySlots = [
+      { slot: 1, browser_session_id: "slot-one" },
+      { slot: 3, browser_session_id: "slot-three" },
+    ];
+    const fixture = createProfileManagerFixture(undefined, {}, browserIdentitySlots);
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    const identitySelect = findBrowserIdentitySelect(container);
+    expect(identitySelect.value).toBe("slot:1");
+    await selectBalanceSessionOption(identitySelect, "slot:3");
+
+    browserIdentitySlots.push({ slot: 2, browser_session_id: "slot-two" });
+    await act(async () => {
+      fixture.reactivate("tray");
+      await flushAsyncWork(8);
+    });
+
+    expect(fixture.manager.listProfiles).toHaveBeenCalled();
+    expect(findBrowserIdentitySelect(container).value).toBe("slot:3");
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("keeps automatic and PAT browsing on the default partition", async () => {
+    const fixture = createProfileManagerFixture();
+    const { container, root } = await renderAppWithFixture(fixture);
+
+    await act(async () => {
+      clickExactButtonByText(container, "打开");
+      await Promise.resolve();
+    });
+    await selectBalanceSessionOption(findBalanceSessionSelect(container), "new");
+    await act(async () => {
+      clickButtonByText(container, "改用 PAT 兼容模式");
+    });
+    await act(async () => {
+      clickExactButtonByText(container, "打开");
+      await Promise.resolve();
+    });
+
+    expect(fixture.manager.openBaseUrl).toHaveBeenNthCalledWith(
+      1,
+      "https://new-api.example.com/v1",
+      { kind: "default" },
+    );
+    expect(fixture.manager.openBaseUrl).toHaveBeenNthCalledWith(
+      2,
+      "https://new-api.example.com/v1",
+      { kind: "default" },
     );
 
     await act(async () => root.unmount());

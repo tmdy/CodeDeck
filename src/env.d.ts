@@ -47,6 +47,7 @@ import type {
 import type { AppReactivationEvent } from "./shared/app-reactivation.js";
 import type { ProfileOrganization } from "./shared/profile/organization.js";
 import type { BrowserAccountStatusSnapshot } from "./shared/electron/browser-account-session-manager.js";
+import type { ProfileBrowserTarget } from "./shared/electron/open-url.js";
 
 declare global {
   interface CodeDeckStartupTheme {
@@ -157,7 +158,7 @@ declare global {
         enabled: boolean,
       ) => Promise<SiteBalanceSession>;
       pickWorkingDirectory: () => Promise<string | undefined>;
-      openBaseUrl: (baseUrl: string, balanceSessionId?: string) => Promise<void>;
+      openBaseUrl: (baseUrl: string, target: ProfileBrowserTarget) => Promise<void>;
 
       // Launcher
       previewForDraft: (

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveBaseUrlBrowserTarget } from "../../electron/open-url.js";
+import {
+  parseProfileBrowserTarget,
+  resolveBaseUrlBrowserTarget,
+} from "../../electron/open-url.js";
 
 describe("resolveBaseUrlBrowserTarget", () => {
   it("should resolve an API Base URL to the site root", () => {
@@ -16,5 +19,28 @@ describe("resolveBaseUrlBrowserTarget", () => {
     expect(() => resolveBaseUrlBrowserTarget("file:///C:/tmp/test.txt")).toThrow(
       "仅支持打开 http 或 https 地址",
     );
+  });
+});
+
+describe("parseProfileBrowserTarget", () => {
+  it("accepts each explicit browser target", () => {
+    expect(parseProfileBrowserTarget({ kind: "default" })).toEqual({ kind: "default" });
+    expect(parseProfileBrowserTarget({ kind: "saved_session", session_id: " session-1 " }))
+      .toEqual({ kind: "saved_session", session_id: "session-1" });
+    expect(parseProfileBrowserTarget({ kind: "browser_slot", slot: 3 }))
+      .toEqual({ kind: "browser_slot", slot: 3 });
+    expect(parseProfileBrowserTarget({ kind: "pending_browser_account" }))
+      .toEqual({ kind: "pending_browser_account" });
+  });
+
+  it("rejects malformed targets instead of changing partition intent", () => {
+    expect(parseProfileBrowserTarget(undefined)).toBeNull();
+    expect(parseProfileBrowserTarget(null)).toBeNull();
+    expect(parseProfileBrowserTarget({ kind: "saved_session", session_id: "" })).toBeNull();
+    expect(parseProfileBrowserTarget({ kind: "browser_slot", slot: 0 })).toBeNull();
+    expect(parseProfileBrowserTarget({ kind: "browser_slot", slot: 1, fallback: "default" }))
+      .toBeNull();
+    expect(parseProfileBrowserTarget({ kind: "default", slot: 1 })).toBeNull();
+    expect(parseProfileBrowserTarget({ kind: "unknown" })).toBeNull();
   });
 });

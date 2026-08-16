@@ -65,6 +65,38 @@ describe("pending browser account references", () => {
     expect(operation).toHaveBeenCalledOnce();
   });
 
+  it("prepares and reuses a tentative reference before login starts", async () => {
+    vi.useFakeTimers();
+    const { registry, discardReference } = createRegistry(1_000);
+
+    const first = registry.prepare("https://chy.example.com");
+    await vi.advanceTimersByTimeAsync(600);
+    const second = registry.prepare("https://chy.example.com");
+
+    expect(second).toBe(first);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(discardReference).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(discardReference).toHaveBeenCalledWith(
+      "https://chy.example.com::session-1",
+      "browser-1",
+    );
+  });
+
+  it("hands a prepared reference to the next login and consumes it on success", async () => {
+    const { registry, discardReference } = createRegistry();
+    const prepared = registry.prepare("https://chy.example.com");
+    let seen: PendingBrowserAccountReference | undefined;
+
+    await registry.run("https://chy.example.com", async (pending) => {
+      seen = pending;
+      return "saved";
+    });
+
+    expect(seen).toBe(prepared);
+    expect(discardReference).not.toHaveBeenCalled();
+  });
+
   it("allocates distinct references for different sites and after a successful save", async () => {
     const { registry } = createRegistry();
     const ids: string[] = [];
@@ -102,12 +134,14 @@ describe("pending browser account references", () => {
     vi.useFakeTimers();
     const { registry, discardReference } = createRegistry();
 
-    await expect(registry.run("https://chy.example.com", async () => {
-      throw new Error("canceled");
-    })).rejects.toThrow("canceled");
+    registry.prepare("https://chy.example.com");
     await registry.shutdown();
     await vi.runAllTimersAsync();
 
     expect(discardReference).toHaveBeenCalledOnce();
+    expect(discardReference).toHaveBeenCalledWith(
+      "https://chy.example.com::session-1",
+      "browser-1",
+    );
   });
 });

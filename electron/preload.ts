@@ -23,6 +23,7 @@ import {
   APP_REACTIVATED_CHANNEL,
   type AppReactivationEvent,
 } from "../src/shared/app-reactivation.js";
+import type { ProfileBrowserTarget } from "../src/shared/electron/open-url.js";
 
 function getStartupThemeArgumentValue(): string | undefined {
   const currentArg = process.argv.find((arg) => arg.startsWith(STARTUP_THEME_ARG_PREFIX));
@@ -181,8 +182,8 @@ const profileApi = {
   ),
   pickWorkingDirectory: (): Promise<string | undefined> =>
     ipcRenderer.invoke("profile:pick-working-directory"),
-  openBaseUrl: (baseUrl: string, balanceSessionId?: string): Promise<void> =>
-    ipcRenderer.invoke("profile:open-base-url", baseUrl, balanceSessionId),
+  openBaseUrl: (baseUrl: string, target: ProfileBrowserTarget): Promise<void> =>
+    ipcRenderer.invoke("profile:open-base-url", baseUrl, target),
 
   // Launcher
   previewForDraft: (
