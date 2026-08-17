@@ -134,3 +134,24 @@ Trust the selected Codex cwd per launch, preserve hooks disablement, normalize W
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: 修复浏览器验证码签到回调
+
+**Date**: 2026-08-17
+**Task**: 修复浏览器验证码签到回调
+**Branch**: `main`
+
+### Summary
+
+扩展人工签到验证轮询对当日签到历史记录的识别，恢复成功后的窗口关闭与状态回写；生成 Windows NSIS 安装包。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d6a33bf` | (see git log) |
+
+### Status
+
+[OK] **Completed**
