@@ -74,54 +74,56 @@ export function GlobalSettingsPanel({
 
   return (
     <>
-      <GlassCard title="全局设置">
-        <div className="theme-mode-field">
-          <span>外观模式</span>
-          <div className="segmented-control" role="group" aria-label="外观模式">
-            {([
-              ["system", "跟随系统"],
-              ["light", "日间"],
-              ["dark", "夜间"],
-            ] as const).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                className={themeMode === mode ? "active" : ""}
-                onClick={() => onChange({ theme_mode: mode as ThemeMode })}
-                disabled={disabled}
-              >
-                {label}
-              </button>
-            ))}
+      <GlassCard title="全局设置" className="global-settings-card">
+        <div className="settings-form-list">
+          <div className="settings-form-row theme-mode-field">
+            <span className="settings-form-label">外观模式</span>
+            <div className="segmented-control" role="group" aria-label="外观模式">
+              {([
+                ["system", "跟随系统"],
+                ["light", "日间"],
+                ["dark", "夜间"],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={themeMode === mode ? "active" : ""}
+                  onClick={() => onChange({ theme_mode: mode as ThemeMode })}
+                  disabled={disabled}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
+          <label className="settings-form-row">
+            <span className="settings-form-label">全局代理</span>
+            <input
+              value={settings.proxy ?? ""}
+              onChange={(e) => onChange({ proxy: e.target.value })}
+              placeholder="http://127.0.0.1:7890"
+              disabled={disabled}
+            />
+          </label>
+          <label className="settings-form-row settings-form-row-checkbox">
+            <input
+              type="checkbox"
+              checked={settings.hide_codex_subagent_sessions}
+              onChange={(event) => onChange({ hide_codex_subagent_sessions: event.target.checked })}
+              disabled={disabled}
+            />
+            <span>隐藏 Codex 子代理会话</span>
+          </label>
+          <label className="settings-form-row settings-form-row-checkbox">
+            <input
+              type="checkbox"
+              checked={settings.close_to_tray}
+              onChange={(event) => onChange({ close_to_tray: event.target.checked })}
+              disabled={disabled}
+            />
+            <span>关闭主窗口时最小化到托盘</span>
+          </label>
         </div>
-        <label>
-          全局代理
-          <input
-            value={settings.proxy ?? ""}
-            onChange={(e) => onChange({ proxy: e.target.value })}
-            placeholder="HTTP 代理（作用于所有配置，可选）"
-            disabled={disabled}
-          />
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={settings.hide_codex_subagent_sessions}
-            onChange={(event) => onChange({ hide_codex_subagent_sessions: event.target.checked })}
-            disabled={disabled}
-          />
-          隐藏 Codex 子代理会话
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={settings.close_to_tray}
-            onChange={(event) => onChange({ close_to_tray: event.target.checked })}
-            disabled={disabled}
-          />
-          关闭主窗口时最小化到托盘
-        </label>
       </GlassCard>
       <PermissionSettingsCard
         title="Claude Code 默认权限"

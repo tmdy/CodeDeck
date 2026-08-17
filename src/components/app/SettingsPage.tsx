@@ -81,7 +81,7 @@ export const SettingsPage = memo(function SettingsPage({
     : parameterSettingsProps.disabled;
 
   return (
-    <div className="settings-layout">
+    <div className={`settings-layout${isGlobalTab ? " settings-layout-global" : ""}`}>
       <nav className="settings-sub-tabs">
         <button
           type="button"

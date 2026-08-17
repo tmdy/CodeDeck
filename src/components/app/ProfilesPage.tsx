@@ -27,25 +27,6 @@ export const ProfilesPage = memo(function ProfilesPage({
 }: ProfilesPageProps) {
   const { preview, ...profilesLaunchPanelProps } = launchPanelProps;
   const isNativeProfile = profileEditProps.runtime.startup_mode === "native";
-  const balanceState = balanceTestProps.state;
-  const showBalanceMeta = !balanceState?.running && Boolean(
-    balanceState?.endpoint
-    || balanceTestProps.sessionHint
-    || balanceState?.finished_at_display,
-  );
-  const balanceMeta = showBalanceMeta ? (
-    <>
-      {balanceState?.endpoint && (
-        <p className="balance-test-meta">来源: {balanceState.endpoint}</p>
-      )}
-      {balanceTestProps.sessionHint && (
-        <p className="balance-test-meta">{balanceTestProps.sessionHint}</p>
-      )}
-      {balanceState?.finished_at_display && (
-        <p className="balance-test-meta">最近检测: {balanceState.finished_at_display}</p>
-      )}
-    </>
-  ) : undefined;
 
   return (
     <div className="profiles-layout">
@@ -53,7 +34,7 @@ export const ProfilesPage = memo(function ProfilesPage({
         <ProviderSwitch {...providerSwitchProps} />
         <ProfileListPanel {...profileListProps} />
         {!isNativeProfile && <BalanceTestButton {...balanceTestProps} />}
-        {!isNativeProfile && <SiteBalanceSessionPanel {...siteBalanceSessionProps} balanceMeta={balanceMeta} />}
+        {!isNativeProfile && <SiteBalanceSessionPanel {...siteBalanceSessionProps} />}
       </div>
 
       <div className="profiles-center">

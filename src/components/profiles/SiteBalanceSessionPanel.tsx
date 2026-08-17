@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useMemo } from "react";
 import type {
   BrowserIdentitySlot,
   SiteBalanceAuthKind,
@@ -34,7 +34,6 @@ export interface SiteBalanceSessionPanelProps {
   onBrowserSlotSelectionChange?: (value: string) => void;
   browserAuthStatus?: "unknown" | "checking" | "ready" | "login_required" | "authenticating";
   onDeleteSiteBalanceSession: () => void;
-  balanceMeta?: ReactNode;
   disabled?: boolean;
 }
 
@@ -52,7 +51,6 @@ export const SiteBalanceSessionPanel = memo(function SiteBalanceSessionPanel({
   onBrowserSlotSelectionChange,
   browserAuthStatus,
   onDeleteSiteBalanceSession,
-  balanceMeta,
   disabled,
 }: SiteBalanceSessionPanelProps) {
   const editingExistingBalanceSession = useMemo(
@@ -66,6 +64,17 @@ export const SiteBalanceSessionPanel = memo(function SiteBalanceSessionPanel({
   const editingBalanceSession = editingExistingBalanceSession || balanceSessionSelection === "new";
   const authKind = balanceSessionDraft.auth_kind
     ?? (balanceSessionSelection === "new" ? "browser_session" : "access_token");
+  const browserStatusLabel = editingExistingBalanceSession
+    ? browserAuthStatus === "login_required"
+      ? "需重新登录"
+      : browserAuthStatus === "checking"
+        ? "检查中"
+        : browserAuthStatus === "authenticating"
+          ? "登录中"
+          : browserAuthStatus === "ready"
+            ? "已登录"
+            : "未检查"
+    : "待登录";
 
   return (
     <>
@@ -91,27 +100,8 @@ export const SiteBalanceSessionPanel = memo(function SiteBalanceSessionPanel({
             <>
               {authKind !== "access_token" && (
                 <div className="browser-session-login-card">
-                  <strong>浏览器登录</strong>
-                  <p>
-                    {authKind === "session_cookie"
-                      ? "该账号使用旧版手工 Cookie，请重新登录以安全迁移。"
-                      : "登录状态由本机浏览器安全保存，不会复制 Cookie、Bearer 或 Session。"}
-                  </p>
-                  {editingExistingBalanceSession && (
-                    <p className={`browser-auth-status status-${browserAuthStatus ?? "unknown"}`}>
-                      {browserAuthStatus === "login_required"
-                        ? "状态：需要重新登录"
-                        : browserAuthStatus === "checking"
-                          ? "状态：正在检查"
-                          : browserAuthStatus === "authenticating"
-                            ? "状态：正在登录"
-                            : browserAuthStatus === "ready"
-                              ? "状态：已登录"
-                              : "状态：尚未检查"}
-                    </p>
-                  )}
                   {balanceSessionSelection === "new" && (
-                    <label>
+                    <label className="browser-session-identity">
                       浏览器身份
                       <select
                         value={browserSlotSelection}
@@ -129,6 +119,9 @@ export const SiteBalanceSessionPanel = memo(function SiteBalanceSessionPanel({
                       </select>
                     </label>
                   )}
+                  <span className={`browser-auth-status status-${browserAuthStatus ?? "unknown"}`}>
+                    {authKind === "session_cookie" ? "旧版账号需登录" : browserStatusLabel}
+                  </span>
                   <button
                     type="button"
                     className="primary-button small"
@@ -217,11 +210,6 @@ export const SiteBalanceSessionPanel = memo(function SiteBalanceSessionPanel({
           )}
         </div>
       </GlassCard>
-      {balanceMeta && (
-        <div className="site-balance-session-meta">
-          {balanceMeta}
-        </div>
-      )}
     </>
   );
 });

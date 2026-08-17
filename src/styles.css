@@ -1141,10 +1141,15 @@ button.profile-group-heading:hover:not(:disabled),
 
 .profile-item-name {
   flex: 1;
+  min-width: 0;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-item-balance {
+  flex: 0 0 auto;
   font-size: 0.72rem;
   padding: 0.16rem 0.42rem;
   border-radius: 999px;
@@ -1204,10 +1209,99 @@ button.profile-group-heading:hover:not(:disabled),
   font-size: 0.86rem;
 }
 
+.profile-item-health {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  padding: 0.14rem 0.36rem;
+  border-radius: 6px;
+  background: rgba(91, 100, 112, 0.1);
+  color: #5b6470;
+}
+
+.profile-item-health.success {
+  background: rgba(39, 135, 85, 0.14);
+  color: #17613d;
+}
+
+.profile-item-health.fail {
+  background: rgba(168, 49, 49, 0.14);
+  color: #8a2727;
+}
+
+.profile-item-health.pending {
+  background: rgba(23, 64, 109, 0.1);
+  color: #31557a;
+}
+
 .profile-channel-editor {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
   gap: 8px;
+  align-items: end;
+}
+
+.profile-channel-section {
+  display: grid;
+  gap: 6px;
+}
+
+.profile-channel-controls .icon-button {
+  flex: 0 0 32px;
+}
+
+.profile-channel-health {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.profile-channel-health button {
+  flex: 0 0 auto;
+  min-width: 82px;
+}
+
+.profile-health-status {
+  flex: 0 0 auto;
+  padding: 0.18rem 0.42rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(91, 100, 112, 0.1);
+  color: #5b6470;
+}
+
+.profile-health-status.success {
+  background: rgba(39, 135, 85, 0.14);
+  color: #17613d;
+}
+
+.profile-health-status.fail {
+  background: rgba(168, 49, 49, 0.14);
+  color: #8a2727;
+}
+
+.profile-health-status.pending {
+  background: rgba(23, 64, 109, 0.1);
+  color: #31557a;
+}
+
+.profile-channel-name-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.profile-channel-name-editor button {
+  min-height: 34px;
+  padding: 5px 9px;
+}
+
+.profile-channel-name-error {
+  grid-column: 1 / -1;
+  color: var(--app-danger-text);
+  font-size: 0.74rem;
 }
 
 .profile-runtime-card .glass-card-body > label + label,
@@ -1423,11 +1517,10 @@ button.profile-group-heading:hover:not(:disabled),
 }
 
 .theme-mode-field {
-  display: grid;
-  gap: 7px;
+  align-items: center;
 }
 
-.theme-mode-field > span {
+.settings-form-label {
   color: var(--app-text);
   font-size: 0.86rem;
   font-weight: 700;
@@ -1573,10 +1666,56 @@ button.profile-group-heading:hover:not(:disabled),
 }
 
 .site-balance-session-panel .balance-session-actions button {
-  flex: 1 1 100%;
+  flex: 1 1 0;
   min-width: 0;
   font-size: 0.86rem;
-  white-space: normal;
+  white-space: nowrap;
+}
+
+.browser-session-login-card {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.browser-session-identity {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.browser-auth-status {
+  flex: 0 1 auto;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.browser-auth-status.status-ready {
+  background: var(--app-success-bg);
+  color: var(--app-success-text);
+}
+
+.browser-auth-status.status-login_required {
+  background: var(--app-warning-bg);
+  color: var(--app-warning-text);
+}
+
+.browser-auth-status.status-checking,
+.browser-auth-status.status-authenticating {
+  background: var(--app-accent-soft);
+  color: var(--app-accent-text);
+}
+
+.browser-session-login-card > button {
+  flex: 0 0 auto;
 }
 
 .checkbox-label {
@@ -1880,6 +2019,19 @@ button.profile-group-heading:hover:not(:disabled),
   gap: 12px;
   min-height: calc(100vh - 116px);
   min-width: 0;
+}
+
+.checkin-status-badge {
+  min-width: 0;
+}
+
+.checkin-status-badge .status-badge {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .checkin-controls {
@@ -2334,6 +2486,56 @@ button.profile-group-heading:hover:not(:disabled),
 .settings-layout {
   display: grid;
   gap: 12px;
+}
+
+.settings-layout-global {
+  width: min(100%, 680px);
+  justify-self: center;
+}
+
+.global-settings-card .glass-card-body {
+  gap: 0;
+}
+
+.settings-form-list {
+  display: grid;
+}
+
+.settings-form-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.34fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.settings-form-row:first-child {
+  padding-top: 0;
+}
+
+.settings-form-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.settings-form-row > input:not([type="checkbox"]) {
+  min-width: 0;
+  width: 100%;
+}
+
+.settings-form-row-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.settings-form-row-checkbox input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
 }
 
 .settings-sub-tabs {
@@ -3069,6 +3271,15 @@ button.skills-inline-status:hover:not(:disabled) {
 @media (max-width: 720px) {
   .profile-channel-editor {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-channel-name-editor {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .settings-form-row:not(.settings-form-row-checkbox) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
   }
 
   .terminal-header {

@@ -184,6 +184,25 @@ describe("ProfileEditForm", () => {
         onAdvancedModelMappingChange={vi.fn()}
         onRuntimeChange={vi.fn()}
         onFetchModels={vi.fn()}
+        onTestHealth={vi.fn()}
+        healthState={{
+          target: {
+            provider: "claude",
+            profile_key: "claude::Relay",
+            channel_id: "b",
+            base_url: "https://relay.example.com",
+            model_id: "model-b",
+          },
+          status: "available",
+          reason_code: "ok",
+          running: false,
+          source: "active",
+          checked_at: "2026-08-17T08:00:00.000Z",
+          verified_at: "2026-08-17T08:00:00.000Z",
+          latency_ms: 1250,
+          consecutive_successes: 3,
+          last_failure: "",
+        }}
         onPickCwd={vi.fn()}
         onSave={vi.fn()}
         onCancel={vi.fn()}
@@ -191,12 +210,61 @@ describe("ProfileEditForm", () => {
     );
 
     expect(html).toContain("当前渠道");
-    expect(html).toContain("渠道名称");
+    expect(html).not.toContain('placeholder="输入渠道名称"');
     expect(html).toContain("渠道 A");
     expect(html).toContain("渠道 B");
     expect(html).toContain('value="sk-b"');
     expect(html).toContain('aria-label="添加渠道"');
+    expect(html).toContain('aria-label="重命名当前渠道"');
     expect(html).toContain('aria-label="删除当前渠道"');
+    expect(html).toContain("检测渠道");
+    expect(html).toContain("可用 · 1.3s");
+    expect(html).toContain("来源：主动检测");
+    expect(html).toContain("连续成功：3 次");
+    expect(html).not.toContain("profile-channel-health-detail");
+  });
+
+  it("uses the saved-profile gating reason and hides the active action when unavailable", () => {
+    const baseProps = {
+      draft: {
+        name: "Relay",
+        url: "https://relay.example.com",
+        key: "sk-test",
+        selectedModelId: "model-a",
+        channels: [{ id: "default", name: "默认渠道", key: "sk-test", selectedModelId: "model-a" }],
+        activeChannelId: "default",
+        advancedModelMapping: makeAdvancedMapping(),
+      },
+      runtime: {
+        cwd: "D:/workspace",
+        command_base: "claude",
+        settings_file: "",
+        extra_args: "",
+        launch_mode: "new" as const,
+        exclude_user_settings: true,
+      },
+      provider: "claude" as const,
+      modelOptions: [],
+      onChange: vi.fn(),
+      onAdvancedModelMappingChange: vi.fn(),
+      onRuntimeChange: vi.fn(),
+      onFetchModels: vi.fn(),
+      onPickCwd: vi.fn(),
+      onSave: vi.fn(),
+      onCancel: vi.fn(),
+    };
+    const disabledHtml = renderToStaticMarkup(
+      <ProfileEditForm
+        {...baseProps}
+        onTestHealth={vi.fn()}
+        healthTestDisabledReason="请先保存当前修改"
+      />,
+    );
+    const hiddenHtml = renderToStaticMarkup(<ProfileEditForm {...baseProps} />);
+
+    expect(disabledHtml).toContain('title="请先保存当前修改"');
+    expect(disabledHtml).toContain("disabled");
+    expect(hiddenHtml).not.toContain("检测渠道");
   });
 
 
@@ -746,7 +814,7 @@ describe("ProfileEditForm", () => {
     expect(html.indexOf("<h3>Codex 子代理模型映射</h3>")).toBeLessThan(html.indexOf("<h3>模型配置</h3>"));
   });
 
-  it("should enable the Codex subagent model mapping", async () => {
+  it("should keep the Codex subagent model mapping disabled", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -781,10 +849,8 @@ describe("ProfileEditForm", () => {
       (label) => label.textContent?.includes("启用子代理模型映射"),
     );
     const checkbox = mappingLabel?.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    await act(async () => {
-      checkbox?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onAdvancedModelMappingChange).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
+    expect(checkbox?.disabled).toBe(true);
+    expect(onAdvancedModelMappingChange).not.toHaveBeenCalled();
 
     await act(async () => {
       root.unmount();

@@ -40,49 +40,6 @@ describe("SiteBalanceSessionPanel", () => {
     expect(html).toContain(">新建会话<");
   });
 
-  it("renders balance metadata below the site session card", async () => {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(
-        <SiteBalanceSessionPanel
-          siteBalanceSessions={[makeSiteSession("sess-a", "账号1")]}
-          balanceSessionSelection="sess-a"
-          balanceSessionDraft={{ label: "账号1", access_token: "token-a", user_id: "42" }}
-          balanceMeta={(
-            <>
-              <p className="balance-test-meta">来源: https://new-api.example.com/api/user/self</p>
-              <p className="balance-test-meta">后台会话：账号1</p>
-              <p className="balance-test-meta">最近检测: 2026/05/05 12:00:00</p>
-            </>
-          )}
-          onBalanceSessionSelectionChange={vi.fn()}
-          onBalanceSessionDraftChange={vi.fn()}
-          onSaveBalanceSession={vi.fn()}
-          onDeleteSiteBalanceSession={vi.fn()}
-        />,
-      );
-    });
-
-    const card = container.querySelector(".site-balance-session-card");
-    const meta = container.querySelector(".site-balance-session-meta");
-
-    expect(card).toBeInstanceOf(HTMLDivElement);
-    expect(meta).toBeInstanceOf(HTMLDivElement);
-    expect(card?.nextElementSibling).toBe(meta);
-    expect(card?.textContent).not.toContain("来源: https://new-api.example.com/api/user/self");
-    expect(meta?.textContent).toContain("来源: https://new-api.example.com/api/user/self");
-    expect(meta?.textContent).toContain("后台会话：账号1");
-    expect(meta?.textContent).toContain("最近检测: 2026/05/05 12:00:00");
-
-    await act(async () => {
-      root.unmount();
-    });
-    container.remove();
-  });
-
   it("renders browser login by default and keeps PAT under advanced compatibility", () => {
     const html = renderToStaticMarkup(
       <SiteBalanceSessionPanel
@@ -99,6 +56,8 @@ describe("SiteBalanceSessionPanel", () => {
     expect(html).toContain("浏览器登录");
     expect(html).toContain("高级兼容：PAT / Access Token");
     expect(html).toContain("Access Token / PAT");
+    expect(html).toContain("待登录");
+    expect(html).not.toContain("登录状态由本机浏览器安全保存");
     expect(html).not.toContain("Session Cookie");
     expect(html).not.toContain("输入 Cookie 或 Session 值");
     expect(html).not.toContain("删除当前会话");
@@ -202,48 +161,58 @@ describe("SiteBalanceSessionPanel", () => {
       />,
     );
 
-    expect(html).toContain("状态：尚未检查");
-    expect(html).not.toContain("状态：已登录");
+    expect(html).toContain(">未检查<");
+    expect(html).not.toContain(">已登录<");
   });
 
-  it("invokes save and delete actions from the compact action row", async () => {
+  it("keeps logout and delete actions together in the compact action row", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
-    const onSaveBalanceSession = vi.fn();
+    const onBrowserLogout = vi.fn();
     const onDeleteSiteBalanceSession = vi.fn();
+    const session = {
+      ...makeSiteSession("sess-browser", "浏览器账号"),
+      access_token: "",
+      auth_kind: "browser_session" as const,
+      browser_session_id: "browser-slot-1",
+      browser_slot: 1,
+      browser_origin: "https://new-api.example.com",
+    };
 
     await act(async () => {
       root.render(
         <SiteBalanceSessionPanel
-          siteBalanceSessions={[makeSiteSession("sess-a", "账号1")]}
-          balanceSessionSelection="sess-a"
-          balanceSessionDraft={{ label: "账号1", access_token: "token-a", auth_kind: "access_token", user_id: "42" }}
+          siteBalanceSessions={[session]}
+          balanceSessionSelection={session.id}
+          balanceSessionDraft={{ label: session.label, access_token: "", auth_kind: "browser_session", user_id: "42" }}
           onBalanceSessionSelectionChange={vi.fn()}
           onBalanceSessionDraftChange={vi.fn()}
-          onSaveBalanceSession={onSaveBalanceSession}
+          onBrowserLogin={vi.fn()}
+          onBrowserLogout={onBrowserLogout}
           onDeleteSiteBalanceSession={onDeleteSiteBalanceSession}
         />,
       );
     });
 
     const actionRow = container.querySelector(".balance-session-actions");
-    const saveButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "保存 PAT 账号",
+    const logoutButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "退出登录",
     );
     const deleteButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "删除当前会话",
     );
 
     expect(actionRow).toBeInstanceOf(HTMLDivElement);
+    expect(logoutButton?.parentElement).toBe(actionRow);
     expect(deleteButton?.parentElement).toBe(actionRow);
 
     await act(async () => {
-      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      logoutButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       deleteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(onSaveBalanceSession).toHaveBeenCalledTimes(1);
+    expect(onBrowserLogout).toHaveBeenCalledTimes(1);
     expect(onDeleteSiteBalanceSession).toHaveBeenCalledTimes(1);
 
     await act(async () => {

@@ -16,6 +16,28 @@ function changeInputValue(input: HTMLInputElement, value: string) {
 }
 
 describe("SettingsPage", () => {
+  it("constrains the global settings tab to the compact layout", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <SettingsPage
+          settingsSubTab="global"
+          onSelectGlobal={vi.fn()}
+          onSelectParameters={vi.fn()}
+          globalSettingsProps={{ settings: defaultGlobalSettings(), onChange: vi.fn() }}
+          parameterSettingsProps={{ settings: defaultParameterSettings(), onChange: vi.fn() }}
+        />,
+      );
+    });
+
+    expect(container.querySelector(".settings-layout-global")).toBeInstanceOf(HTMLDivElement);
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
   it("should persist the Codex sub-agent filter only when global settings are saved", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

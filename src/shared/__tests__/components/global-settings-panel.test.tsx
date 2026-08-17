@@ -22,6 +22,10 @@ describe("GlobalSettingsPanel", () => {
     expect(html).not.toContain("禁用错误报告");
     expect(html).not.toContain("禁用非必要网络流量");
     expect(html).not.toContain("包含 Co-authored-by 标记");
+    expect(html).toContain("settings-form-list");
+    expect((html.match(/settings-form-row/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(html).toContain('placeholder="http://127.0.0.1:7890"');
+    expect(html).not.toContain("HTTP 代理（作用于所有配置，可选）");
   });
 
   it("should render separate Claude and Codex permission selectors with common protection switches", () => {

@@ -111,8 +111,9 @@ describe("App page containers", () => {
     expect(html).toContain("命令预览");
     expect(html.indexOf("检测余额")).toBeLessThan(html.indexOf("站点后台会话"));
     expect(html.indexOf("站点后台会话")).toBeLessThan(html.indexOf("<label>后台会话"));
-    expect(html.indexOf("<label>后台会话")).toBeLessThan(html.indexOf("来源: https://relay.example.com/user/balance"));
-    expect(html).toContain("最近检测: 2026/07/01 11:00:00");
+    expect(html).not.toContain("来源: https://relay.example.com/user/balance");
+    expect(html).not.toContain("最近检测: 2026/07/01 11:00:00");
+    expect(html).not.toContain("API Key 自动</p>");
   });
 
   it("renders the Sessions page layout", () => {

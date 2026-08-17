@@ -200,8 +200,11 @@ describe("BalanceTestButton", () => {
     expect(html).toContain("签到已启用账号 (0)");
     expect(html).toContain("请先勾选至少一个账号的自动签到");
     expect(html).toContain("$112.17 剩余");
+    expect(html).toContain("签到成功 · $1.23");
     expect(html).toContain("奖励：$1.23");
+    expect(html).toContain("最近签到：");
     expect(html).not.toContain("奖励：614271");
+    expect(html).not.toContain("checkin-result");
     expect(html).not.toContain("USD: 剩余");
     expect(html).toContain("自动签到");
     expect(html).not.toContain("每天启动后随机");

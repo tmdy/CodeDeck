@@ -762,7 +762,7 @@ describe("App balance session autosave", () => {
     );
     expect(fixture.saveProfile).not.toHaveBeenCalled();
     expect(findBalanceSessionSelect(container).value).toBe("sess-browser");
-    expect(container.textContent).toContain("状态：已登录");
+    expect(container.textContent).toContain("已登录");
 
     await act(async () => root.unmount());
     container.remove();
@@ -867,11 +867,11 @@ describe("App balance session autosave", () => {
     });
     const { container, root } = await renderAppWithFixture(fixture);
 
-    expect(container.textContent).toContain("状态：尚未检查");
+    expect(container.textContent).toContain("未检查");
     await act(async () => {
       statusCallback?.({ accountKey, mode: "modern", status: "ready" });
     });
-    expect(container.textContent).toContain("状态：已登录");
+    expect(container.textContent).toContain("已登录");
 
     await act(async () => root.unmount());
     container.remove();

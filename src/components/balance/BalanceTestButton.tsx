@@ -59,6 +59,9 @@ export const BalanceTestButton = memo(function BalanceTestButton({
   const checkinBusy = checkinRunning || verificationRunning;
   const checkedInToday = checkinState?.satisfied_local_date === localDateKey();
   const checkinSummary = summarizeCheckinState(checkinState);
+  const checkinBadgeLabel = buildCheckinBadgeLabel(checkinState, checkinSummary);
+  const checkinTitle = buildCheckinTitle(checkinState);
+  const showCheckinFailure = checkinState && isFailedCheckinState(checkinState);
 
   return (
     <div className="balance-test">
@@ -116,21 +119,19 @@ export const BalanceTestButton = memo(function BalanceTestButton({
           </button>
         )}
         {checkinSummary && (
-          <StatusBadge
-            label={checkinSummary}
-            variant={checkinStateVariant(checkinState)}
-          />
+          <span className="checkin-status-badge" title={checkinTitle}>
+            <StatusBadge
+              label={checkinBadgeLabel}
+              variant={checkinStateVariant(checkinState)}
+            />
+          </span>
         )}
       </div>
-      {checkinState && checkinState.status !== "running" && (
+      {showCheckinFailure && (
         <div className="checkin-result">
           <span>{checkinState.message}</span>
-          {checkinState.reward && <span>奖励：{formatCheckinReward(checkinState.reward)}</span>}
-          {isFailedCheckinState(checkinState) && checkinState.diagnostic_run_id && (
+          {checkinState.diagnostic_run_id && (
             <span>诊断编号：{formatCheckinDiagnosticId(checkinState.diagnostic_run_id)}</span>
-          )}
-          {checkinState.last_attempt_at && (
-            <span>最近签到：{formatDateTime(checkinState.last_attempt_at)}</span>
           )}
           {checkinState.status === "manual_required" && onOpenManualCheckin && (
             <button type="button" className="secondary-button small" onClick={onOpenManualCheckin}>
@@ -176,6 +177,29 @@ function summarizeCheckinState(state: CheckinAccountState | null | undefined): s
   return "签到失败";
 }
 
+function buildCheckinBadgeLabel(
+  state: CheckinAccountState | null | undefined,
+  summary: string,
+): string {
+  if (!state || (state.status !== "success" && state.status !== "already_checked")) {
+    return summary;
+  }
+  return [
+    summary,
+    state.reward ? formatCheckinReward(state.reward) : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function buildCheckinTitle(state: CheckinAccountState | null | undefined): string {
+  if (!state) return "";
+  return [
+    state.message,
+    state.reward ? `奖励：${formatCheckinReward(state.reward)}` : "",
+    state.last_attempt_at ? `最近签到：${formatDateTime(state.last_attempt_at)}` : "",
+    state.diagnostic_run_id ? `诊断编号：${formatCheckinDiagnosticId(state.diagnostic_run_id)}` : "",
+  ].filter(Boolean).join(" · ");
+}
+
 function checkinStateVariant(
   state: CheckinAccountState | null | undefined,
 ): "success" | "danger" | "warning" | "info" | "muted" {
@@ -191,6 +215,7 @@ function checkinStateVariant(
 
 function isFailedCheckinState(state: CheckinAccountState): boolean {
   return state.status === "failed"
+    || state.status === "login_required"
     || state.status === "unsupported"
     || state.status === "manual_required";
 }

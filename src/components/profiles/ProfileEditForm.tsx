@@ -1,6 +1,6 @@
 // ProfileEditForm 编辑表单
 
-import { memo, type ReactNode, useCallback, useMemo, useState } from "react";
+import { memo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type {
   AdvancedModelMapping,
   ClaudeModelAliasMode,
@@ -28,6 +28,11 @@ import { parseRuntimeEnvText } from "../../shared/profile/runtime-env.js";
 import { defaultProfilePermissions, normalizeProfilePermissions, type ProfilePermissions } from "../../shared/profile/permissions.js";
 import { GlassCard } from "../common/GlassCard.jsx";
 import { PermissionSettingsCard } from "../permissions/PermissionSettingsCard.jsx";
+import type { ProfileHealthState } from "../../shared/profile-health/types.js";
+import {
+  buildProfileHealthListEntry,
+  formatProfileHealthDetails,
+} from "../../shared/profile-health/presentation.js";
 
 interface ProfileEditFormProps {
   draft: {
@@ -70,6 +75,9 @@ interface ProfileEditFormProps {
   onSavedExtraArgsChange?: (items: SavedExtraArg[]) => void;
   onRuntimeCommit?: (field: string) => void;
   onFetchModels: () => void;
+  healthState?: ProfileHealthState;
+  healthTestDisabledReason?: string;
+  onTestHealth?: () => void;
   onOpenBaseUrl?: () => void;
   onPickCwd: () => void;
   onToggleWorkingDirectoryFavorite?: () => void;
@@ -117,6 +125,9 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   onSavedExtraArgsChange,
   onRuntimeCommit,
   onFetchModels,
+  healthState,
+  healthTestDisabledReason = "",
+  onTestHealth,
   onOpenBaseUrl = noopOpenBaseUrl,
   onPickCwd,
   onToggleWorkingDirectoryFavorite = noopToggleWorkingDirectoryFavorite,
@@ -132,6 +143,11 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   const [bulkEnvStatus, setBulkEnvStatus] = useState("");
   const [savedArgEditorOpen, setSavedArgEditorOpen] = useState(false);
   const [savedArgEditorText, setSavedArgEditorText] = useState("");
+  const [channelNameEditor, setChannelNameEditor] = useState<{
+    mode: "create" | "rename";
+    value: string;
+  } | null>(null);
+  const [channelNameError, setChannelNameError] = useState("");
   const advancedMapping = draft.advancedModelMapping;
   const isNativeStartup = isOfficialNativeProfile({ provider, name: draft.name });
   const claudeAliasMode = resolveClaudeModelAliasMode(advancedMapping);
@@ -181,19 +197,29 @@ export const ProfileEditForm = memo(function ProfileEditForm({
   const activeChannelId = draft.activeChannelId ?? channels[0]?.id ?? "default";
   const activeChannel = channels.find((channel) => channel.id === activeChannelId)
     ?? channels[0];
+  const healthEntry = buildProfileHealthListEntry(healthState);
+  const healthDetails = formatProfileHealthDetails(healthState);
+  const healthLabel = healthState?.latency_ms === undefined
+    ? healthEntry.label
+    : `${healthEntry.label} · ${formatHealthLatency(healthState.latency_ms)}`;
+  const healthTitle = healthDetails.join(" · ") || healthEntry.title;
+  const healthDisabled = disabled
+    || healthState?.running === true
+    || Boolean(healthTestDisabledReason);
+
+  useEffect(() => {
+    setChannelNameEditor(null);
+    setChannelNameError("");
+  }, [activeChannelId]);
 
   const selectChannel = useCallback((channelId: string) => {
     onChannelsChange?.(channels, channelId);
   }, [channels, onChannelsChange]);
 
   const addChannel = useCallback(() => {
-    const channel: ProfileChannel = {
-      id: createChannelId(),
-      name: `渠道 ${channels.length + 1}`,
-      key: "",
-    };
-    onChannelsChange?.([...channels, channel], channel.id);
-  }, [channels, onChannelsChange]);
+    setChannelNameError("");
+    setChannelNameEditor({ mode: "create", value: `渠道 ${channels.length + 1}` });
+  }, [channels.length]);
 
   const renameActiveChannel = useCallback((name: string) => {
     if (!activeChannel) return;
@@ -210,6 +236,38 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     const nextChannels = channels.filter((channel) => channel.id !== activeChannel.id);
     onChannelsChange?.(nextChannels, nextChannels[0]?.id ?? "");
   }, [activeChannel, channels, onChannelsChange]);
+
+  const openRenameActiveChannel = useCallback(() => {
+    if (!activeChannel) return;
+    setChannelNameError("");
+    setChannelNameEditor({ mode: "rename", value: activeChannel.name });
+  }, [activeChannel]);
+
+  const saveChannelName = useCallback((event: FormEvent) => {
+    event.preventDefault();
+    if (!channelNameEditor) return;
+    const name = channelNameEditor.value.trim();
+    if (!name) {
+      setChannelNameError("渠道名称不能为空");
+      return;
+    }
+    const duplicate = channels.some((channel) => (
+      channel.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase()
+      && (channelNameEditor.mode === "create" || channel.id !== activeChannel?.id)
+    ));
+    if (duplicate) {
+      setChannelNameError("渠道名称已存在");
+      return;
+    }
+    if (channelNameEditor.mode === "create") {
+      const channel: ProfileChannel = { id: createChannelId(), name, key: "" };
+      onChannelsChange?.([...channels, channel], channel.id);
+    } else {
+      renameActiveChannel(name);
+    }
+    setChannelNameEditor(null);
+    setChannelNameError("");
+  }, [activeChannel?.id, channelNameEditor, channels, onChannelsChange, renameActiveChannel]);
 
   const updateRuntimeEnvKey = useCallback((currentKey: string, nextKey: string, value: string) => {
     const nextEnv = { ...runtimeEnv };
@@ -516,10 +574,11 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                 </button>
               </div>
             </label>}
-            {!isNativeStartup && <div className="profile-channel-editor">
-              <label>
-                当前渠道
-                <div className="path-field">
+            {!isNativeStartup && <div className="profile-channel-section">
+              <div className="profile-channel-editor">
+                <label>
+                  当前渠道
+                  <div className="path-field profile-channel-controls">
                   <select
                     value={activeChannel?.id ?? ""}
                     onChange={(event) => selectChannel(event.target.value)}
@@ -545,6 +604,16 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                   <button
                     type="button"
                     className="secondary-button icon-button"
+                    onClick={openRenameActiveChannel}
+                    disabled={disabled || !activeChannel}
+                    aria-label="重命名当前渠道"
+                    title="重命名当前渠道"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button icon-button"
                     onClick={removeActiveChannel}
                     disabled={disabled || channels.length <= 1}
                     aria-label="删除当前渠道"
@@ -552,17 +621,53 @@ export const ProfileEditForm = memo(function ProfileEditForm({
                   >
                     ×
                   </button>
+                  </div>
+                </label>
+                <div className="profile-channel-health">
+                  {onTestHealth && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={onTestHealth}
+                      disabled={healthDisabled}
+                      title={healthDisabled ? healthTestDisabledReason : "检测当前渠道"}
+                    >
+                      {healthState?.running ? "检测中..." : "检测渠道"}
+                    </button>
+                  )}
+                  <span
+                    className={`profile-health-status ${healthEntry.status}`}
+                    title={healthTitle}
+                  >
+                    {healthLabel}
+                  </span>
                 </div>
-              </label>
-              <label>
-                渠道名称
-                <input
-                  value={activeChannel?.name ?? ""}
-                  onChange={(event) => renameActiveChannel(event.target.value)}
-                  placeholder="输入渠道名称"
-                  disabled={disabled}
-                />
-              </label>
+              </div>
+              {channelNameEditor && (
+                <form className="profile-channel-name-editor" onSubmit={saveChannelName}>
+                  <input
+                    value={channelNameEditor.value}
+                    onChange={(event) => setChannelNameEditor({
+                      ...channelNameEditor,
+                      value: event.target.value,
+                    })}
+                    aria-label={channelNameEditor.mode === "create" ? "新渠道名称" : "渠道名称"}
+                    placeholder="输入渠道名称"
+                    autoFocus
+                    disabled={disabled}
+                  />
+                  <button type="submit" disabled={disabled}>确认</button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setChannelNameEditor(null)}
+                    disabled={disabled}
+                  >
+                    取消
+                  </button>
+                  {channelNameError && <span className="profile-channel-name-error">{channelNameError}</span>}
+                </form>
+              )}
             </div>}
             {!isNativeStartup && <label>
               API Key / Token
@@ -966,6 +1071,10 @@ export const ProfileEditForm = memo(function ProfileEditForm({
 function createChannelId(): string {
   return globalThis.crypto?.randomUUID?.()
     ?? `channel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatHealthLatency(value: number): string {
+  return value < 1000 ? `${value}ms` : `${(value / 1000).toFixed(1)}s`;
 }
 
 function formatBeijingDateTime(value: string): string {
