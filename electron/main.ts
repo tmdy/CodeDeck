@@ -55,6 +55,24 @@ import {
   type CheckinDiagnosticAttempt,
 } from "../src/shared/services/checkin-service.js";
 import { CheckinScheduler } from "../src/shared/services/checkin-scheduler.js";
+import {
+  buildProfileHealthPrompt,
+  classifyProfileHealthCliFailure,
+  createCompletedProfileHealthState,
+  createFailedProfileHealthState,
+  createPassiveProfileHealthState,
+  createRunningProfileHealthState,
+} from "../src/shared/profile-health/service.js";
+import {
+  buildProfileHealthTarget,
+  profileHealthTargetKey,
+  profileHealthRequestMatchesSavedProfile,
+  type ProfileHealthProgressEvent,
+  type ProfileHealthState,
+  type ProfileHealthTarget,
+  type ProfileHealthTestRequest,
+  type ProfileHealthTestResult,
+} from "../src/shared/profile-health/types.js";
 import type { ManagementRequestContext } from "../src/shared/services/management-auth.js";
 import {
   CheckinVerificationService,
@@ -92,6 +110,10 @@ import {
   type CheckinTrigger,
   type CheckinVerificationResult,
 } from "../src/shared/checkin/types.js";
+import {
+  CheckinExecutionQueue,
+  settleCheckinsSequentially,
+} from "../src/shared/checkin/execution-queue.js";
 import { pickDirectoryPath } from "../src/shared/electron/dialog-helpers.js";
 import { createAppLogger, createIpcHandlerLogger } from "../src/shared/electron/debug-log.js";
 import { SessionCatalog } from "../src/shared/electron/session-catalog.js";
@@ -147,13 +169,18 @@ import {
   type GetSessionDetailRequest,
   type ListSessionsRequest,
 } from "../src/shared/services/session-service.js";
-import { resolveCanonicalCodexHome } from "../src/shared/services/codex-home.js";
+import {
+  ensureProfileHealthCodexHome,
+  resolveCanonicalCodexHome,
+} from "../src/shared/services/codex-home.js";
 import {
   type BootstrapResult,
   type LocalState,
 } from "../src/shared/state/local-state.js";
 import {
   defaultRuntimeSettings,
+  getProfileApiKey,
+  isOfficialNativeProfile,
   withOfficialNativeProfiles,
   type Profile,
   type ProfileKey,
@@ -183,6 +210,11 @@ import {
   AgentTaskManager,
   type AgentTaskLaunchOptions,
 } from "../src/shared/agent-bridge/task-manager.js";
+import { cleanTerminalText } from "../src/shared/agent-bridge/protocol.js";
+import {
+  hasTerminalCliReadyPrompt,
+  normalizeTerminalPromptInput,
+} from "../src/shared/electron/terminal-prompt-input.js";
 import {
   AGENT_BRIDGE_CONNECTION_FILE,
   AgentBridgeRequestError,
@@ -240,6 +272,8 @@ type NodePtyModule = typeof import("node-pty");
 let nodePtyModule: NodePtyModule | null = null;
 let nodePtyLoadPromise: Promise<NodePtyModule> | null = null;
 let checkinStateWriteQueue: Promise<void> = Promise.resolve();
+let profileHealthStateWriteQueue: Promise<void> = Promise.resolve();
+const checkinExecutionQueue = new CheckinExecutionQueue();
 const checkinRunsByAccount = new Map<string, Promise<CheckinResult>>();
 const deferredCheckinStates = new Map<string, CheckinAccountState>();
 const deferredCheckinCapabilityPaths = new Map<string, LearnedCheckinPath | null>();
@@ -296,10 +330,24 @@ interface TerminalLifecycleWatcher {
   timer?: NodeJS.Timeout;
 }
 const terminalLifecycleWatchers = new Map<string, TerminalLifecycleWatcher>();
+const terminalProfileHealthTargets = new Map<string, ProfileHealthTarget>();
+interface ActiveProfileHealthTurnWaiter {
+  resolve: (filePath: string) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}
+const activeProfileHealthTurnWaiters = new Map<string, ActiveProfileHealthTurnWaiter>();
+const completedTerminalTurnFiles = new Map<string, string>();
+const profileHealthRunsByTarget = new Map<string, Promise<ProfileHealthTestResult>>();
+let profileHealthCliQueue: Promise<void> = Promise.resolve();
 const TERMINAL_TITLE_POLL_INTERVAL_MS = 2_000;
 const TERMINAL_TITLE_POLL_TIMEOUT_MS = 60_000;
 const TERMINAL_LIFECYCLE_POLL_INTERVAL_MS = 750;
 const TERMINAL_LIFECYCLE_INITIAL_TAIL_BYTES = 1_048_576;
+const PROFILE_HEALTH_ASSISTANT_READ_RETRY_MS = [0, 75, 150, 300] as const;
+const PROFILE_HEALTH_CLAUDE_READY_TIMEOUT_MS = 60_000;
+const PROFILE_HEALTH_CLAUDE_INPUT_SETTLE_MS = 1_000;
+const PROFILE_HEALTH_CLAUDE_SUBMIT_DELAY_MS = 250;
 const appLogger = createAppLogger({
   getDirectory: () => path.join(projectRoot || process.cwd(), "app-data", "logs"),
 });
@@ -675,10 +723,60 @@ function applyTerminalTaskbarActivity(
   }
 }
 
+class ProfileHealthTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`健康检测超时（${timeoutMs}ms）`);
+    this.name = "ProfileHealthTimeoutError";
+  }
+}
+
+function settleActiveProfileHealthTurn(
+  sessionId: string,
+  outcome: { filePath: string } | { error: Error },
+): boolean {
+  const waiter = activeProfileHealthTurnWaiters.get(sessionId);
+  if (!waiter) return false;
+  activeProfileHealthTurnWaiters.delete(sessionId);
+  clearTimeout(waiter.timer);
+  if ("filePath" in outcome) {
+    waiter.resolve(outcome.filePath);
+  } else {
+    waiter.reject(outcome.error);
+  }
+  return true;
+}
+
 function handleTerminalActivityChange(event: TerminalSessionActivityEvent): void {
   agentTaskManager?.handleActivityChange(event);
+  if (event.reason === "turn_completed") {
+    const healthWatcher = terminalLifecycleWatchers.get(event.sessionId);
+    if (activeProfileHealthTurnWaiters.has(event.sessionId)) {
+      settleActiveProfileHealthTurn(
+        event.sessionId,
+        healthWatcher
+          ? { filePath: healthWatcher.filePath }
+          : { error: new Error("健康检测会话已完成，但未解析到会话 JSONL 文件") },
+      );
+    } else {
+      if (healthWatcher) {
+        completedTerminalTurnFiles.set(event.sessionId, healthWatcher.filePath);
+      }
+      const target = terminalProfileHealthTargets.get(event.sessionId);
+      if (target) {
+        void updatePassiveProfileHealth(target);
+      }
+    }
+  }
   if (event.reason === "process_exit" || event.reason === "session_closed") {
+    const snapshot = terminalSessionManager.getSnapshot(event.sessionId);
+    const output = cleanTerminalText(snapshot?.output ?? "").slice(-2_000);
+    settleActiveProfileHealthTurn(
+      event.sessionId,
+      { error: new Error(output || `健康 CLI 会话异常结束：${event.reason}`) },
+    );
+    completedTerminalTurnFiles.delete(event.sessionId);
     managedTerminalParentTokens.delete(event.sessionId);
+    terminalProfileHealthTargets.delete(event.sessionId);
   }
   applyTerminalTaskbarActivity(event.sessionId, event);
   appLogger.info("terminal", "activity_changed", "Monitored terminal activity changed", {
@@ -690,6 +788,321 @@ function handleTerminalActivityChange(event: TerminalSessionActivityEvent): void
       reason: event.reason,
     },
   });
+}
+
+function broadcastProfileHealthProgress(event: ProfileHealthProgressEvent): void {
+  for (const win of getCodeDeckWindows()) {
+    win.webContents.send("profile-health:progress", event);
+  }
+}
+
+function enqueueProfileHealthStateUpdate(
+  update: (state: LocalState) => void,
+): Promise<void> {
+  profileHealthStateWriteQueue = profileHealthStateWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const svc = getProfileService();
+      const state = svc.getState();
+      update(state);
+      await profileStateAccessor?.save(state);
+    });
+  return profileHealthStateWriteQueue;
+}
+
+async function updatePassiveProfileHealth(target: ProfileHealthTarget): Promise<void> {
+  const targetKey = profileHealthTargetKey(target);
+  await enqueueProfileHealthStateUpdate((state) => {
+    const previous = state.profile_health_by_target[targetKey];
+    state.profile_health_by_target[targetKey] = createPassiveProfileHealthState(target, previous);
+  });
+}
+
+function resolveSavedProfileHealthMatch(request: ProfileHealthTestRequest): Profile | null {
+  const requestedKey = request.profile_key?.trim() ?? "";
+  if (!requestedKey) return null;
+  const saved = getProfileService().getProfiles().find((profile) => itemKey(profile) === requestedKey);
+  if (!saved || isOfficialNativeProfile(saved)) return null;
+  return profileHealthRequestMatchesSavedProfile(saved, request) ? saved : null;
+}
+
+function waitForProfileHealthTurn(sessionId: string, timeoutMs: number): Promise<string> {
+  const completedFile = completedTerminalTurnFiles.get(sessionId);
+  if (completedFile) {
+    completedTerminalTurnFiles.delete(sessionId);
+    return Promise.resolve(completedFile);
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      settleActiveProfileHealthTurn(sessionId, { error: new ProfileHealthTimeoutError(timeoutMs) });
+    }, timeoutMs);
+    activeProfileHealthTurnWaiters.set(sessionId, { resolve, reject, timer });
+    const snapshot = terminalSessionManager.getSnapshot(sessionId);
+    if (!snapshot || snapshot.status !== "running") {
+      const output = cleanTerminalText(snapshot?.output ?? "").slice(-2_000);
+      settleActiveProfileHealthTurn(sessionId, {
+        error: new Error(output || "健康 CLI 会话在等待回合完成前已退出"),
+      });
+    }
+  });
+}
+
+function enqueueProfileHealthCliProbe(
+  run: () => Promise<ProfileHealthState>,
+): Promise<ProfileHealthState> {
+  const queued = profileHealthCliQueue.then(run, run);
+  profileHealthCliQueue = queued.then(
+    () => undefined,
+    () => undefined,
+  );
+  return queued;
+}
+
+async function submitClaudeProfileHealthPrompt(
+  sessionId: string,
+  prompt: string,
+): Promise<void> {
+  const input = normalizeTerminalPromptInput(prompt);
+  await new Promise<void>((resolve, reject) => {
+    let output = "";
+    let readyTimer: NodeJS.Timeout | undefined;
+    let disposeAttachment = (): void => undefined;
+    const timeout = setTimeout(() => {
+      dispose();
+      reject(new Error("Claude CLI 在 60 秒内未进入可输入状态"));
+    }, PROFILE_HEALTH_CLAUDE_READY_TIMEOUT_MS);
+    disposeAttachment = terminalSessionManager.attachSession(sessionId, {
+      onOutput: (chunk) => {
+        output = (output + chunk).slice(-16_000);
+        const visibleTail = cleanTerminalText(output).slice(-8_000);
+        if (!hasTerminalCliReadyPrompt(visibleTail)) return;
+        if (readyTimer) clearTimeout(readyTimer);
+        readyTimer = setTimeout(() => {
+          const snapshot = terminalSessionManager.getSnapshot(sessionId);
+          if (snapshot?.status !== "running") {
+            dispose();
+            reject(new Error("Claude CLI 在提交健康检测提示前已退出"));
+            return;
+          }
+          terminalSessionManager.sendInput(sessionId, input.data);
+          setTimeout(() => {
+            const current = terminalSessionManager.getSnapshot(sessionId);
+            if (input.submitSeparately && current?.status === "running") {
+              terminalSessionManager.sendInput(sessionId, "\r");
+            }
+          }, PROFILE_HEALTH_CLAUDE_SUBMIT_DELAY_MS);
+          dispose();
+          resolve();
+        }, PROFILE_HEALTH_CLAUDE_INPUT_SETTLE_MS);
+      },
+      onStatus: (snapshot) => {
+        if (snapshot.status === "running") return;
+        dispose();
+        reject(new Error(`Claude CLI 在提交健康检测提示前退出，代码 ${snapshot.exitCode ?? "未知"}`));
+      },
+    });
+    function dispose(): void {
+      clearTimeout(timeout);
+      if (readyTimer) clearTimeout(readyTimer);
+      disposeAttachment();
+    }
+  });
+}
+
+async function readProfileHealthAssistantText(filePath: string): Promise<string> {
+  for (const delayMs of PROFILE_HEALTH_ASSISTANT_READ_RETRY_MS) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      const assistantText = (await readLastAssistantTextFromSessionFile(filePath)).trim();
+      if (assistantText) return assistantText;
+    } catch {
+      // A just-written JSONL record can be briefly unavailable; retry only the read.
+    }
+  }
+  return "";
+}
+
+async function runProfileHealthCliProbe(options: {
+  profile: Profile;
+  target: ProfileHealthTarget;
+  previous?: ProfileHealthState;
+  timeoutMs: number;
+}): Promise<ProfileHealthState> {
+  const startedAt = Date.now();
+  const checkedAt = new Date(startedAt).toISOString();
+  const service = getProfileService();
+  const savedRuntime = service.getState().runtime_by_profile[options.target.profile_key]
+    ?? defaultRuntimeSettings(options.profile.provider);
+  const runtime: RuntimeSettings = {
+    ...savedRuntime,
+    launch_mode: "new",
+    terminal_mode: "monitored",
+    startup_mode: "managed",
+    extra_env: { ...savedRuntime.extra_env },
+  };
+  const prompt = buildProfileHealthPrompt(options.previous?.checkpoint);
+  const request: LaunchRequest = {
+    profile_key: options.target.profile_key,
+    provider: options.profile.provider,
+    runtime_settings: runtime,
+    terminal_mode: "monitored",
+    permission_override: "readonly",
+    model_override: options.target.model_id,
+    disable_codex_hooks: true,
+  };
+  let terminalSessionId = "";
+  try {
+    const profileHealthCodexHome = options.target.provider === "codex"
+      ? await ensureProfileHealthCodexHome(runtime.cwd)
+      : undefined;
+    const { plan } = await prepareLaunchExecution(request, {
+      codexHomeOverride: profileHealthCodexHome,
+    });
+    const initialPromptEnvKey = "CODEDECK_AGENT_INITIAL_PROMPT_BASE64";
+    const initialPromptBase64 = Buffer.from(prompt, "utf8").toString("base64");
+    const codexLaunchPlan = options.target.provider === "codex"
+      ? { ...plan, agentInitialPromptEnvKey: initialPromptEnvKey }
+      : plan;
+    const snapshot = await launchMonitoredTerminalSession(codexLaunchPlan, {
+      showWindow: false,
+      expectedPreview: prompt,
+      ...(options.target.provider === "codex"
+        ? { additionalEnv: { [initialPromptEnvKey]: initialPromptBase64 } }
+        : {}),
+    });
+    terminalSessionId = snapshot.sessionId;
+    const completedFile = waitForProfileHealthTurn(terminalSessionId, options.timeoutMs);
+    const filePath = options.target.provider === "claude"
+      ? (await Promise.all([
+          submitClaudeProfileHealthPrompt(terminalSessionId, prompt),
+          completedFile,
+        ]))[1]
+      : await completedFile;
+    const assistantText = await readProfileHealthAssistantText(filePath);
+    const latencyMs = Date.now() - startedAt;
+    if (!assistantText) {
+      return createFailedProfileHealthState({
+        target: options.target,
+        previous: options.previous,
+        status: "model_unavailable",
+        reasonCode: "empty_response",
+        message: "CLI 回合已完成，但会话 JSONL 中没有可读取的 assistant 文本",
+        checkedAt,
+        latencyMs,
+      });
+    }
+    return createCompletedProfileHealthState({
+      target: options.target,
+      previous: options.previous,
+      assistantText,
+      checkedAt,
+      latencyMs,
+    });
+  } catch (error) {
+    const snapshot = terminalSessionId
+      ? terminalSessionManager.getSnapshot(terminalSessionId)
+      : undefined;
+    const terminalEvidence = cleanTerminalText(snapshot?.output ?? "").slice(-4_000);
+    const errorEvidence = error instanceof Error ? error.message : String(error ?? "");
+    const failure = classifyProfileHealthCliFailure(
+      [errorEvidence, terminalEvidence].filter(Boolean).join("\n"),
+      {
+        timedOut: error instanceof ProfileHealthTimeoutError,
+        secrets: [getProfileApiKey(options.profile)],
+      },
+    );
+    return createFailedProfileHealthState({
+      target: options.target,
+      previous: options.previous,
+      status: failure.status,
+      reasonCode: failure.reasonCode,
+      message: failure.message,
+      checkedAt,
+      latencyMs: Date.now() - startedAt,
+    });
+  } finally {
+    if (terminalSessionId) {
+      settleActiveProfileHealthTurn(
+        terminalSessionId,
+        { error: new Error("健康检测会话已结束") },
+      );
+      stopTerminalTitleResolution(terminalSessionId);
+      stopTerminalLifecycleWatcher(terminalSessionId);
+      completedTerminalTurnFiles.delete(terminalSessionId);
+      try {
+        await terminalSessionManager.closeSession(terminalSessionId, "profile_health_completed");
+      } catch {
+        // The PTY may already have exited; cleanup is best effort in that case.
+      }
+    }
+  }
+}
+
+async function testProfileHealth(request: ProfileHealthTestRequest): Promise<ProfileHealthTestResult> {
+  if (isOfficialNativeProfile(request.profile)) {
+    throw new Error("官方原生 Profile 不支持主动健康检测");
+  }
+  const savedProfile = resolveSavedProfileHealthMatch(request);
+  if (!savedProfile) {
+    throw new Error("请先保存 Profile，并确保当前表单没有未保存修改");
+  }
+  const profileKey = itemKey(savedProfile);
+  const target = buildProfileHealthTarget(savedProfile, profileKey);
+  const targetKey = profileHealthTargetKey(target);
+  const runtime = getProfileService().getState().runtime_by_profile[profileKey]
+    ?? defaultRuntimeSettings(savedProfile.provider);
+  if (!target.base_url || !getProfileApiKey(savedProfile).trim() || !target.model_id) {
+    throw new Error("检测需要当前渠道的 Base URL、API Key 和模型 ID");
+  }
+  if (!runtime.cwd.trim() || !runtime.command_base.trim()) {
+    throw new Error("检测需要已保存的工作目录和 CLI 命令");
+  }
+  const currentRun = profileHealthRunsByTarget.get(targetKey);
+  if (currentRun) {
+    return currentRun;
+  }
+
+  const run = (async (): Promise<ProfileHealthTestResult> => {
+    const previous = getProfileService().getState().profile_health_by_target[targetKey];
+    const runningState = createRunningProfileHealthState(target, previous);
+    const runningEvent: ProfileHealthProgressEvent = {
+      target_key: targetKey,
+      state: runningState,
+      persisted: true,
+    };
+    await enqueueProfileHealthStateUpdate((state) => {
+      state.profile_health_by_target[targetKey] = runningState;
+    });
+    broadcastProfileHealthProgress(runningEvent);
+
+    const resultState = await enqueueProfileHealthCliProbe(() =>
+      runProfileHealthCliProbe({
+        profile: savedProfile,
+        target,
+        previous,
+        timeoutMs: getProfileService().getState().parameter_settings.connectivity_test_timeout_ms,
+      }));
+    const persisted = Boolean(resolveSavedProfileHealthMatch(request));
+    if (persisted) {
+      await enqueueProfileHealthStateUpdate((state) => {
+        state.profile_health_by_target[targetKey] = resultState;
+      });
+    }
+    const result = { target_key: targetKey, state: resultState, persisted };
+    broadcastProfileHealthProgress(result);
+    return result;
+  })();
+
+  profileHealthRunsByTarget.set(targetKey, run);
+  try {
+    return await run;
+  } finally {
+    if (profileHealthRunsByTarget.get(targetKey) === run) {
+      profileHealthRunsByTarget.delete(targetKey);
+    }
+  }
 }
 
 function stopTerminalLifecycleWatcher(sessionId: string): void {
@@ -1246,8 +1659,18 @@ async function launchMonitoredTerminalSession(
   return snapshot;
 }
 
-async function prepareCapabilityOverlay(request: LaunchRequest): Promise<LaunchRequest["capability_overlay"]> {
+interface PrepareLaunchExecutionOptions {
+  codexHomeOverride?: string;
+}
+
+async function prepareCapabilityOverlay(
+  request: LaunchRequest,
+  options: PrepareLaunchExecutionOptions = {},
+): Promise<LaunchRequest["capability_overlay"]> {
   if (request.runtime_settings.startup_mode === "native") {
+    return undefined;
+  }
+  if (request.provider.trim().toLowerCase() === "codex" && options.codexHomeOverride?.trim()) {
     return undefined;
   }
   if (!getSettingsStateService().getParameterSettings().inherit_global_capabilities) {
@@ -1273,17 +1696,22 @@ async function prepareCapabilityOverlay(request: LaunchRequest): Promise<LaunchR
   return undefined;
 }
 
-async function prepareLaunchExecution(request: LaunchRequest): Promise<{
+async function prepareLaunchExecution(
+  request: LaunchRequest,
+  options: PrepareLaunchExecutionOptions = {},
+): Promise<{
   planRequest: LaunchRequest;
   plan: ReturnType<LaunchService["buildExecutionPlan"]>;
 }> {
   await validateCodexResumeSession(request);
-  const capability_overlay = await prepareCapabilityOverlay(request);
+  const capability_overlay = await prepareCapabilityOverlay(request, options);
   const planRequest: LaunchRequest = {
     ...request,
     capability_overlay,
   };
-  const plan = getLaunchService().buildExecutionPlan(planRequest);
+  const plan = getLaunchService().buildExecutionPlan(planRequest, {
+    codexHomeOverride: options.codexHomeOverride,
+  });
   appLogger.info("launcher", "launch_plan_created", "Launch plan created", {
     context: {
       provider: request.provider,
@@ -1310,7 +1738,13 @@ async function prepareLaunchExecution(request: LaunchRequest): Promise<{
     });
   }
   if (plan.codexConfig) {
-    await getModelMappingConfigService().writeCodexProfile({
+    const configService = options.codexHomeOverride?.trim()
+      ? new ModelMappingConfigService({
+          appDataRoot: path.join(projectRoot, "app-data"),
+          codexHome: options.codexHomeOverride,
+        })
+      : getModelMappingConfigService();
+    await configService.writeCodexProfile({
       profileId: request.profile_key,
       profileName: plan.codexConfig.profileName,
       providerId: plan.codexConfig.providerId,
@@ -1507,6 +1941,7 @@ function buildProfileBootstrapPayload(): BootstrapResult {
       profile_organization_by_provider: state.profile_organization_by_provider,
       runtime_by_profile: state.runtime_by_profile,
       balance_checks_by_profile: state.balance_checks_by_profile,
+      profile_health_by_target: state.profile_health_by_target,
       checkin_states_by_account: state.checkin_states_by_account,
       checkin_next_scheduled_at: state.checkin_next_scheduled_at,
       global_settings: state.global_settings,
@@ -2687,6 +3122,46 @@ async function executeCheckinAccountOnce(
   return result;
 }
 
+function unexpectedCheckinFailure(account: SiteBalanceSession): CheckinResult {
+  const baseUrl = normalizeBalanceBaseUrl(account.base_url);
+  return {
+    status: "failed",
+    success: false,
+    message: "签到过程中发生异常，请重试",
+    endpoint: `${baseUrl}/api/user/checkin`,
+    error_code: "unknown_failure",
+  };
+}
+
+async function persistUnexpectedCheckinFailure(
+  account: SiteBalanceSession,
+  trigger: CheckinTrigger,
+  deferStateSave: boolean,
+): Promise<void> {
+  const baseUrl = normalizeBalanceBaseUrl(account.base_url);
+  const accountKey = buildCheckinAccountKey(baseUrl, account.id);
+  const current = getProfileService().getState().checkin_states_by_account[accountKey];
+  const now = new Date();
+  const today = localDateKey(now);
+  const result = unexpectedCheckinFailure(account);
+  await persistCheckinAccountState(accountKey, {
+    status: result.status,
+    trigger,
+    message: result.message,
+    endpoint: result.endpoint,
+    error_code: result.error_code,
+    last_attempt_at: now.toISOString(),
+    ...(trigger === "automatic"
+      ? { last_auto_attempt_local_date: today }
+      : current?.last_auto_attempt_local_date
+        ? { last_auto_attempt_local_date: current.last_auto_attempt_local_date }
+        : {}),
+    ...(current?.satisfied_local_date
+      ? { satisfied_local_date: current.satisfied_local_date }
+      : {}),
+  }, deferStateSave);
+}
+
 function executeCheckinAccount(
   account: SiteBalanceSession,
   trigger: CheckinTrigger,
@@ -2700,7 +3175,14 @@ function executeCheckinAccount(
   if (running) {
     return running;
   }
-  const operation = executeCheckinAccountOnce(account, trigger, verificationPolicy).finally(() => {
+  const operation = checkinExecutionQueue.enqueue(async () => {
+    try {
+      return await executeCheckinAccountOnce(account, trigger, verificationPolicy);
+    } catch (error) {
+      await persistUnexpectedCheckinFailure(account, trigger, verificationPolicy === "defer");
+      throw error;
+    }
+  }).finally(() => {
     checkinRunsByAccount.delete(accountKey);
   });
   checkinRunsByAccount.set(accountKey, operation);
@@ -2797,30 +3279,21 @@ async function runCheckinBatch(
   accounts: SiteBalanceSession[],
   trigger: CheckinTrigger,
 ): Promise<CheckinBatchSummary> {
-  const grouped = new Map<string, SiteBalanceSession[]>();
-  for (const account of accounts) {
-    const baseUrl = normalizeBalanceBaseUrl(account.base_url);
-    grouped.set(baseUrl, [...(grouped.get(baseUrl) ?? []), account]);
-  }
-
-  const groups = [...grouped.values()];
-  const results: Array<{ account: SiteBalanceSession; result: CheckinResult }> = [];
-  let groupIndex = 0;
-  const workers = Array.from({ length: Math.min(3, groups.length) }, async () => {
-    while (groupIndex < groups.length) {
-      const currentIndex = groupIndex;
-      groupIndex += 1;
-      for (const account of groups[currentIndex]) {
-        const result = await executeCheckinAccount(account, trigger, "defer");
-        results.push({ account, result });
-      }
-    }
-  });
+  let settledResults: PromiseSettledResult<CheckinResult>[] = [];
   try {
-    await Promise.all(workers);
+    settledResults = await settleCheckinsSequentially(
+      accounts,
+      (account) => executeCheckinAccount(account, trigger, "defer"),
+    );
   } finally {
     await flushCheckinLocalState();
   }
+  const results = settledResults.map((settled, index) => ({
+    account: accounts[index],
+    result: settled.status === "fulfilled"
+      ? settled.value
+      : unexpectedCheckinFailure(accounts[index]),
+  }));
 
   for (const { account, result } of results) {
     if (result.status === "success" || result.status === "already_checked") {
@@ -3736,6 +4209,43 @@ function registerAllIpcHandlers(): void {
   );
 
   handleIpc(
+    "profile-health:test",
+    async (_event, request: ProfileHealthTestRequest) => testProfileHealth(request),
+    { includeArgs: false },
+  );
+
+  handleIpc(
+    "profile-health:get",
+    (_event, request: ProfileHealthTestRequest): ProfileHealthTestResult | null => {
+      const profileKey = request.profile_key?.trim() ?? "";
+      const target = buildProfileHealthTarget(request.profile, profileKey);
+      const targetKey = profileHealthTargetKey(target);
+      const savedMatch = resolveSavedProfileHealthMatch(request);
+      const persistedState = savedMatch
+        ? getProfileService().getState().profile_health_by_target[targetKey]
+        : undefined;
+      return persistedState
+        ? { target_key: targetKey, state: persistedState, persisted: true }
+        : null;
+    },
+    { includeArgs: false, level: "debug" },
+  );
+
+  handleIpc(
+    "profile-health:clear",
+    async (_event, request: ProfileHealthTestRequest): Promise<void> => {
+      const target = buildProfileHealthTarget(request.profile, request.profile_key?.trim() ?? "");
+      const targetKey = profileHealthTargetKey(target);
+      if (resolveSavedProfileHealthMatch(request)) {
+        await enqueueProfileHealthStateUpdate((state) => {
+          delete state.profile_health_by_target[targetKey];
+        });
+      }
+    },
+    { includeArgs: false },
+  );
+
+  handleIpc(
     "profile:refresh-channel-models",
     async (_event, profileKey: ProfileKey, channelId: string) => {
       const svc = getProfileService();
@@ -3934,6 +4444,18 @@ function registerAllIpcHandlers(): void {
     try {
       if (plan.terminalMode === "monitored") {
         const snapshot = await launchMonitoredTerminalSession(plan);
+        const launchedProfile = getProfileService().getProfiles()
+          .find((profile) => itemKey(profile) === request.profile_key);
+        if (launchedProfile && !isOfficialNativeProfile(launchedProfile)) {
+          const healthTarget = buildProfileHealthTarget(
+            launchedProfile,
+            request.profile_key,
+            request.model_override,
+          );
+          if (healthTarget.base_url && healthTarget.channel_id && healthTarget.model_id) {
+            terminalProfileHealthTargets.set(snapshot.sessionId, healthTarget);
+          }
+        }
         invalidateSessionCaches(request.provider);
         appLogger.info("launcher", "launch_success", "Monitored terminal session started", {
           durationMs: Date.now() - startedAt,

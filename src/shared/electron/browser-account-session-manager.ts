@@ -27,6 +27,10 @@ export interface BrowserAccountStatusSnapshot {
 export interface BrowserAccountDiagnosticEvent {
   event: "login_probe_capability" | "login_probe_result" | "login_canceled";
   authMode?: ManagementRequestContext["authMode"];
+  transport?: "session_fetch" | "page_fetch";
+  candidatePlatform?: "new_api" | "sub2api" | "none";
+  candidateHasUserId?: boolean;
+  candidateHasBearer?: boolean;
   httpStatus?: number;
   result?: "ready" | "retry" | "account_mismatch" | "login_required" | "error";
   reason?: "window_close_unverified";
@@ -97,9 +101,23 @@ interface LegacyIdentityCandidate {
 type LegacyIdentityPlatform = "new_api" | "sub2api";
 
 type LegacyIdentityVerification =
-  | { kind: "ready"; userId: string }
-  | { kind: "account_mismatch" }
-  | { kind: "login_required" };
+  | {
+      kind: "ready";
+      userId: string;
+      candidate: LegacyIdentityCandidate;
+      httpStatus: number;
+      transport: "session_fetch" | "page_fetch";
+    }
+  | {
+      kind: "account_mismatch";
+      httpStatus: number;
+      transport: "session_fetch" | "page_fetch";
+    }
+  | {
+      kind: "login_required";
+      httpStatus: number;
+      transport: "session_fetch" | "page_fetch";
+    };
 
 interface LoginTask {
   request: BrowserAccountLoginRequest;
@@ -116,6 +134,13 @@ interface LoginTask {
 interface JsonResponse {
   status: number;
   payload: unknown;
+}
+
+interface PageFetchResult {
+  status: number;
+  statusText: string;
+  headers: Array<[string, string]>;
+  body: string;
 }
 
 const PARTITION_PREFIX = "persist:codedeck-newapi-";
@@ -148,6 +173,7 @@ export class BrowserAccountSessionManager {
   private readonly loginTasks = new Map<string, LoginTask>();
   private readonly loginQueue: LoginTask[] = [];
   private readonly recoveryWindows = new Map<BrowserWindow, string>();
+  private readonly legacyPageWindows = new Map<string, Promise<BrowserWindow>>();
   private activeLoginTask: LoginTask | null = null;
 
   constructor(private readonly dependencies: BrowserAccountSessionManagerDependencies) {}
@@ -278,6 +304,7 @@ export class BrowserAccountSessionManager {
       if (!browserWindow.isDestroyed()) browserWindow.close();
     }
     this.recoveryWindows.clear();
+    this.legacyPageWindows.clear();
     this.refreshes.clear();
     this.sub2ApiRefreshes.clear();
     this.states.clear();
@@ -537,6 +564,18 @@ export class BrowserAccountSessionManager {
         const liveState = this.assertLegacyRuntime(accountKey, generation, allowUnverified);
         if (response.status === 401 || response.status === 403) {
           const liveCandidate = runtimeCandidate(liveState);
+          if (liveCandidate?.platform === "new_api") {
+            const pageResponse = await this.fetchLegacyRequestInPage(
+              accountKey,
+              account,
+              input,
+              requestHeaders ? { ...init, headers: requestHeaders } : init,
+            );
+            this.assertLegacyRuntime(accountKey, generation, allowUnverified);
+            if (pageResponse.status !== 401 && pageResponse.status !== 403) {
+              return pageResponse;
+            }
+          }
           if (
             liveState.legacyPlatform === "sub2api"
             && liveState.legacyUserId
@@ -588,13 +627,17 @@ export class BrowserAccountSessionManager {
     const cookieCandidate: LegacyIdentityCandidate | null = expectedUserId
       ? { platform: "new_api", userId: expectedUserId }
       : null;
-    const cookieVerification = await this.verifyLegacyIdentity(account, cookieCandidate, expectedUserId);
+    const cookieVerification = await this.verifyLegacyIdentity(
+      accountKey,
+      account,
+      cookieCandidate,
+      expectedUserId,
+      undefined,
+      false,
+    );
     this.assertGeneration(accountKey, generation);
     if (cookieVerification.kind === "ready") {
-      this.setLegacyRuntime(accountKey, {
-        platform: "new_api",
-        userId: cookieVerification.userId,
-      });
+      this.setLegacyRuntime(accountKey, cookieVerification.candidate);
       return this.buildLegacyContext(accountKey, account);
     }
     if (cookieVerification.kind === "account_mismatch") {
@@ -609,6 +652,7 @@ export class BrowserAccountSessionManager {
       throw new BrowserLoginRequiredError();
     }
     const recoveredVerification = await this.verifyLegacyIdentity(
+      accountKey,
       account,
       recoveredCandidate,
       expectedUserId,
@@ -623,33 +667,99 @@ export class BrowserAccountSessionManager {
       );
     }
     this.setLegacyRuntime(accountKey, {
-      ...recoveredCandidate,
-      userId: recoveredVerification.userId,
+      ...recoveredVerification.candidate,
     });
     return this.buildLegacyContext(accountKey, account);
   }
 
   private async verifyLegacyIdentity(
+    accountKey: string,
     account: SiteBalanceSession,
     candidate: LegacyIdentityCandidate | null,
     expectedUserId: string | null,
+    browserWindow?: BrowserWindow,
+    allowPageFallback: boolean = true,
   ): Promise<LegacyIdentityVerification> {
-    const response = await fetchJson(
+    const sessionVerification = await this.verifyLegacyIdentityWithFetch(
       this.buildBoundFetch(account),
-      `${requireBrowserOrigin(account)}${legacyIdentityEndpoint(candidate)}`,
+      requireBrowserOrigin(account),
+      candidate,
+      expectedUserId,
+    );
+    if (
+      sessionVerification.kind !== "login_required"
+      || (sessionVerification.httpStatus !== 401 && sessionVerification.httpStatus !== 403)
+      || candidate?.platform !== "new_api"
+      || !allowPageFallback
+    ) {
+      return sessionVerification;
+    }
+    try {
+      const pageFetch = browserWindow
+        ? this.buildPageFetch(browserWindow, requireBrowserOrigin(account))
+        : this.buildLegacyPageFetch(accountKey, account);
+      const pageVerification = await this.verifyLegacyIdentityWithFetch(
+        pageFetch,
+        requireBrowserOrigin(account),
+        candidate.bearer ? { platform: "new_api", userId: candidate.userId } : candidate,
+        expectedUserId,
+      );
+      if (pageVerification.httpStatus === 0) return sessionVerification;
+      return { ...pageVerification, transport: "page_fetch" };
+    } catch {
+      return sessionVerification;
+    }
+  }
+
+  private async verifyLegacyIdentityWithFetch(
+    requestFetch: typeof fetch,
+    browserOrigin: string,
+    candidate: LegacyIdentityCandidate | null,
+    expectedUserId: string | null,
+  ): Promise<LegacyIdentityVerification> {
+    let verifiedCandidate = candidate;
+    let response = await fetchJson(
+      requestFetch,
+      `${browserOrigin}${legacyIdentityEndpoint(candidate)}`,
       buildLegacyIdentityHeaders(candidate),
       this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
     );
-    if (!isSuccessfulHttpStatus(response.status)) return { kind: "login_required" };
-    const userId = extractBrowserUserId(response.payload, candidate?.platform ?? "new_api");
-    if (!userId) return { kind: "login_required" };
     if (
-      (candidate && candidate.userId !== userId)
+      (response.status === 401 || response.status === 403)
+      && candidate?.platform === "new_api"
+      && candidate.bearer
+    ) {
+      verifiedCandidate = { platform: "new_api", userId: candidate.userId };
+      response = await fetchJson(
+        requestFetch,
+        `${browserOrigin}${legacyIdentityEndpoint(verifiedCandidate)}`,
+        buildLegacyIdentityHeaders(verifiedCandidate),
+        this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+      );
+    }
+    if (!isSuccessfulHttpStatus(response.status)) {
+      return { kind: "login_required", httpStatus: response.status, transport: "session_fetch" };
+    }
+    const platform = verifiedCandidate?.platform ?? "new_api";
+    const userId = extractBrowserUserId(response.payload, platform);
+    if (!userId) {
+      return { kind: "login_required", httpStatus: response.status, transport: "session_fetch" };
+    }
+    if (
+      (verifiedCandidate && verifiedCandidate.userId !== userId)
       || (expectedUserId && expectedUserId !== userId)
     ) {
-      return { kind: "account_mismatch" };
+      return { kind: "account_mismatch", httpStatus: response.status, transport: "session_fetch" };
     }
-    return { kind: "ready", userId };
+    return {
+      kind: "ready",
+      userId,
+      candidate: verifiedCandidate
+        ? { ...verifiedCandidate, userId }
+        : { platform: "new_api", userId },
+      httpStatus: response.status,
+      transport: "session_fetch",
+    };
   }
 
   private refreshSub2ApiRuntime(
@@ -722,7 +832,7 @@ export class BrowserAccountSessionManager {
       bearer: refreshedCredentials.bearer,
       refreshToken: refreshedCredentials.refreshToken,
     };
-    const verification = await this.verifyLegacyIdentity(account, candidate, userId);
+    const verification = await this.verifyLegacyIdentity(accountKey, account, candidate, userId);
     this.assertGeneration(accountKey, generation);
     if (verification.kind !== "ready") {
       this.clearTransientState(accountKey, "login_required");
@@ -788,6 +898,132 @@ export class BrowserAccountSessionManager {
         redirect: "manual",
       });
     }) as typeof fetch;
+  }
+
+  private buildLegacyPageFetch(accountKey: string, account: SiteBalanceSession): typeof fetch {
+    const origin = requireBrowserOrigin(account);
+    return (async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
+      const browserWindow = await this.ensureLegacyPageWindow(accountKey, account);
+      return this.executePageFetch(browserWindow, origin, input, init);
+    }) as typeof fetch;
+  }
+
+  private buildPageFetch(browserWindow: BrowserWindow, expectedOrigin: string): typeof fetch {
+    return (async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> =>
+      this.executePageFetch(browserWindow, expectedOrigin, input, init)) as typeof fetch;
+  }
+
+  private async fetchLegacyRequestInPage(
+    accountKey: string,
+    account: SiteBalanceSession,
+    input: Parameters<typeof fetch>[0],
+    init?: RequestInit,
+  ): Promise<Response> {
+    return this.buildLegacyPageFetch(accountKey, account)(input, init);
+  }
+
+  private async ensureLegacyPageWindow(
+    accountKey: string,
+    account: SiteBalanceSession,
+  ): Promise<BrowserWindow> {
+    const existing = this.legacyPageWindows.get(accountKey);
+    if (existing) {
+      const browserWindow = await existing;
+      if (!browserWindow.isDestroyed()) return browserWindow;
+      this.legacyPageWindows.delete(accountKey);
+    }
+    const browserSessionId = requireBrowserSessionId(account);
+    const browserOrigin = requireBrowserOrigin(account);
+    const operation = (async () => {
+      const browserWindow = this.dependencies.createWindow(
+        this.buildWindowOptions(browserPartitionName(browserSessionId)),
+      );
+      this.recoveryWindows.set(browserWindow, accountKey);
+      this.configureRecoveryWindow(browserWindow, browserOrigin);
+      try {
+        await loadWindowUrlWithTimeout(
+          browserWindow,
+          browserOrigin,
+          this.dependencies.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
+        );
+        if (browserWindow.isDestroyed()) throw new BrowserLoginRequiredError();
+        return browserWindow;
+      } catch (error) {
+        this.recoveryWindows.delete(browserWindow);
+        if (!browserWindow.isDestroyed()) browserWindow.close();
+        throw error;
+      }
+    })();
+    this.legacyPageWindows.set(accountKey, operation);
+    try {
+      return await operation;
+    } catch (error) {
+      if (this.legacyPageWindows.get(accountKey) === operation) {
+        this.legacyPageWindows.delete(accountKey);
+      }
+      throw error;
+    }
+  }
+
+  private async executePageFetch(
+    browserWindow: BrowserWindow,
+    expectedOrigin: string,
+    input: Parameters<typeof fetch>[0],
+    init?: RequestInit,
+  ): Promise<Response> {
+    if (browserWindow.isDestroyed()) throw new BrowserLoginRequiredError();
+    const currentUrl = browserWindow.webContents.getURL();
+    if (new URL(currentUrl).origin !== expectedOrigin) {
+      throw new BrowserLoginRequiredError("浏览器页面不在目标后台来源");
+    }
+    const target = new URL(requestInputUrl(input));
+    if (target.origin !== expectedOrigin) {
+      throw new Error("浏览器会话拒绝跨来源请求");
+    }
+    const request = {
+      url: target.toString(),
+      method: init?.method ?? "GET",
+      headers: [...new Headers(init?.headers).entries()],
+      body: serializePageRequestBody(init?.body),
+    };
+    const serializedOrigin = JSON.stringify(expectedOrigin);
+    const serializedRequest = JSON.stringify(request);
+    const operation = browserWindow.webContents.executeJavaScript(
+      `(async () => {
+        if (window.location.origin !== ${serializedOrigin}) return null;
+        const request = ${serializedRequest};
+        try {
+          const response = await window.fetch(request.url, {
+            method: request.method,
+            headers: request.headers,
+            ...(request.body === null ? {} : { body: request.body }),
+            credentials: "include",
+            cache: "no-store",
+            redirect: "manual",
+          });
+          return {
+            status: response.status,
+            statusText: response.statusText,
+            headers: Array.from(response.headers.entries()),
+            body: await response.text(),
+          };
+        } catch {
+          return null;
+        }
+      })()`,
+      true,
+    ) as Promise<unknown>;
+    const value = await raceWithAbort(operation, init?.signal);
+    const result = parsePageFetchResult(value);
+    if (!result) throw new Error("浏览器页面请求失败");
+    const body = result.status === 204 || result.status === 205 || result.status === 304
+      ? null
+      : result.body;
+    return new Response(body, {
+      status: result.status,
+      statusText: result.statusText,
+      headers: result.headers,
+    });
   }
 
   private getSession(browserSessionId: string): Session {
@@ -966,59 +1202,69 @@ export class BrowserAccountSessionManager {
     try {
       const context = await this.resolveRequestContext(task.request.accountKey, account, true);
       if (task.finished) return null;
-      this.emitDiagnostic({
-        event: "login_probe_capability",
-        authMode: context.authMode,
-      });
       const legacyIdentityCandidate = context.authMode === "browser_cookie"
         ? await this.readLegacyIdentityCandidate(task)
         : null;
       if (task.finished) return null;
-      const response = await fetchJson(
-        context.fetch,
-        `${task.request.browserOrigin}${legacyIdentityEndpoint(legacyIdentityCandidate)}`,
-        { ...context.headers, ...buildLegacyIdentityHeaders(legacyIdentityCandidate) },
-        this.dependencies.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
-      );
+      this.emitDiagnostic({
+        event: "login_probe_capability",
+        authMode: context.authMode,
+        candidatePlatform: legacyIdentityCandidate?.platform ?? "none",
+        candidateHasUserId: Boolean(legacyIdentityCandidate?.userId),
+        candidateHasBearer: Boolean(legacyIdentityCandidate?.bearer),
+      });
+      const verification = context.authMode === "browser_cookie"
+        ? await this.verifyLegacyIdentity(
+            task.request.accountKey,
+            account,
+            legacyIdentityCandidate,
+            positiveIntegerString(task.request.expectedUserId),
+            task.window,
+          )
+        : await this.verifyLegacyIdentityWithFetch(
+            context.fetch,
+            task.request.browserOrigin,
+            legacyIdentityCandidate,
+            positiveIntegerString(task.request.expectedUserId),
+          );
       if (task.finished) return null;
-      const userId = isSuccessfulHttpStatus(response.status)
-        ? extractBrowserUserId(response.payload, legacyIdentityCandidate?.platform ?? "new_api")
-        : null;
-      if (userId) {
-        if (
-          (legacyIdentityCandidate && legacyIdentityCandidate.userId !== userId)
-          || (task.request.expectedUserId && task.request.expectedUserId !== userId)
-        ) {
-          this.emitDiagnostic({
-            event: "login_probe_result",
-            authMode: context.authMode,
-            httpStatus: response.status,
-            result: "account_mismatch",
-          });
-          return {
-            status: "account_mismatch",
-            message: "浏览器中登录的账号与目标账号不一致",
-          };
-        }
+      if (verification.kind === "account_mismatch") {
+        this.emitDiagnostic({
+          event: "login_probe_result",
+          authMode: context.authMode,
+          transport: verification.transport,
+          httpStatus: verification.httpStatus,
+          result: "account_mismatch",
+        });
+        return {
+          status: "account_mismatch",
+          message: "浏览器中登录的账号与目标账号不一致",
+        };
+      }
+      if (verification.kind === "ready") {
         await this.getSession(task.request.browserSessionId).cookies.flushStore();
         if (task.finished) return null;
         if (context.authMode === "browser_cookie") {
-          this.setLegacyRuntime(task.request.accountKey, legacyIdentityCandidate
-            ? { ...legacyIdentityCandidate, userId }
-            : { platform: "new_api", userId });
+          this.setLegacyRuntime(task.request.accountKey, verification.candidate);
         }
         this.emitDiagnostic({
           event: "login_probe_result",
           authMode: context.authMode,
-          httpStatus: response.status,
+          transport: verification.transport,
+          httpStatus: verification.httpStatus,
           result: "ready",
         });
-        return { status: "ready", userId, message: "浏览器登录成功" };
+        return {
+          status: "ready",
+          userId: verification.userId,
+          message: "浏览器登录成功",
+        };
       }
       this.emitDiagnostic({
         event: "login_probe_result",
         authMode: context.authMode,
-        httpStatus: response.status,
+        transport: verification.transport,
+        httpStatus: verification.httpStatus,
         result: "retry",
       });
     } catch (error) {
@@ -1253,6 +1499,7 @@ export class BrowserAccountSessionManager {
   }
 
   private closeRecoveryWindows(accountKey: string): void {
+    this.legacyPageWindows.delete(accountKey);
     for (const [browserWindow, ownerAccountKey] of this.recoveryWindows) {
       if (ownerAccountKey !== accountKey) continue;
       this.recoveryWindows.delete(browserWindow);
@@ -1519,6 +1766,48 @@ function isModernAuthPayload(payload: unknown): boolean {
 
 function positiveNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function requestInputUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function serializePageRequestBody(body: RequestInit["body"]): string | null {
+  if (body === undefined || body === null) return null;
+  if (typeof body === "string") return body;
+  if (body instanceof URLSearchParams) return body.toString();
+  throw new Error("浏览器页面请求暂不支持该请求体类型");
+}
+
+function parsePageFetchResult(value: unknown): PageFetchResult | null {
+  const root = asRecord(value);
+  const status = typeof root?.status === "number" && Number.isInteger(root.status)
+    ? root.status
+    : 0;
+  if (status < 200 || status > 599) return null;
+  const statusText = typeof root?.statusText === "string" ? root.statusText : "";
+  const body = typeof root?.body === "string" ? root.body : "";
+  const headers = Array.isArray(root?.headers)
+    ? root.headers.flatMap((entry): Array<[string, string]> => {
+        if (!Array.isArray(entry) || entry.length !== 2) return [];
+        return typeof entry[0] === "string" && typeof entry[1] === "string"
+          ? [[entry[0], entry[1]]]
+          : [];
+      })
+    : [];
+  return { status, statusText, body, headers };
+}
+
+async function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 function isSuccessfulHttpStatus(status: number): boolean {

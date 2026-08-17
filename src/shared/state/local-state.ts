@@ -27,6 +27,10 @@ import {
   normalizeSiteCapabilityCache,
   type SiteCapabilityCache,
 } from "../site-capability-cache.js";
+import {
+  normalizeProfileHealthByTarget,
+  type ProfileHealthByTarget,
+} from "../profile-health/types.js";
 
 export interface FavoriteSessionSummary extends SessionSummary {
   favorite_key: string;
@@ -41,6 +45,7 @@ export interface LocalState {
   profile_organization_by_provider: Record<string, ProfileOrganization>;
   runtime_by_profile: Record<ProfileKey, RuntimeSettings>;
   balance_checks_by_profile: Record<ProfileKey, BalanceCheckState>;
+  profile_health_by_target: ProfileHealthByTarget;
   checkin_states_by_account: CheckinStatesByAccount;
   checkin_next_scheduled_at: string;
   site_capability_cache: SiteCapabilityCache;
@@ -69,6 +74,7 @@ export type BootstrapLocalState = Pick<
   | "balance_checks_by_profile"
   | "global_settings"
 > & {
+  profile_health_by_target?: ProfileHealthByTarget;
   profile_organization_by_provider?: Record<string, ProfileOrganization>;
   checkin_states_by_account?: CheckinStatesByAccount;
   checkin_next_scheduled_at?: string;
@@ -94,6 +100,7 @@ export function defaultLocalState(): LocalState {
     profile_organization_by_provider: {},
     runtime_by_profile: {},
     balance_checks_by_profile: {},
+    profile_health_by_target: {},
     checkin_states_by_account: {},
     checkin_next_scheduled_at: "",
     site_capability_cache: emptySiteCapabilityCache(),
@@ -123,6 +130,7 @@ export function ensureInitialized(state: LocalState): LocalState {
   );
   state.runtime_by_profile ??= {};
   state.balance_checks_by_profile ??= {};
+  state.profile_health_by_target = normalizeProfileHealthByTarget(state.profile_health_by_target);
   state.checkin_states_by_account = normalizeCheckinStatesByAccount(
     state.checkin_states_by_account,
   );
@@ -156,6 +164,7 @@ export function mergeBootstrapState(state: BootstrapLocalState): LocalState {
     ),
     runtime_by_profile: { ...state.runtime_by_profile },
     balance_checks_by_profile: { ...state.balance_checks_by_profile },
+    profile_health_by_target: normalizeProfileHealthByTarget(state.profile_health_by_target),
     checkin_states_by_account: normalizeCheckinStatesByAccount(state.checkin_states_by_account),
     checkin_next_scheduled_at: state.checkin_next_scheduled_at ?? "",
     site_capability_cache: normalizeSiteCapabilityCache(state.site_capability_cache),

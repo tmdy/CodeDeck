@@ -2,6 +2,27 @@ import { describe, expect, it } from "vitest";
 import { normalizeCheckinStatesByAccount } from "../../checkin/types.js";
 
 describe("normalizeCheckinStatesByAccount", () => {
+  it("recovers a persisted running state as a retryable failure after restart", () => {
+    expect(normalizeCheckinStatesByAccount({
+      "https://example.com::account-a": {
+        status: "running",
+        trigger: "manual",
+        message: "正在签到...",
+        endpoint: "https://example.com/api/user/checkin",
+        last_attempt_at: "2026-08-17T10:00:00.000Z",
+      },
+    })).toEqual({
+      "https://example.com::account-a": {
+        status: "failed",
+        trigger: "manual",
+        message: "上次签到已中断，请重新签到",
+        endpoint: "https://example.com/api/user/checkin",
+        error_code: "unknown_failure",
+        last_attempt_at: "2026-08-17T10:00:00.000Z",
+      },
+    });
+  });
+
   it("recovers a persisted verifying state as manual-required after restart", () => {
     expect(normalizeCheckinStatesByAccount({
       "https://example.com::account-a": {

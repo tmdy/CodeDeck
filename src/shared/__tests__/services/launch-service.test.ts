@@ -852,6 +852,40 @@ describe("LaunchService", () => {
     expect(plan.env.CODEX_SITE_API_KEY_A632B8AC583C81DE).toBe("sk-glm");
   });
 
+  it("should isolate a Codex health plan in an explicit home without changing ordinary plans", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "Health Relay",
+      url: "https://relay.example/v1",
+      key: "sk-health",
+      selectedModelId: "gpt-health",
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: "D:/CodeDeck/app-data/codex-profiles",
+      codexHome: "C:/Users/test/.codex",
+    });
+    const request = {
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex" }),
+    };
+    const healthHome = "D:\\Profiles With Spaces\\Current Profile\\.codedeck\\profile-health\\codex-home";
+
+    const healthPlan = launchService.buildExecutionPlan(request, {
+      codexHomeOverride: healthHome,
+    });
+    const ordinaryPlan = launchService.buildExecutionPlan(request);
+
+    expect(healthPlan.env.CODEX_HOME).toBe(healthHome.replaceAll("\\", "/"));
+    expect(healthPlan.codexConfig?.configFilePath).toBe(
+      `${healthHome.replaceAll("\\", "/")}/${healthPlan.codexConfig?.profileName}.config.toml`,
+    );
+    expect(ordinaryPlan.env.CODEX_HOME).toBe("C:/Users/test/.codex");
+    expect(ordinaryPlan.codexConfig?.configFilePath).toContain("C:/Users/test/.codex/");
+  });
+
   it("should write configured Codex wire API and skip git repo check into the profile config", () => {
     const profile: Profile = {
       provider: "codex",

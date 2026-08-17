@@ -43,6 +43,7 @@ import {
   PROVIDER_CLAUDE,
   PROVIDER_CODEX,
   defaultRuntimeSettings,
+  isOfficialNativeProfile,
   normalizeRuntimeTerminalMode,
   resolveClaudeModelAliasMode,
   shouldRecommendClaudeSingleModelCompatibility,
@@ -87,6 +88,13 @@ import {
 } from "./shared/balance/site-balance-sessions.js";
 import { normalizeThemeMode, resolveEffectiveTheme } from "./shared/theme.js";
 import { toggleSavedArgText } from "./shared/provider/cli-args.js";
+import {
+  buildProfileHealthTarget,
+  profileHealthTargetKey,
+  profileHealthRequestMatchesSavedProfile,
+  type ProfileHealthTestRequest,
+} from "./shared/profile-health/types.js";
+import { buildProfileHealthListEntry } from "./shared/profile-health/presentation.js";
 
 type TabId = "skills" | "profiles" | "sessions" | "settings";
 type SessionsViewId = "claude" | "codex" | "favorites";
@@ -2271,6 +2279,20 @@ function App() {
     return unsub;
   }, [balanceKey]);
 
+  useEffect(() => {
+    if (!window.profileManager?.onProfileHealthProgress) return;
+    return window.profileManager.onProfileHealthProgress((event) => {
+      if (!event.persisted) return;
+      setState((current) => current ? {
+        ...current,
+        profile_health_by_target: {
+          ...current.profile_health_by_target,
+          [event.target_key]: event.state,
+        },
+      } : current);
+    });
+  }, []);
+
   // ---- 会话 ----
   function buildProfilesSessionsRequest(
     nextState: LocalState | null = state,
@@ -3508,6 +3530,97 @@ function App() {
     draftPermissions,
     draftUrl,
   ]);
+  const healthProbeProfile = useMemo<Profile>(() => ({
+    provider: selectedProvider,
+    name: draftName,
+    url: draftUrl,
+    key: draftKey,
+    selectedModelId: draftModel,
+    channels: draftChannels,
+    activeChannelId: draftActiveChannelId,
+    advancedModelMapping: draftAdvancedModelMapping,
+    permissions: draftPermissions ?? undefined,
+  }), [
+    draftActiveChannelId,
+    draftAdvancedModelMapping,
+    draftChannels,
+    draftKey,
+    draftModel,
+    draftName,
+    draftPermissions,
+    draftUrl,
+    selectedProvider,
+  ]);
+  const profileHealthRequest = useMemo<ProfileHealthTestRequest>(() => ({
+    profile_key: editingKey || undefined,
+    profile: healthProbeProfile,
+  }), [editingKey, healthProbeProfile]);
+  const currentProfileHealthTarget = useMemo(
+    () => buildProfileHealthTarget(healthProbeProfile, editingKey),
+    [editingKey, healthProbeProfile],
+  );
+  const currentProfileHealthTargetKey = profileHealthTargetKey(currentProfileHealthTarget);
+  const savedHealthProfile = editingKey
+    ? profiles.find((profile) => itemKey(profile) === editingKey)
+    : undefined;
+  const profileHealthDraftIsClean = Boolean(
+    editorBaseline
+    && !hasProfileDraftChanges(currentDraftSnapshot(), editorBaseline),
+  );
+  const savedHealthMatchesDraft = Boolean(
+    savedHealthProfile
+    && !isOfficialNativeProfile(savedHealthProfile)
+    && profileHealthDraftIsClean
+    && profileHealthRequestMatchesSavedProfile(savedHealthProfile, profileHealthRequest),
+  );
+  const editorHealthState = savedHealthMatchesDraft
+    ? state?.profile_health_by_target[currentProfileHealthTargetKey]
+    : undefined;
+  const profileHealthDisabledReason = isOfficialNativeProfile(healthProbeProfile)
+    ? ""
+    : !editingKey || !editorBaseline
+      ? "请先保存 Profile"
+      : !profileHealthDraftIsClean || !savedHealthMatchesDraft
+        ? "请先保存当前修改"
+        : !draftUrl.trim() || !draftKey.trim() || !draftModel.trim()
+          ? "需要当前渠道的 Base URL、API Key 和模型 ID"
+          : !draftCwd.trim() || !draftCommandBase.trim()
+            ? "需要已保存的工作目录和 CLI 命令"
+            : "";
+  const profileHealthEntries = useMemo(() => {
+    const result: Record<ProfileKey, ReturnType<typeof buildProfileHealthListEntry>> = {};
+    for (const profile of profiles) {
+      if (isOfficialNativeProfile(profile)) continue;
+      const key = itemKey(profile);
+      const targetKey = profileHealthTargetKey(buildProfileHealthTarget(profile, key));
+      result[key] = buildProfileHealthListEntry(state?.profile_health_by_target[targetKey]);
+    }
+    return result;
+  }, [profiles, state?.profile_health_by_target]);
+  const handleTestProfileHealth = useCallback(async () => {
+    if (!window.profileManager?.testProfileHealth) {
+      setErrorMessage("当前环境不支持 Profile 健康检测");
+      return;
+    }
+    if (profileHealthDisabledReason) {
+      setErrorMessage(profileHealthDisabledReason);
+      return;
+    }
+    try {
+      const result = await window.profileManager.testProfileHealth(profileHealthRequest);
+      if (result.persisted) {
+        setState((current) => current ? {
+          ...current,
+          profile_health_by_target: {
+            ...current.profile_health_by_target,
+            [result.target_key]: result.state,
+          },
+        } : current);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "健康检测失败");
+    }
+  }, [profileHealthDisabledReason, profileHealthRequest]);
   const profileRuntime = useMemo(() => ({
     cwd: draftCwd,
     command_base: draftCommandBase,
@@ -4055,6 +4168,7 @@ function App() {
               orderedKeys,
               organization: profileOrganization,
               balanceEntries,
+              healthEntries: profileHealthEntries,
               onSelect: stableHandleSelectProfile,
               onReorder: stableHandleReorder,
               onOrganizationChange: stableHandleProfileOrganizationChange,
@@ -4107,6 +4221,8 @@ function App() {
               modelFetchBusy,
               modelFetchError,
               modelFetchSuccess,
+              healthState: editorHealthState,
+              healthTestDisabledReason: profileHealthDisabledReason,
               workingDirectoryFavorites,
               onChange: handleProfileDraftChange,
               onChannelsChange: handleProfileChannelsChange,
@@ -4118,6 +4234,9 @@ function App() {
               onSavedExtraArgsChange: handleSavedExtraArgsChange,
               onRuntimeCommit: stableRuntimeCommitAction,
               onFetchModels: stableFetchModelsAction,
+              onTestHealth: isOfficialNativeProfile(healthProbeProfile)
+                ? undefined
+                : handleTestProfileHealth,
               onOpenBaseUrl: stableOpenBaseUrlAction,
               onSave: stableSaveProfileAction,
               onCancel: stableCancelProfileEditAction,

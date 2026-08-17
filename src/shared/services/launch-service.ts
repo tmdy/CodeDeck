@@ -97,6 +97,10 @@ export interface LaunchServiceOptions {
   codexHome?: string;
 }
 
+export interface BuildExecutionPlanOptions {
+  codexHomeOverride?: string;
+}
+
 interface ProviderLaunchArtifacts {
   commandExecutable: string;
   commandArgs: string[];
@@ -151,7 +155,10 @@ export class LaunchService {
     return this.toPreview(plan);
   }
 
-  buildExecutionPlan(request: LaunchRequest): LaunchExecutionPlan {
+  buildExecutionPlan(
+    request: LaunchRequest,
+    options: BuildExecutionPlanOptions = {},
+  ): LaunchExecutionPlan {
     const profile = this.profileService.getProfiles().find((item) => itemKey(item) === request.profile_key);
     if (!profile) {
       return this.buildInvalidPlan({
@@ -180,6 +187,7 @@ export class LaunchService {
       request.terminal_mode,
       runOverrides,
       request.disable_codex_hooks === true,
+      options.codexHomeOverride,
     );
   }
 
@@ -223,6 +231,7 @@ export class LaunchService {
     terminalModeOverride?: LaunchRequest["terminal_mode"],
     runOverrides?: RunOverrides,
     disableCodexHooks = false,
+    codexHomeOverride?: string,
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
     const isNativeStartup = normalizedRuntime.startup_mode === "native";
@@ -292,6 +301,7 @@ export class LaunchService {
             selectedModelId,
             permissions,
             disableCodexHooks,
+            codexHomeOverride,
           );
     }
     const env = this.mergeInjectedEnv(artifacts.env, normalizedRuntime.extra_env);
@@ -482,6 +492,7 @@ export class LaunchService {
     selectedModelId: string,
     permissions: ProfilePermissions,
     disableCodexHooks = false,
+    codexHomeOverride?: string,
   ): ProviderLaunchArtifacts {
     const reasoningEffort = normalizeCodexReasoningEffort(profile.advancedModelMapping?.codex?.reasoningEffort);
     const profileKey = itemKey(profile);
@@ -489,7 +500,7 @@ export class LaunchService {
     const apiKeyEnv = buildCodexSiteApiKeyEnv(profileKey);
     const providerId = buildCodexSiteProviderId(profileKey);
     const providerName = `${profile.name} Site`;
-    const codexHome = this.getCodexHome();
+    const codexHome = this.getCodexHome(codexHomeOverride);
     const profilePath = this.toDisplayPath(codexHome);
     const configFilePath = this.toDisplayPath(this.getCodexConfigFilePath(codexHome, siteProfileName));
     const extraArgs = [
@@ -772,7 +783,10 @@ export class LaunchService {
     return targetPath.replace(/\\/g, "/");
   }
 
-  private getCodexHome(): string {
+  private getCodexHome(override?: string): string {
+    if (override?.trim()) {
+      return override.trim();
+    }
     if (this.options.codexHome?.trim()) {
       return this.options.codexHome;
     }

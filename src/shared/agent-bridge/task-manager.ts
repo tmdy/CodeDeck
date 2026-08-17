@@ -10,6 +10,11 @@ import {
 } from "../electron/terminal-activity.js";
 import { cleanTerminalText } from "./protocol.js";
 import {
+  hasTerminalCliReadyPrompt,
+  normalizeTerminalPromptInput,
+  type TerminalPromptInput,
+} from "../electron/terminal-prompt-input.js";
+import {
   normalizeClaudeReasoningEffort,
   normalizeCodexReasoningEffort,
 } from "../profile/types.js";
@@ -107,21 +112,7 @@ const STARTUP_INPUT_QUIET_MS = 1_000;
 const STARTUP_READY_TIMEOUT_MS = 60_000;
 const PASTED_INPUT_SUBMIT_DELAY_MS = 250;
 const MAX_DELIVERY_PROMPT_CHARS = 64_000;
-const CLI_READY_PROMPT_PATTERN = /(?:^|\n)\s*[›❯]\s+[^\n]*(?:\n|$)/;
-interface AgentTaskInput {
-  data: string;
-  submitSeparately: boolean;
-}
-
-function normalizeInput(prompt: string): AgentTaskInput {
-  const normalized = prompt
-    .replace(/\0/g, "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n");
-  return normalized.includes("\n")
-    ? { data: "\x1b[200~" + normalized + "\x1b[201~", submitSeparately: true }
-    : { data: normalized, submitSeparately: true };
-}
+type AgentTaskInput = TerminalPromptInput;
 
 function occupiedStatus(status: AgentTaskStatus): boolean {
   return status === "starting" || status === "running" || status === "awaiting_input";
@@ -262,7 +253,7 @@ export class AgentTaskManager {
 
     const pendingInitialInput = launched.initialPromptSubmitted
       ? null
-      : normalizeInput(options.prompt);
+      : normalizeTerminalPromptInput(options.prompt);
     const task: AgentTaskRecord = {
       sessionId,
       terminalSessionId: launched.terminalSessionId,
@@ -367,7 +358,7 @@ export class AgentTaskManager {
     task.terminalOutput = "";
     task.error = null;
     task.updatedAt = this.now();
-    this.sendTaskInput(task, normalizeInput(prompt));
+    this.sendTaskInput(task, normalizeTerminalPromptInput(prompt));
     this.notify(task);
     return this.waitForTask(task, waitMs);
   }
@@ -671,7 +662,7 @@ export class AgentTaskManager {
       task.startupQuietTimer = undefined;
     }
     const visibleTail = cleanTerminalText(task.terminalOutput).slice(-8_000);
-    if (!CLI_READY_PROMPT_PATTERN.test(visibleTail)) {
+    if (!hasTerminalCliReadyPrompt(visibleTail)) {
       return;
     }
     task.startupQuietTimer = setTimeout(
@@ -950,7 +941,7 @@ export class AgentTaskManager {
       "[[End delegated opinion]]",
       "请审阅以上代理意见并继续当前任务。",
     ].join("\n\n");
-    const input = normalizeInput(prompt);
+    const input = normalizeTerminalPromptInput(prompt);
     try {
       this.dependencies.terminal.sendInput(task.parentSessionId, input.data);
     } catch {

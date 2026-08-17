@@ -127,19 +127,28 @@ export function normalizeCheckinStatesByAccount(value: unknown): CheckinStatesBy
       ? record.trigger
       : undefined;
     const interruptedVerification = record.status === "verifying";
+    const interruptedRun = record.status === "running";
     const verification = normalizeCheckinVerificationMetadata(record.verification);
     result[key] = {
-      status: interruptedVerification ? "manual_required" : record.status as CheckinDisplayStatus,
+      status: interruptedVerification
+        ? "manual_required"
+        : interruptedRun
+          ? "failed"
+          : record.status as CheckinDisplayStatus,
       ...(trigger ? { trigger } : {}),
       message: interruptedVerification
         ? "上次人工验证已中断，请重新打开验证窗口"
-        : typeof record.message === "string" ? record.message : "",
+        : interruptedRun
+          ? "上次签到已中断，请重新签到"
+          : typeof record.message === "string" ? record.message : "",
       ...(typeof record.endpoint === "string" ? { endpoint: record.endpoint } : {}),
       ...(typeof record.reward === "string" ? { reward: record.reward } : {}),
       ...(typeof record.manual_url === "string" ? { manual_url: record.manual_url } : {}),
-      ...(isCheckinErrorCode(record.error_code)
-        ? { error_code: record.error_code }
-        : {}),
+      ...(interruptedRun
+        ? { error_code: "unknown_failure" as const }
+        : isCheckinErrorCode(record.error_code)
+          ? { error_code: record.error_code }
+          : {}),
       ...(typeof record.diagnostic_run_id === "string"
         ? { diagnostic_run_id: record.diagnostic_run_id }
         : {}),

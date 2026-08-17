@@ -80,6 +80,10 @@ describe("ProfileListPanel", () => {
           "codex::Paid": { status: "success", label: "余额 $12.34" },
           "codex::Unsupported": { status: "unsupported", label: "N/A" },
         }}
+        healthEntries={{
+          "codex::Paid": { status: "success", label: "可用", title: "渠道健康状态：可用" },
+          "codex::Unsupported": { status: "fail", label: "网络", title: "连接失败" },
+        }}
         onSelect={vi.fn()}
         onReorder={vi.fn()}
         onCreate={vi.fn()}
@@ -90,6 +94,9 @@ describe("ProfileListPanel", () => {
 
     expect(html).toContain("余额 $12.34");
     expect(html).toContain("N/A");
+    expect(html).toContain("profile-item-health success");
+    expect(html).toContain("可用");
+    expect(html).toContain("网络");
   });
 
   it("does not render legacy connectivity status markers", () => {

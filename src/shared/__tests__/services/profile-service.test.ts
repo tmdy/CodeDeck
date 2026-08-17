@@ -10,6 +10,7 @@ import type {
   EncryptedProfileConfig,
   SiteBalanceSession,
 } from "../../balance/site-balance-sessions.js";
+import { buildProfileHealthTarget, profileHealthTargetKey } from "../../profile-health/types.js";
 
 // 内存状态存储（测试用）
 class MemoryStateAccessor implements LocalStateAccessor {
@@ -70,6 +71,113 @@ describe("ProfileService", () => {
   });
 
   describe("saveProfile", () => {
+    it("clears stale health checkpoints when channel credentials change", async () => {
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://relay.example/v1",
+        key: "old-secret",
+        selectedModelId: "gpt-test",
+        channels: [{
+          id: "default",
+          name: "默认渠道",
+          key: "old-secret",
+          selectedModelId: "gpt-test",
+        }],
+        activeChannelId: "default",
+      };
+      const state = defaultLocalState();
+      const target = buildProfileHealthTarget(profile, itemKey(profile));
+      const targetKey = profileHealthTargetKey(target);
+      state.profile_health_by_target[targetKey] = {
+        target,
+        status: "available",
+        reason_code: "ok",
+        source: "active",
+        running: false,
+        checked_at: "2026-08-17T08:00:00.000Z",
+        verified_at: "2026-08-17T08:00:00.000Z",
+        consecutive_successes: 1,
+        last_failure: "",
+      };
+      const healthAccessor = new MemoryStateAccessor(state);
+      const healthService = new ProfileService([profile], healthAccessor);
+
+      await healthService.saveProfile(itemKey(profile), {
+        ...profile,
+        key: "new-secret",
+        channels: [{ ...profile.channels![0], key: "new-secret" }],
+      }, makeRuntime());
+
+      expect(healthAccessor.get().profile_health_by_target).toEqual({});
+    });
+
+    it("clears stale health checkpoints when the request base path changes", async () => {
+      const profile: Profile = {
+        provider: "claude",
+        name: "Relay",
+        url: "https://relay.example/v1",
+        key: "secret",
+        selectedModelId: "claude-test",
+      };
+      const state = defaultLocalState();
+      const target = buildProfileHealthTarget(profile, itemKey(profile));
+      const targetKey = profileHealthTargetKey(target);
+      state.profile_health_by_target[targetKey] = {
+        target,
+        status: "available",
+        reason_code: "ok",
+        source: "active",
+        running: false,
+        checked_at: "2026-08-17T08:00:00.000Z",
+        verified_at: "2026-08-17T08:00:00.000Z",
+        consecutive_successes: 1,
+        last_failure: "",
+      };
+      const healthAccessor = new MemoryStateAccessor(state);
+      const healthService = new ProfileService([profile], healthAccessor);
+
+      await healthService.saveProfile(itemKey(profile), {
+        ...profile,
+        url: "https://relay.example",
+      }, makeRuntime());
+
+      expect(healthAccessor.get().profile_health_by_target).toEqual({});
+    });
+
+    it("clears stale health checkpoints when embedded Base URL credentials change", async () => {
+      const profile: Profile = {
+        provider: "claude",
+        name: "Relay",
+        url: "https://first:credential@relay.example/v1",
+        key: "secret",
+        selectedModelId: "claude-test",
+      };
+      const state = defaultLocalState();
+      const target = buildProfileHealthTarget(profile, itemKey(profile));
+      const targetKey = profileHealthTargetKey(target);
+      state.profile_health_by_target[targetKey] = {
+        target,
+        status: "available",
+        reason_code: "ok",
+        source: "active",
+        running: false,
+        checked_at: "2026-08-17T08:00:00.000Z",
+        verified_at: "2026-08-17T08:00:00.000Z",
+        consecutive_successes: 1,
+        last_failure: "",
+      };
+      const healthAccessor = new MemoryStateAccessor(state);
+      const healthService = new ProfileService([profile], healthAccessor);
+
+      await healthService.saveProfile(itemKey(profile), {
+        ...profile,
+        url: "https://second:credential@relay.example/v1",
+      }, makeRuntime());
+
+      expect(healthAccessor.get().profile_health_by_target).toEqual({});
+    });
+
     it("should create a new profile", async () => {
       const draft: Profile = {
         provider: "claude",

@@ -31,6 +31,11 @@ import { normalizeSessionsTabScope } from "../session-history-state.js";
 import { normalizeCheckinStatesByAccount } from "../checkin/types.js";
 import { atomicWriteJson, recoverAtomicWrite } from "../atomic-file.js";
 import { normalizeSiteCapabilityCache } from "../site-capability-cache.js";
+import {
+  cloneProfileHealthByTarget,
+  normalizeProfileHealthByTarget,
+  type ProfileHealthByTarget,
+} from "../profile-health/types.js";
 
 interface RawState {
   selected_provider: string;
@@ -41,6 +46,7 @@ interface RawState {
   profile_organization_by_provider?: Record<string, ProfileOrganization>;
   runtime_by_profile: Record<string, RuntimeSettings>;
   connectivity_tests_by_profile?: unknown;
+  profile_health_by_target?: ProfileHealthByTarget;
   balance_checks_by_profile: Record<string, BalanceCheckState>;
   checkin_states_by_account?: unknown;
   checkin_next_scheduled_at?: unknown;
@@ -100,6 +106,7 @@ export class LocalStateStore {
       ),
       runtime_by_profile: {},
       balance_checks_by_profile: {},
+      profile_health_by_target: cloneProfileHealthByTarget(normalized.profile_health_by_target),
       checkin_states_by_account: normalizeCheckinStatesByAccount(
         normalized.checkin_states_by_account,
       ),
@@ -193,6 +200,12 @@ function normalizeState(raw: RawState): LocalState {
     raw.working_directory_favorites,
   );
   state.session_favorites = normalizeSessionFavorites(raw.session_favorites);
+  state.profile_health_by_target = Object.fromEntries(
+    Object.entries(normalizeProfileHealthByTarget(raw.profile_health_by_target)).map(([key, health]) => [
+      key,
+      { ...health, running: false },
+    ]),
+  );
 
   // selected_profile_key 处理
   state.selected_profile_key = normalizeKeyWithFallback(
@@ -307,6 +320,7 @@ export function cloneLocalState(state: LocalState): LocalState {
     balance_checks_by_profile: Object.fromEntries(
       Object.entries(state.balance_checks_by_profile).map(([k, v]) => [k, cloneBalanceCheckState(v)]),
     ),
+    profile_health_by_target: cloneProfileHealthByTarget(state.profile_health_by_target),
     checkin_states_by_account: normalizeCheckinStatesByAccount(state.checkin_states_by_account),
     checkin_next_scheduled_at: state.checkin_next_scheduled_at,
     site_capability_cache: normalizeSiteCapabilityCache(state.site_capability_cache),

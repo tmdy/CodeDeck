@@ -8,6 +8,9 @@ interface ProfileItemProps {
   isSelected: boolean;
   balanceLabel?: string;
   balanceStatus?: string;
+  healthLabel?: string;
+  healthStatus?: string;
+  healthTitle?: string;
   pinned?: boolean;
   onSelect: () => void;
 }
@@ -18,6 +21,9 @@ export const ProfileItem = memo(function ProfileItem({
   isSelected,
   balanceLabel,
   balanceStatus,
+  healthLabel,
+  healthStatus,
+  healthTitle,
   pinned = false,
   onSelect,
 }: ProfileItemProps) {
@@ -29,6 +35,14 @@ export const ProfileItem = memo(function ProfileItem({
     >
       <span className="profile-item-drag">{pinned ? "CLI" : "::"}</span>
       <span className="profile-item-name">{name}</span>
+      {healthLabel && (
+        <span
+          className={`profile-item-health ${healthStatus ?? ""}`}
+          title={healthTitle}
+        >
+          {healthLabel}
+        </span>
+      )}
       {balanceLabel && (
         <span className={`profile-item-balance ${balanceStatus ?? ""}`}>
           {balanceLabel}

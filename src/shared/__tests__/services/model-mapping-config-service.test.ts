@@ -494,4 +494,31 @@ describe("ModelMappingConfigService", () => {
 
     expect((await readdir(path.dirname(configPath))).some((name) => /\.bak\./.test(name))).toBe(false);
   });
+
+  it("should write a standalone site config into a dedicated health Codex home", async () => {
+    const root = await makeTempDir();
+    const healthHome = path.join(
+      root,
+      "Profile Workspace With Spaces",
+      ".codedeck",
+      "profile-health",
+      "codex-home",
+    );
+    const service = new ModelMappingConfigService({
+      appDataRoot: path.join(root, "app-data"),
+      codexHome: healthHome,
+    });
+
+    const configPath = await service.writeCodexProfile({
+      profileId: "codex::health",
+      providerId: buildCodexSiteProviderId("codex::health"),
+      providerName: "Health Site",
+      baseUrl: "https://relay.example/v1",
+      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::health"),
+      targetModel: "gpt-health",
+    });
+
+    expect(path.dirname(configPath)).toBe(healthHome);
+    expect(await readFile(configPath, "utf8")).toContain('model = "gpt-health"');
+  });
 });

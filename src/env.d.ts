@@ -48,6 +48,11 @@ import type { AppReactivationEvent } from "./shared/app-reactivation.js";
 import type { ProfileOrganization } from "./shared/profile/organization.js";
 import type { BrowserAccountStatusSnapshot } from "./shared/electron/browser-account-session-manager.js";
 import type { ProfileBrowserTarget } from "./shared/electron/open-url.js";
+import type {
+  ProfileHealthProgressEvent,
+  ProfileHealthTestRequest,
+  ProfileHealthTestResult,
+} from "./shared/profile-health/types.js";
 
 declare global {
   interface CodeDeckStartupTheme {
@@ -127,6 +132,9 @@ declare global {
         profileKey: ProfileKey,
         channelId: string,
       ) => Promise<{ models: string[]; modelsFetchedAt: string; profile: Profile }>;
+      testProfileHealth?: (request: ProfileHealthTestRequest) => Promise<ProfileHealthTestResult>;
+      getProfileHealth?: (request: ProfileHealthTestRequest) => Promise<ProfileHealthTestResult | null>;
+      clearProfileHealth?: (request: ProfileHealthTestRequest) => Promise<void>;
       reorderProfiles: (provider: string, orderedKeys: ProfileKey[]) => Promise<void>;
       updateProfileOrganization?: (
         provider: string,
@@ -216,6 +224,7 @@ declare global {
       onAppReactivated?: (callback: (event: AppReactivationEvent) => void) => () => void;
       onStateChanged: (callback: (state: LocalState) => void) => () => void;
       onBalanceProgress: (callback: (key: ProfileKey, state: BalanceCheckState) => void) => () => void;
+      onProfileHealthProgress?: (callback: (event: ProfileHealthProgressEvent) => void) => () => void;
       onCheckinProgress?: (
         callback: (accountKey: string, state: CheckinAccountState) => void,
       ) => () => void;

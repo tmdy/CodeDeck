@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { LocalStateStore } from "../../state/store.js";
 import { defaultLocalState } from "../../state/local-state.js";
+import { profileHealthTargetKey, type ProfileHealthTarget } from "../../profile-health/types.js";
 
 const tempDirs: string[] = [];
 
@@ -34,6 +35,56 @@ describe("LocalStateStore", () => {
     expect("launch_timeout_ms" in loaded.parameter_settings).toBe(false);
     expect(loaded.selected_profile_key).toBe("");
     expect("connectivity_tests_by_profile" in persisted).toBe(false);
+  });
+
+  it("loads old files without health state and round-trips health checkpoints", async () => {
+    const store = await makeStore();
+    const rawPath = (store as unknown as { filePath: string }).filePath;
+    await writeFile(rawPath, JSON.stringify({
+      selected_provider: "codex",
+      selected_profile_key: "",
+      selected_profile_key_by_provider: {},
+      profile_order_by_provider: {},
+      runtime_by_profile: {},
+      balance_checks_by_profile: {},
+      global_settings: {},
+      sessions_tab_scope_by_provider: {},
+      sessions_tab_restore_profile_key_by_provider: {},
+    }), "utf-8");
+    expect((await store.load()).profile_health_by_target).toEqual({});
+
+    const state = defaultLocalState();
+    const target: ProfileHealthTarget = {
+      provider: "codex",
+      profile_key: "codex::Relay",
+      channel_id: "default",
+      base_url: "https://relay.example/v1",
+      model_id: "gpt-test",
+    };
+    const targetKey = profileHealthTargetKey(target);
+    state.profile_health_by_target[targetKey] = {
+      target,
+      status: "available",
+      reason_code: "ok",
+      source: "active",
+      running: true,
+      latency_ms: 321,
+      checked_at: "2026-08-17T08:00:00.000Z",
+      verified_at: "2026-08-17T08:00:00.000Z",
+      consecutive_successes: 2,
+      last_failure: "",
+      checkpoint: {
+        sequence: 2,
+        carry_word: "星河",
+        assistant_text: "SEQ: 2\nBODY: 晨光连接星河\nCARRY: 星河",
+      },
+    };
+    await store.save(state);
+
+    expect((await store.load()).profile_health_by_target[targetKey]).toEqual({
+      ...state.profile_health_by_target[targetKey],
+      running: false,
+    });
   });
 
   it("persists only non-sensitive learned site capabilities", async () => {

@@ -24,6 +24,11 @@ import {
   type AppReactivationEvent,
 } from "../src/shared/app-reactivation.js";
 import type { ProfileBrowserTarget } from "../src/shared/electron/open-url.js";
+import type {
+  ProfileHealthProgressEvent,
+  ProfileHealthTestRequest,
+  ProfileHealthTestResult,
+} from "../src/shared/profile-health/types.js";
 
 function getStartupThemeArgumentValue(): string | undefined {
   const currentArg = process.argv.find((arg) => arg.startsWith(STARTUP_THEME_ARG_PREFIX));
@@ -138,6 +143,12 @@ const profileApi = {
     ipcRenderer.invoke("profile:select-channel", profileKey, channelId),
   refreshProfileChannelModels: (profileKey: string, channelId: string): Promise<unknown> =>
     ipcRenderer.invoke("profile:refresh-channel-models", profileKey, channelId),
+  testProfileHealth: (request: ProfileHealthTestRequest): Promise<ProfileHealthTestResult> =>
+    ipcRenderer.invoke("profile-health:test", request),
+  getProfileHealth: (request: ProfileHealthTestRequest): Promise<ProfileHealthTestResult | null> =>
+    ipcRenderer.invoke("profile-health:get", request),
+  clearProfileHealth: (request: ProfileHealthTestRequest): Promise<void> =>
+    ipcRenderer.invoke("profile-health:clear", request),
   reorderProfiles: (provider: string, orderedKeys: string[]): Promise<void> =>
     ipcRenderer.invoke("profile:reorder", provider, orderedKeys),
   updateProfileOrganization: (provider: string, organization: unknown): Promise<void> =>
@@ -276,6 +287,13 @@ const profileApi = {
     return () => {
       ipcRenderer.removeListener("balance:test-progress", handler);
     };
+  },
+  onProfileHealthProgress: (
+    callback: (event: ProfileHealthProgressEvent) => void,
+  ): (() => void) => {
+    const handler = (_event: unknown, event: ProfileHealthProgressEvent) => callback(event);
+    ipcRenderer.on("profile-health:progress", handler);
+    return () => ipcRenderer.removeListener("profile-health:progress", handler);
   },
   onCheckinProgress: (
     callback: (accountKey: string, state: unknown) => void,

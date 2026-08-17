@@ -59,6 +59,12 @@ function createLoginWindowMock(options: {
   localStorageAuthUser?: string;
   localStorageAuthToken?: string;
   localStorageRefreshToken?: string;
+  pageFetchResults?: Array<{
+    status: number;
+    statusText?: string;
+    headers?: Array<[string, string]>;
+    body: string;
+  } | null>;
   loadURL?: () => Promise<void>;
 } = {}): BrowserWindow {
   const windowListeners = new Map<string, (event?: { preventDefault: () => void }) => void>();
@@ -70,6 +76,9 @@ function createLoginWindowMock(options: {
       stop: vi.fn(),
       getURL: vi.fn(() => options.currentUrl ?? "https://panel.example.com/oauth/callback"),
       executeJavaScript: vi.fn(async (script: string) => {
+        if (script.includes("window.fetch(request.url")) {
+          return options.pageFetchResults?.shift() ?? null;
+        }
         const currentUrl = options.currentUrl ?? "https://panel.example.com/oauth/callback";
         const localStorageValues = new Map<string, string>();
         if (options.localStorageUser !== undefined) {
@@ -706,6 +715,174 @@ describe("BrowserAccountSessionManager", () => {
     })).resolves.toMatchObject({ status: "ready", userId: "42" });
   });
 
+  it("retries legacy New API identity without a rejected localStorage bearer", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockImplementationOnce(async (_input, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("Authorization")).toBe("Bearer page-only-token");
+        expect(headers.get("New-Api-User")).toBe("42");
+        return response(403, { message: "invalid bearer for management endpoint" });
+      })
+      .mockImplementationOnce(async (_input, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("Authorization")).toBeNull();
+        expect(headers.get("New-Api-User")).toBe("42");
+        return response(200, { success: true, data: { id: 42 } });
+      })
+      .mockImplementationOnce(async (_input, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("Authorization")).toBeNull();
+        expect(headers.get("New-Api-User")).toBe("42");
+        return response(200, { success: true, data: { id: 42 } });
+      });
+    const browserWindow = createLoginWindowMock({
+      localStorageUser: JSON.stringify({ id: 42, token: "page-only-token" }),
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow: vi.fn(() => browserWindow),
+      pollIntervalMs: 1,
+    });
+
+    await expect(manager.openLogin({
+      accountKey: "new-account",
+      browserSessionId: "new-reference",
+      browserOrigin: "https://panel.example.com",
+    })).resolves.toEqual({
+      status: "ready",
+      userId: "42",
+      message: "浏览器登录成功",
+    });
+
+    const context = await manager.getRequestContext("new-account", {
+      ...browserAccount(),
+      id: "new-account",
+      browser_session_id: "new-reference",
+    });
+    expect(context.headers).toEqual({ "New-Api-User": "42" });
+    await expect(context.fetch("https://panel.example.com/api/user/self", {
+      headers: context.headers,
+    })).resolves.toMatchObject({ status: 200 });
+  });
+
+  it("uses the same-origin page transport when Session.fetch stays forbidden", async () => {
+    const diagnostics = vi.fn();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockResolvedValueOnce(response(403, { message: "session transport forbidden" }))
+      .mockResolvedValueOnce(response(403, { message: "session transport still forbidden" }))
+      .mockResolvedValueOnce(response(403, { message: "runtime session transport forbidden" }));
+    const loginWindow = createLoginWindowMock({
+      localStorageUser: JSON.stringify({ id: 42, token: "page-only-token" }),
+      pageFetchResults: [{
+        status: 200,
+        body: JSON.stringify({ success: true, data: { id: 42 } }),
+      }],
+    });
+    const requestWindow = createLoginWindowMock({
+      currentUrl: "https://panel.example.com/",
+      pageFetchResults: [{
+        status: 200,
+        body: JSON.stringify({ success: true, data: { id: 42, quota: 100 } }),
+      }],
+    });
+    const createWindow = vi.fn()
+      .mockReturnValueOnce(loginWindow)
+      .mockReturnValueOnce(requestWindow);
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow,
+      pollIntervalMs: 1,
+      onDiagnostic: diagnostics,
+    });
+
+    await expect(manager.openLogin({
+      accountKey: "new-account",
+      browserSessionId: "new-reference",
+      browserOrigin: "https://panel.example.com",
+    })).resolves.toMatchObject({ status: "ready", userId: "42" });
+    const context = await manager.getRequestContext("new-account", {
+      ...browserAccount(),
+      id: "new-account",
+      browser_session_id: "new-reference",
+    });
+    const runtimeResponse = await context.fetch("https://panel.example.com/api/user/self", {
+      headers: context.headers,
+    });
+
+    expect(runtimeResponse.status).toBe(200);
+    await expect(runtimeResponse.json()).resolves.toMatchObject({ data: { id: 42, quota: 100 } });
+    expect(context.headers).toEqual({ "New-Api-User": "42" });
+    expect(diagnostics).toHaveBeenCalledWith(expect.objectContaining({
+      event: "login_probe_result",
+      transport: "page_fetch",
+      result: "ready",
+    }));
+    const pageScripts = [loginWindow, requestWindow].flatMap((window) =>
+      vi.mocked(window.webContents.executeJavaScript).mock.calls.map(([script]) => script));
+    expect(pageScripts.filter((script) => script.includes("window.fetch(request.url"))).toHaveLength(2);
+    expect(JSON.stringify(diagnostics.mock.calls)).not.toContain("page-only-token");
+    await manager.logout("new-account", {
+      ...browserAccount(),
+      id: "new-account",
+      browser_session_id: "new-reference",
+    });
+    expect(requestWindow.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a mismatched identity returned by the page transport", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockResolvedValueOnce(response(403, { message: "session transport forbidden" }))
+      .mockResolvedValueOnce(response(403, { message: "session transport still forbidden" }));
+    const browserWindow = createLoginWindowMock({
+      localStorageUser: JSON.stringify({ id: 42, token: "page-only-token" }),
+      pageFetchResults: [{
+        status: 200,
+        body: JSON.stringify({ success: true, data: { id: 7 } }),
+      }],
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow: vi.fn(() => browserWindow),
+      pollIntervalMs: 60_000,
+    });
+
+    await expect(manager.openLogin({
+      accountKey: "new-account",
+      browserSessionId: "new-reference",
+      browserOrigin: "https://panel.example.com",
+    })).resolves.toEqual({
+      status: "account_mismatch",
+      message: "浏览器中登录的账号与目标账号不一致",
+    });
+  });
+
+  it("does not accept a mismatched identity from the no-bearer fallback", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockResolvedValueOnce(response(403, { message: "bearer rejected" }))
+      .mockResolvedValueOnce(response(200, { success: true, data: { id: 7 } }));
+    const browserWindow = createLoginWindowMock({
+      localStorageUser: JSON.stringify({ id: 42, token: "page-only-token" }),
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow: vi.fn(() => browserWindow),
+      pollIntervalMs: 60_000,
+    });
+
+    await expect(manager.openLogin({
+      accountKey: "new-account",
+      browserSessionId: "new-reference",
+      browserOrigin: "https://panel.example.com",
+    })).resolves.toEqual({
+      status: "account_mismatch",
+      message: "浏览器中登录的账号与目标账号不一致",
+    });
+  });
+
   it("recovers a legacy token from a hidden same-origin persistent partition on cold start", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response(404, { message: "legacy" }))
@@ -749,6 +926,31 @@ describe("BrowserAccountSessionManager", () => {
       headers: context.headers,
     })).rejects.toBeInstanceOf(BrowserLoginRequiredError);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("drops a rejected recovered New API bearer on cold start", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(404, { message: "legacy" }))
+      .mockResolvedValueOnce(response(401, { message: "cookie needs user id" }))
+      .mockResolvedValueOnce(response(403, { message: "bearer rejected" }))
+      .mockImplementationOnce(async (_input, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("Authorization")).toBeNull();
+        expect(headers.get("New-Api-User")).toBe("42");
+        return response(200, { success: true, data: { id: 42 } });
+      });
+    const recoveryWindow = createLoginWindowMock({
+      localStorageUser: JSON.stringify({ id: 42, token: "rejected-recovered-token" }),
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => createSessionMock(fetchMock)),
+      createWindow: vi.fn(() => recoveryWindow),
+    });
+
+    const context = await manager.getRequestContext("account-key", browserAccount());
+
+    expect(context.headers).toEqual({ "New-Api-User": "42" });
+    expect(JSON.stringify(context.headers)).not.toContain("rejected-recovered-token");
   });
 
   it("recovers Sub2API runtime credentials from a hidden same-origin partition on cold start", async () => {
@@ -1190,6 +1392,7 @@ describe("BrowserAccountSessionManager", () => {
     await vi.waitFor(() => expect(diagnostics).toHaveBeenCalledWith({
       event: "login_probe_result",
       authMode: "browser_cookie",
+      transport: "session_fetch",
       httpStatus: 401,
       result: "retry",
     }));

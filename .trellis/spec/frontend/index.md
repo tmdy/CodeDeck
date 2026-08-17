@@ -24,6 +24,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Management Authentication](./management-auth-contract.md) | Explicit backend-account auth and check-in nonce contract | Active |
 | [Session Discovery](./session-discovery-contract.md) | Codex sub-agent classification, request caching, and catalog pagination contract | Active |
 | [Persistent Agent Bridge](./agent-bridge-contract.md) | Parent-bound delegation, scoped capabilities, automatic return, and interrupt contract | Active |
+| [Profile Health Monitoring](./profile-health-contract.md) | Hidden real-CLI probes, bounded journey checkpoints, passive lifecycle signals, and saved-target gating | Active |
 
 ---
 

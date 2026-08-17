@@ -123,6 +123,14 @@ After implementation:
 - [ ] When multiple layers report the same state, ranked signals by authority
       (source lifecycle > derived UI heuristic), documented the fallback boundary,
       and tested conflicting signals in their real arrival order
+- [ ] When browser storage exposes a credential, verified the target API client's
+      actual request headers; credential presence alone does not prove every endpoint
+      accepts that transport. Test the backend response with the exact header variants
+      the product client uses before expanding or persisting an authentication mode.
+- [ ] When an Electron main-process request and an authenticated BrowserWindow disagree,
+      treated them as distinct transports. Verify the exact-origin page response before
+      declaring the browser session expired, and validate downstream operations through
+      the same accepted transport before reporting the adaptation complete.
 
 ---
 

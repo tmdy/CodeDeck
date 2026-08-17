@@ -1,0 +1,11 @@
+﻿{
+    "message":  "",
+    "source":  "D:\\CodeDeck\\release\\win-unpacked",
+    "started_pid":  10460,
+    "app_asar_sha256":  "AC3558D282448DB3F0B5154893FE86589BA8F3302714C1FA0FEF44C62D4A3A2D",
+    "backup":  "D:\\CodeDeck\\release-unified-codex-home\\win-unpacked.backup-20260817-160327",
+    "recorded_at":  "2026-08-17T16:03:38.3543396+08:00",
+    "target":  "D:\\CodeDeck\\release-unified-codex-home\\win-unpacked",
+    "status":  "complete",
+    "stage":  "started"
+}

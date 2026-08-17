@@ -43,6 +43,11 @@ import {
   normalizeProfileOrganization,
   type ProfileOrganization,
 } from "../profile/organization.js";
+import {
+  clearProfileHealthForProfile,
+  normalizeProfileHealthBaseUrl,
+  normalizeProfileHealthRequestBaseUrl,
+} from "../profile-health/types.js";
 
 // ---- 接口定义 ----
 
@@ -411,6 +416,12 @@ export class ProfileService {
         delete st.site_capability_cache.balance_by_target[`profile:${nTargetKey}`];
       }
     }
+    if (previous && (
+      itemKey(previous) !== newKey
+      || profileHealthConfigurationChanged(previous, nd)
+    )) {
+      clearProfileHealthForProfile(st.profile_health_by_target, [itemKey(previous), newKey]);
+    }
 
     await this.saveConfig(nextProfiles, this.siteBalanceSessionsByBaseUrl, st);
     this.profiles = nextProfiles;
@@ -539,6 +550,7 @@ export class ProfileService {
 
     delete st.runtime_by_profile[nKey];
     delete st.balance_checks_by_profile[nKey];
+    clearProfileHealthForProfile(st.profile_health_by_target, [nKey]);
     st.profile_order_by_provider[provID] = removeProfileKey(
       st.profile_order_by_provider[provID] ?? [],
       nKey,
@@ -1129,6 +1141,26 @@ function balanceAuthChanged(previous: Profile, next: Profile): boolean {
   return normalizeBalanceBaseUrl(previous.url) !== normalizeBalanceBaseUrl(next.url)
     || (previous.balance_session_id ?? "") !== (next.balance_session_id ?? "")
     || previous.key !== next.key;
+}
+
+function profileHealthConfigurationChanged(previous: Profile, next: Profile): boolean {
+  return JSON.stringify(profileHealthConfiguration(previous))
+    !== JSON.stringify(profileHealthConfiguration(next));
+}
+
+function profileHealthConfiguration(profile: Profile): unknown {
+  const normalized = normalizeProfile(profile);
+  return {
+    provider: normalized.provider,
+    url: normalizeProfileHealthBaseUrl(normalized.url),
+    requestUrl: normalizeProfileHealthRequestBaseUrl(normalized.url),
+    activeChannelId: normalized.activeChannelId ?? "",
+    channels: (normalized.channels ?? []).map((channel) => ({
+      id: channel.id,
+      key: channel.key,
+      selectedModelId: channel.selectedModelId ?? "",
+    })),
+  };
 }
 
 function migrateProfileStateKey(
