@@ -99,6 +99,7 @@ class PendingBrowserAccountReferenceRegistry {
 - Profile Base URL opening uses a sandboxed CodeDeck BrowserWindow and a strict `ProfileBrowserTarget`. Saved sessions reuse their verified account partition, existing slots reuse their global opaque partition, and a new browser identity prepares/reuses a bounded pending partition before login. Auto/PAT browsing uses the dedicated application browser partition. Malformed targets, missing sessions/slots, and saved-session origin mismatches fail closed; this action never calls `shell.openExternal`.
 - Entering a new browser-session draft defaults to the lowest numbered existing identity slot. It falls back to a new identity only when no slot exists, and later data refreshes must not overwrite an explicit user selection.
 - `GET /api/user/checkin?month=YYYY-MM` may return `data.checkin_nonce`; the following POST must send `{ "checkin_nonce": "..." }`.
+- Native verification polling must treat an explicit record for the current local date in `checkin_history`, `checkins`, `records`, or `history` as today's check-in only when the record is not an explicit failure; historical records and failed/error payloads must not complete the verification task.
 
 ### 4. Validation & Error Matrix
 

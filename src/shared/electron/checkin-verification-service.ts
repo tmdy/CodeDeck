@@ -599,16 +599,64 @@ export function inspectVerificationStatus(
   }
   const data = asRecord(root.data) ?? root;
   const stats = asRecord(data.stats);
+  const today = localDateKey(date);
   const checkedInToday = readBoolean(stats?.checked_in_today) === true
-    || readBoolean(data.checked_in_today) === true;
+    || readBoolean(data.checked_in_today) === true
+    || hasTodayCheckinRecord(data, today);
   if (!checkedInToday) {
     return { checkedInToday: false };
   }
-  const reward = extractTodayReward(data, localDateKey(date));
+  const reward = extractTodayReward(data, today);
   return {
     checkedInToday: true,
     ...(reward ? { reward } : {}),
   };
+}
+
+function hasTodayCheckinRecord(data: Record<string, unknown>, today: string): boolean {
+  for (const key of ["checkin_history", "checkins", "records", "history"] as const) {
+    const collection = data[key];
+    if (Array.isArray(collection)) {
+      if (collection.some((item) => {
+        const record = asRecord(item);
+        const dateValue = record?.date ?? record?.checkin_date ?? record?.created_at;
+        return typeof dateValue === "string"
+          && dateValue.slice(0, 10) === today
+          && isPositiveCheckinRecord(record);
+      })) {
+        return true;
+      }
+      continue;
+    }
+    const record = asRecord(collection);
+    if (!record || !(today in record)) {
+      continue;
+    }
+    if (isPositiveCheckinRecord(record[today])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPositiveCheckinRecord(value: unknown): boolean {
+  if (value === true) {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0 && !/^(false|未签到|未签|none|null)$/i.test(value.trim());
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return false;
+  }
+  if (readBoolean(record.checked_in) === false || readBoolean(record.success) === false) {
+    return false;
+  }
+  return true;
 }
 
 function prioritizeCookieCandidates(

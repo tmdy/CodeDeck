@@ -200,6 +200,24 @@ describe("check-in verification helpers", () => {
       },
     }, new Date(2026, 6, 15))).toEqual({ checkedInToday: true, reward: "18" });
   });
+
+  it("recognizes today's history record when the stats flag is absent", () => {
+    expect(inspectVerificationStatus({
+      success: true,
+      data: {
+        checkin_history: {
+          "2026-07-15": { checked_in: true },
+          "2026-07-14": { quota_awarded: 9 },
+        },
+      },
+    }, new Date(2026, 6, 15))).toEqual({ checkedInToday: true });
+    expect(inspectVerificationStatus({
+      success: true,
+      data: {
+        checkin_history: [{ date: "2026-07-14", quota_awarded: 9 }],
+      },
+    }, new Date(2026, 6, 15))).toEqual({ checkedInToday: false });
+  });
 });
 
 describe("CheckinVerificationService", () => {
