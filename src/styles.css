@@ -1672,6 +1672,52 @@ button.profile-group-heading:hover:not(:disabled),
   white-space: nowrap;
 }
 
+.custom-compatibility-fields {
+  margin-top: 8px;
+}
+
+.custom-compatibility-rule {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+}
+
+.custom-compatibility-rule legend {
+  padding: 0 4px;
+  color: var(--app-text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.custom-source-row {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 7px;
+  background: var(--app-surface-subtle);
+}
+
+.custom-compatibility-warning {
+  padding: 8px;
+  border-radius: 7px;
+  background: var(--app-warning-bg);
+  color: var(--app-warning-text) !important;
+  font-weight: 600;
+}
+
+.custom-compatibility-preview {
+  overflow-wrap: anywhere;
+  padding: 8px;
+  border-radius: 7px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+}
+
 .browser-session-login-card {
   display: flex;
   align-items: end;

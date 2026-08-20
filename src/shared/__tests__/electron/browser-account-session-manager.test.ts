@@ -1083,6 +1083,52 @@ describe("BrowserAccountSessionManager", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("loads a separate login URL and confirms user-managed identity when the window closes", async () => {
+    const fetchMock = vi.fn();
+    const session = createSessionMock(fetchMock);
+    const browserWindow = createLoginWindowMock({
+      currentUrl: "https://login.example.com/sign-in",
+    });
+    const manager = new BrowserAccountSessionManager({
+      createSession: vi.fn(() => session),
+      createWindow: vi.fn(() => browserWindow),
+      pollIntervalMs: 1,
+    });
+
+    const login = manager.openLogin({
+      accountKey: "custom-account",
+      browserSessionId: "custom-reference",
+      browserOrigin: "https://identity.example.com",
+      loginUrl: "https://login.example.com/sign-in",
+      identityMode: "user_confirmed",
+    });
+    await vi.waitFor(() => {
+      expect(browserWindow.loadURL).toHaveBeenCalledWith("https://login.example.com/sign-in");
+    });
+
+    expect(isAllowedBrowserNavigation(
+      "https://identity.example.com/account",
+      ["https://identity.example.com", "https://login.example.com"],
+    )).toBe(true);
+    expect(isAllowedBrowserNavigation(
+      "https://login.example.com/callback",
+      ["https://identity.example.com", "https://login.example.com"],
+    )).toBe(true);
+    expect(isAllowedBrowserNavigation(
+      "https://other.example.com/callback",
+      ["https://identity.example.com", "https://login.example.com"],
+    )).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    browserWindow.close();
+    await expect(login).resolves.toEqual({
+      status: "ready",
+      message: "已确认浏览器身份",
+    });
+    expect(session.cookies.flushStore).toHaveBeenCalledOnce();
+    expect(browserWindow.isDestroyed()).toBe(true);
+  });
+
   it("fails and closes a login window when initial navigation never settles", async () => {
     const browserWindow = createLoginWindowMock({
       loadURL: () => new Promise<void>(() => undefined),

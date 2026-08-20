@@ -3,8 +3,10 @@ import type { Profile } from "../../profile/types.js";
 import {
   allocateBrowserSlot,
   buildProfileBalanceCheckState,
+  cloneSiteBalanceSessionsByBaseUrl,
   describeBalanceSessionHint,
   normalizeBalanceBaseUrl,
+  normalizeSiteBalanceSessionDraft,
   normalizeSiteBalanceSessionsByBaseUrl,
   reconcileBrowserIdentitySlots,
   resolveBalanceAuth,
@@ -83,6 +85,53 @@ describe("site-balance-sessions", () => {
     expect(normalized["https://new-api.example.com"][0].auth_kind).toBe("session_cookie");
   });
 
+  it("normalizes and deep-clones persisted custom compatibility rules", () => {
+    const normalized = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://new-api.example.com": [{
+        id: "custom-account",
+        label: "Custom",
+        base_url: "https://new-api.example.com",
+        access_token: "management-token",
+        user_id: "42",
+        updated_at: "2026-08-20T00:00:00.000Z",
+        custom_compatibility: {
+          enabled: true,
+          identity_mode: "standard",
+          balance: {
+            mode: "api",
+            target_url: "https://wallet.example.com/api/balance",
+            remaining: { kind: "json_path", path_or_selector: "data.remaining" },
+            credential_forwarding: "none",
+            cookie: "must-not-survive",
+          },
+        },
+      }],
+    });
+    const cloned = cloneSiteBalanceSessionsByBaseUrl(normalized);
+    const sourceRule = normalized["https://new-api.example.com"][0].custom_compatibility?.balance;
+    const clonedRule = cloned["https://new-api.example.com"][0].custom_compatibility?.balance;
+
+    expect(sourceRule).toEqual(expect.objectContaining({
+      mode: "api",
+      target_url: "https://wallet.example.com/api/balance",
+      credential_forwarding: "none",
+    }));
+    expect(sourceRule).not.toHaveProperty("cookie");
+    expect(clonedRule).not.toBe(sourceRule);
+    expect(clonedRule?.remaining).not.toBe(sourceRule?.remaining);
+  });
+
+  it("normalizes disabled draft compatibility to an absent rule", () => {
+    const draft = normalizeSiteBalanceSessionDraft({
+      label: "账号1",
+      access_token: "token",
+      user_id: "42",
+      custom_compatibility: { enabled: false },
+    });
+
+    expect(draft.custom_compatibility).toBeUndefined();
+  });
+
   it("normalizes browser sessions without persisting credential fields", () => {
     const normalized = normalizeSiteBalanceSessionsByBaseUrl({
       "https://new-api.example.com": [{
@@ -109,6 +158,51 @@ describe("site-balance-sessions", () => {
     }));
     expect(normalized["https://new-api.example.com"][0].refresh_token).toBeUndefined();
     expect(normalized["https://new-api.example.com"][0].token_expires_at).toBeUndefined();
+  });
+
+  it("allows an empty browser user ID only for user-confirmed custom identity", () => {
+    const userConfirmed = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://custom.example.com": [{
+        id: "browser-custom",
+        label: "Custom",
+        base_url: "https://custom.example.com",
+        access_token: "",
+        auth_kind: "browser_session",
+        browser_session_id: "custom-browser-session",
+        browser_origin: "https://custom.example.com",
+        user_id: "",
+        updated_at: "2026-08-20T00:00:00.000Z",
+        custom_compatibility: {
+          enabled: true,
+          identity_mode: "user_confirmed",
+          login_url: "https://custom.example.com/login",
+          balance: {
+            mode: "page",
+            target_url: "https://custom.example.com/wallet",
+            remaining: { kind: "css_selector", path_or_selector: ".balance" },
+            credential_forwarding: "none",
+          },
+        },
+      }],
+    });
+    const standard = normalizeSiteBalanceSessionsByBaseUrl({
+      "https://standard.example.com": [{
+        id: "browser-standard",
+        label: "Standard",
+        base_url: "https://standard.example.com",
+        access_token: "",
+        auth_kind: "browser_session",
+        browser_session_id: "standard-browser-session",
+        browser_origin: "https://standard.example.com",
+        user_id: "",
+        updated_at: "2026-08-20T00:00:00.000Z",
+      }],
+    });
+
+    expect(userConfirmed["https://custom.example.com"][0].user_id).toBe("");
+    expect(userConfirmed["https://custom.example.com"][0].custom_compatibility?.identity_mode)
+      .toBe("user_confirmed");
+    expect(standard["https://standard.example.com"]).toBeUndefined();
   });
 
   it("migrates legacy browser sessions to stable identity slots", () => {

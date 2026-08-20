@@ -159,8 +159,13 @@ async function solveJavascriptChallenge(
   }
 }
 
-export function createChromiumFetch(challengeTimeoutMs: number = 8_000): typeof fetch {
+export function createChromiumFetch(
+  challengeTimeoutMs: number = 8_000,
+  fixedPartition?: string,
+): typeof fetch {
   const contexts = new Map<string, ChromiumFetchContext>();
+  const configuredSessions = new WeakSet<Session>();
+  const sharedPartition = fixedPartition?.trim() || undefined;
 
   const getContext = (url: string, init?: RequestInit): ChromiumFetchContext => {
     const key = contextKey(url, init);
@@ -168,11 +173,14 @@ export function createChromiumFetch(challengeTimeoutMs: number = 8_000): typeof 
     if (current) {
       return current;
     }
-    const partition = `codedeck-site-fetch-${randomUUID()}`;
+    const partition = sharedPartition ?? `codedeck-site-fetch-${randomUUID()}`;
     const targetSession = electronSession.fromPartition(partition, { cache: false });
-    targetSession.setPermissionCheckHandler(() => false);
-    targetSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-    targetSession.on("will-download", (event) => event.preventDefault());
+    if (!configuredSessions.has(targetSession)) {
+      configuredSessions.add(targetSession);
+      targetSession.setPermissionCheckHandler(() => false);
+      targetSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+      targetSession.on("will-download", (event) => event.preventDefault());
+    }
     const created: ChromiumFetchContext = {
       partition,
       session: targetSession,

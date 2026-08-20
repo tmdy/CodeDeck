@@ -48,6 +48,7 @@ import type { AppReactivationEvent } from "./shared/app-reactivation.js";
 import type { ProfileOrganization } from "./shared/profile/organization.js";
 import type { BrowserAccountStatusSnapshot } from "./shared/electron/browser-account-session-manager.js";
 import type { ProfileBrowserTarget } from "./shared/electron/open-url.js";
+import type { CustomElementSelectorResult } from "./shared/electron/custom-element-selector-service.js";
 import type {
   ProfileHealthProgressEvent,
   ProfileHealthTestRequest,
@@ -152,8 +153,16 @@ declare global {
         baseUrl: string,
         sessionId: string,
       ) => Promise<Profile>;
-      loginBrowserAccount?: (baseUrl: string, browserSlot?: number) => Promise<SiteBalanceSession>;
-      reloginBrowserAccount?: (baseUrl: string, sessionId: string) => Promise<SiteBalanceSession>;
+      loginBrowserAccount?: (
+        baseUrl: string,
+        browserSlot?: number,
+        customCompatibility?: unknown,
+      ) => Promise<SiteBalanceSession>;
+      reloginBrowserAccount?: (
+        baseUrl: string,
+        sessionId: string,
+        customCompatibility?: unknown,
+      ) => Promise<SiteBalanceSession>;
       logoutBrowserAccount?: (baseUrl: string, sessionId: string) => Promise<void>;
       getBrowserAccountStatus?: (
         baseUrl: string,
@@ -205,6 +214,11 @@ declare global {
         baseUrl: string,
         sessionId: string,
       ) => Promise<CheckinVerificationResult>;
+      selectCustomCompatibilityElement?: (
+        baseUrl: string,
+        sessionId: string,
+        pageUrl: string,
+      ) => Promise<CustomElementSelectorResult | null>;
       getCheckinSnapshot?: () => Promise<CheckinSnapshot>;
 
       // Model Mappings

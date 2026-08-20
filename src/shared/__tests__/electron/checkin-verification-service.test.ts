@@ -5,6 +5,7 @@ import type {
 } from "electron";
 import { describe, expect, it, vi } from "vitest";
 import type { SiteBalanceSession } from "../../balance/site-balance-sessions.js";
+import type { CustomCheckinRule } from "../../services/custom-compatibility.js";
 import {
   CheckinVerificationService,
   buildNativeCheckinTriggerScript,
@@ -441,6 +442,103 @@ describe("CheckinVerificationService", () => {
     })).resolves.toMatchObject({ status: "success" });
     expect(windows).toHaveLength(1);
     expect(windows[0].loadedUrl).toBe("https://new-api.example.com/console/personal");
+  });
+
+  it("opens the configured challenge page and polls the original custom API until success", async () => {
+    const partitions: string[] = [];
+    const windows: FakeWindow[] = [];
+    const customApiRule: CustomCheckinRule = {
+      mode: "api",
+      target_url: "https://api.example.com/checkin",
+      page_url: "https://portal.example.com/challenge",
+      method: "POST",
+      success: { kind: "json_path", path_or_selector: "success" },
+      credential_forwarding: "none",
+    };
+    const customApiProbe = vi.fn()
+      .mockResolvedValueOnce({
+        status: "manual_required",
+        success: false,
+        message: "需要验证码",
+        endpoint: customApiRule.target_url,
+        manual_url: customApiRule.page_url,
+        error_code: "turnstile_required",
+      })
+      .mockResolvedValueOnce({
+        status: "success",
+        success: true,
+        message: "签到成功",
+        endpoint: customApiRule.target_url,
+      });
+    const service = new CheckinVerificationService({
+      createSession: (partition) => {
+        partitions.push(partition);
+        return new FakeSession(async () => jsonResponse({})).asElectronSession();
+      },
+      createWindow: () => {
+        const fake = new FakeWindow();
+        windows.push(fake);
+        return fake.asBrowserWindow();
+      },
+      timeoutMs: 1_000,
+      pollIntervalMs: 1,
+    });
+
+    await expect(service.openVerification({
+      account: makeAccount(),
+      trigger: "manual",
+      runId: "run-custom-api",
+      browserSessionPartition: "persist:custom-account",
+      customApiRule,
+      customApiProbe,
+    })).resolves.toMatchObject({
+      status: "success",
+      success: true,
+      endpoint: customApiRule.target_url,
+    });
+
+    expect(partitions).toEqual(["persist:custom-account"]);
+    expect(windows[0].loadURL).toHaveBeenCalledTimes(1);
+    expect(windows[0].loadedUrl).toBe(customApiRule.page_url);
+    expect(windows[0].executedScripts).toEqual([]);
+    expect(customApiProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops custom API verification on a non-challenge failure", async () => {
+    const customApiRule: CustomCheckinRule = {
+      mode: "api",
+      target_url: "https://api.example.com/checkin",
+      page_url: "https://portal.example.com/challenge",
+      method: "POST",
+      success: { kind: "json_path", path_or_selector: "success" },
+      credential_forwarding: "none",
+    };
+    const customApiProbe = vi.fn(async () => ({
+      status: "login_required" as const,
+      success: false,
+      message: "自定义签到规则鉴权失败",
+      endpoint: customApiRule.target_url,
+      error_code: "auth_not_logged_in" as const,
+    }));
+    const service = new CheckinVerificationService({
+      createSession: () => new FakeSession(async () => jsonResponse({})).asElectronSession(),
+      createWindow: () => new FakeWindow().asBrowserWindow(),
+      timeoutMs: 1_000,
+      pollIntervalMs: 1,
+    });
+
+    await expect(service.openVerification({
+      account: makeAccount(),
+      trigger: "manual",
+      runId: "run-custom-api-failed",
+      browserSessionPartition: "persist:custom-account",
+      customApiRule,
+      customApiProbe,
+    })).resolves.toMatchObject({
+      status: "failed",
+      error_code: "auth_not_logged_in",
+    });
+    expect(customApiProbe).toHaveBeenCalledOnce();
   });
 
   it("times out and clears the in-memory session even while credential probing is pending", async () => {

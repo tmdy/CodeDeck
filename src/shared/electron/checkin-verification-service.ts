@@ -4,8 +4,16 @@ import type {
   Session,
 } from "electron";
 import type { SiteBalanceSession } from "../balance/site-balance-sessions.js";
+import type {
+  CustomCheckinRule,
+  CustomDomElement,
+  CustomDomRoot,
+  CustomValueSource,
+} from "../services/custom-compatibility.js";
+import { classifyCustomCheckinResult } from "../services/custom-compatibility.js";
 import {
   buildCheckinAccountKey,
+  type CheckinResult,
   type CheckinTrigger,
   type CheckinVerificationCookieMode,
   type CheckinVerificationResult,
@@ -40,6 +48,9 @@ export interface OpenCheckinVerificationOptions {
   preferredCookieMode?: CheckinVerificationCookieMode;
   browserSessionPartition?: string;
   managementRequestContext?: ManagementRequestContext;
+  customPageRule?: CustomCheckinRule;
+  customApiRule?: CustomCheckinRule;
+  customApiProbe?: () => Promise<CheckinResult>;
 }
 
 export interface CheckinVerificationServiceDependencies {
@@ -156,13 +167,13 @@ export class CheckinVerificationService {
     if (!task) {
       return;
     }
-    await this.completeTask(task, canceledResult(task.options.account.base_url));
+    await this.completeTask(task, canceledResult(verificationEndpoint(task.options)));
   }
 
   async cancelAll(): Promise<void> {
     const tasks = [...this.tasksByAccount.values()];
     await Promise.all(tasks.map((task) => (
-      this.completeTask(task, canceledResult(task.options.account.base_url))
+      this.completeTask(task, canceledResult(verificationEndpoint(task.options)))
     )));
   }
 
@@ -192,14 +203,21 @@ export class CheckinVerificationService {
       task.session = verificationSession;
       this.configureSessionSecurity(verificationSession);
       task.timeoutTimer = setTimeout(() => {
-        void this.completeTask(task, timeoutResult(account.base_url));
+        void this.completeTask(task, timeoutResult(verificationEndpoint(task.options)));
       }, this.timeoutMs);
 
+      const customPageRule = task.options.customPageRule?.mode === "page"
+        ? task.options.customPageRule
+        : undefined;
+      const customApiRule = task.options.customApiRule?.mode === "api"
+        ? task.options.customApiRule
+        : undefined;
       task.startupStage = "credential_probe";
       const selection = task.options.browserSessionPartition
         ? {
             candidate: { mode: "raw" as const, headerValue: "" },
-            identityVerified: true,
+            identityVerified: Boolean(customPageRule || customApiRule)
+              || task.options.account.user_id.trim().length === 0,
           }
         : await this.selectCookieCandidate(task, verificationSession);
       if (task.finished) {
@@ -237,7 +255,7 @@ export class CheckinVerificationService {
       });
       browserWindow.once("closed", () => {
         if (!task.finished) {
-          void this.completeTask(task, canceledResult(account.base_url));
+          void this.completeTask(task, canceledResult(verificationEndpoint(task.options)));
         }
       });
 
@@ -255,14 +273,22 @@ export class CheckinVerificationService {
         );
       }
       browserStateReady = true;
-      await browserWindow.loadURL(buildManualUrl(account.base_url));
+      await browserWindow.loadURL(
+        customPageRule?.page_url
+          ?? customApiRule?.page_url
+          ?? buildManualUrl(account.base_url),
+      );
       if (task.finished) {
         return;
       }
-      await browserWindow.webContents.executeJavaScript(
-        buildNativeCheckinTriggerScript(),
-        true,
-      );
+      if (!customApiRule) {
+        await browserWindow.webContents.executeJavaScript(
+          customPageRule
+            ? buildConfiguredCheckinTriggerScript(customPageRule.action_selector ?? "")
+            : buildNativeCheckinTriggerScript(),
+          true,
+        );
+      }
       if (task.finished) {
         return;
       }
@@ -285,7 +311,7 @@ export class CheckinVerificationService {
         message: task.startupStage === "credential_probe"
           ? "无法初始化人工验证会话，请重新保存后台凭证后再试"
           : "人工验证窗口加载失败，请稍后重试",
-        endpoint: buildStatusEndpoint(account.base_url),
+          endpoint: verificationEndpoint(task.options),
         error_code: "access_token_invalid",
       });
     }
@@ -325,7 +351,11 @@ export class CheckinVerificationService {
   }
 
   private configureWindowSecurity(task: VerificationTask, browserWindow: BrowserWindow): void {
-    const allowedOrigin = new URL(task.options.account.base_url).origin;
+    const allowedOrigin = new URL(
+      task.options.customPageRule?.page_url
+        ?? task.options.customApiRule?.page_url
+        ?? task.options.account.base_url,
+    ).origin;
     browserWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     browserWindow.webContents.on("will-navigate", (event, navigationUrl) => {
       if (!isAllowedVerificationNavigation(navigationUrl, allowedOrigin)) {
@@ -412,6 +442,85 @@ export class CheckinVerificationService {
       return;
     }
     const { account } = task.options;
+    const customPageRule = task.options.customPageRule?.mode === "page"
+      ? task.options.customPageRule
+      : undefined;
+    const customApiRule = task.options.customApiRule?.mode === "api"
+      ? task.options.customApiRule
+      : undefined;
+    if (customApiRule) {
+      const probe = task.options.customApiProbe;
+      if (!probe) {
+        await this.completeTask(task, {
+          status: "failed",
+          success: false,
+          message: "自定义 API 人工验证缺少状态探测器",
+          endpoint: customApiRule.target_url,
+          error_code: "unknown_failure",
+        });
+        return;
+      }
+      let result: CheckinResult;
+      try {
+        result = await probe();
+      } catch {
+        result = {
+          status: "failed",
+          success: false,
+          message: "自定义 API 签到状态探测失败",
+          endpoint: customApiRule.target_url,
+          error_code: "network_error",
+        };
+      }
+      if (task.finished) return;
+      if (result.status === "success" || result.status === "already_checked") {
+        await this.completeTask(task, {
+          status: result.status,
+          success: true,
+          message: result.message,
+          endpoint: result.endpoint,
+          ...(result.reward ? { reward: result.reward } : {}),
+        });
+        return;
+      }
+      if (result.status !== "manual_required") {
+        await this.completeTask(task, {
+          status: "failed",
+          success: false,
+          message: result.message,
+          endpoint: result.endpoint,
+          error_code: result.error_code ?? "unknown_failure",
+        });
+        return;
+      }
+      task.pollTimer = setTimeout(() => {
+        void this.pollTask(task, cookieMode);
+      }, this.pollIntervalMs);
+      return;
+    }
+    if (customPageRule) {
+      const snapshot = await readCustomVerificationSnapshot(task.window, customPageRule);
+      if (task.finished) return;
+      const classified = classifyCustomCheckinResult(
+        customPageRule,
+        { kind: "dom", root: snapshot.root },
+        { bodyText: snapshot.challengeDetected ? "captcha challenge" : "" },
+      );
+      if (classified.status === "success" || classified.status === "already_checked") {
+        await this.completeTask(task, {
+          status: classified.status,
+          success: true,
+          message: classified.message,
+          endpoint: classified.endpoint,
+          ...(classified.reward ? { reward: classified.reward } : {}),
+        });
+        return;
+      }
+      task.pollTimer = setTimeout(() => {
+        void this.pollTask(task, cookieMode);
+      }, this.pollIntervalMs);
+      return;
+    }
     const [identityResponse, statusResponse] = await Promise.all([
       fetchIdentity(
         task.session,
@@ -916,6 +1025,112 @@ export function buildNativeCheckinTriggerScript(timeoutMs: number = 6_000): stri
   });`;
 }
 
+export function buildConfiguredCheckinTriggerScript(selector: string): string {
+  const serializedSelector = JSON.stringify(selector.trim());
+  return `(() => {
+    const selector = ${serializedSelector};
+    if (!selector) return false;
+    let target = null;
+    try { target = document.querySelector(selector); } catch { return false; }
+    if (!target || !(target instanceof HTMLElement)) return false;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return false;
+    if (["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED"].includes(target.tagName)) return false;
+    target.click();
+    return true;
+  })()`;
+}
+
+async function readCustomVerificationSnapshot(
+  browserWindow: BrowserWindow | undefined,
+  rule: CustomCheckinRule,
+): Promise<{ root: CustomDomRoot; challengeDetected: boolean }> {
+  if (!browserWindow || browserWindow.isDestroyed()) {
+    return { root: emptyCustomDomRoot(), challengeDetected: false };
+  }
+  const sources = [rule.success, rule.already_checked].filter(
+    (source): source is CustomValueSource => Boolean(source),
+  );
+  const raw = await browserWindow.webContents.executeJavaScript(
+    buildCustomVerificationSnapshotScript(sources),
+    true,
+  );
+  const record = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+  const rawElements = Array.isArray(record.elements) ? record.elements : [];
+  const snapshots = new Map<string, {
+    found: boolean;
+    tagName: string;
+    textContent: string;
+    attributes: Record<string, string | null>;
+  }>();
+  for (const item of rawElements) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const entry = item as Record<string, unknown>;
+    if (typeof entry.selector !== "string") continue;
+    const attrs = entry.attributes && typeof entry.attributes === "object" && !Array.isArray(entry.attributes)
+      ? Object.fromEntries(Object.entries(entry.attributes as Record<string, unknown>).map(([key, value]) => [
+          key,
+          typeof value === "string" ? value.slice(0, 512) : null,
+        ]))
+      : {};
+    snapshots.set(entry.selector, {
+      found: entry.found === true,
+      tagName: typeof entry.tagName === "string" ? entry.tagName.slice(0, 32) : "",
+      textContent: typeof entry.textContent === "string" ? entry.textContent.slice(0, 4096) : "",
+      attributes: attrs,
+    });
+  }
+  const root: CustomDomRoot = {
+    querySelector(selector: string): CustomDomElement | null {
+      const snapshot = snapshots.get(selector);
+      if (!snapshot?.found) return null;
+      return {
+        tagName: snapshot.tagName,
+        textContent: snapshot.textContent,
+        getAttribute(name: string): string | null {
+          return Object.prototype.hasOwnProperty.call(snapshot.attributes, name)
+            ? snapshot.attributes[name]
+            : null;
+        },
+      };
+    },
+  };
+  return {
+    root,
+    challengeDetected: record.challengeDetected === true,
+  };
+}
+
+function emptyCustomDomRoot(): CustomDomRoot {
+  return { querySelector: () => null };
+}
+
+function buildCustomVerificationSnapshotScript(sources: CustomValueSource[]): string {
+  const descriptors = sources.map((source) => ({
+    selector: source.path_or_selector,
+    attribute: source.attribute ?? "",
+  }));
+  return `(() => {
+    const descriptors = ${JSON.stringify(descriptors)};
+    const challengePattern = /turnstile|cloudflare|captcha|challenge|人机|验证码|校验/i;
+    const signal = [document.title || "", (document.body?.innerText || "").slice(0, 50000), ...Array.from(document.querySelectorAll("iframe[src]")).map((item) => item.getAttribute("src") || "")].join(" ");
+    return {
+      challengeDetected: challengePattern.test(signal),
+      elements: descriptors.map(({ selector, attribute }) => {
+        let element = null;
+        try { element = document.querySelector(selector); } catch { element = null; }
+        if (!element) return { selector, found: false, tagName: "", textContent: "", attributes: {} };
+        const names = new Set(["type", "name", "id", "autocomplete"]);
+        if (attribute) names.add(attribute);
+        const attributes = {};
+        for (const name of names) attributes[name] = /^(?:value|password|passwd|token|secret|authorization|cookie|session)$/i.test(name) ? null : element.getAttribute(name);
+        return { selector, found: true, tagName: element.tagName, textContent: String(element.textContent || "").slice(0, 4096), attributes };
+      }),
+    };
+  })()`;
+}
+
 export function buildVerificationBrowserUserSnapshot(
   payload: unknown,
   targetUserId: string,
@@ -972,22 +1187,28 @@ function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function canceledResult(baseUrl: string): CheckinVerificationResult {
+function verificationEndpoint(options: OpenCheckinVerificationOptions): string {
+  return options.customApiRule?.target_url
+    ?? options.customPageRule?.target_url
+    ?? buildStatusEndpoint(options.account.base_url);
+}
+
+function canceledResult(endpoint: string): CheckinVerificationResult {
   return {
     status: "canceled",
     success: false,
     message: "已取消人工验证",
-    endpoint: buildStatusEndpoint(baseUrl),
+    endpoint,
     error_code: "turnstile_required",
   };
 }
 
-function timeoutResult(baseUrl: string): CheckinVerificationResult {
+function timeoutResult(endpoint: string): CheckinVerificationResult {
   return {
     status: "timeout",
     success: false,
     message: "人工验证已超时，可重新打开验证窗口",
-    endpoint: buildStatusEndpoint(baseUrl),
+    endpoint,
     error_code: "turnstile_required",
   };
 }

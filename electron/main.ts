@@ -66,6 +66,17 @@ import {
 import { ModelCatalogService } from "../src/shared/services/model-catalog-service.js";
 import { BalanceService, normalizeBalanceBaseUrl } from "../src/shared/services/balance-service.js";
 import {
+  CustomCompatibilityExecutor,
+  type CustomCompatibilityExecutionOptions,
+} from "../src/shared/services/custom-compatibility-executor.js";
+import {
+  isCustomCredentialForwardingAllowed,
+  normalizeSiteCustomCompatibility,
+  type CustomBalanceRule,
+  type CustomCheckinRule,
+  type SiteCustomCompatibility,
+} from "../src/shared/services/custom-compatibility.js";
+import {
   CheckinService,
   type CheckinDiagnosticAttempt,
 } from "../src/shared/services/checkin-service.js";
@@ -93,6 +104,11 @@ import {
   CheckinVerificationService,
   type CheckinVerificationDiagnosticEvent,
 } from "../src/shared/electron/checkin-verification-service.js";
+import {
+  CustomElementSelectorService,
+  type CustomElementSelectorResult,
+} from "../src/shared/electron/custom-element-selector-service.js";
+import { CustomCompatibilityPageService } from "../src/shared/electron/custom-compatibility-page-service.js";
 import {
   BrowserAccountSessionManager,
   BrowserLoginRequiredError,
@@ -143,7 +159,10 @@ import {
   DEFAULT_PROFILE_BROWSER_PARTITION,
   resolveBaseUrlBrowserTarget,
 } from "../src/shared/electron/open-url.js";
-import { resolveProfileBrowserPartitionRequest } from "../src/shared/electron/profile-browser-partition.js";
+import {
+  customCompatibilityPartitionName,
+  resolveProfileBrowserPartitionRequest,
+} from "../src/shared/electron/profile-browser-partition.js";
 import {
   runBrowserNavigationAction,
   type BrowserNavigationAction,
@@ -260,9 +279,13 @@ let settingsStateService: SettingsStateService | null = null;
 let modelMappingConfigService: ModelMappingConfigService | null = null;
 let modelCatalogService: ModelCatalogService | null = null;
 let balanceService: BalanceService | null = null;
+let customCompatibilityExecutor: CustomCompatibilityExecutor | null = null;
+let customCompatibilityPageService: CustomCompatibilityPageService | null = null;
+const customCompatibilityFetchesByPartition = new Map<string, typeof fetch>();
 let checkinService: CheckinService | null = null;
 let checkinScheduler: CheckinScheduler | null = null;
 let checkinVerificationService: CheckinVerificationService | null = null;
+let customElementSelectorService: CustomElementSelectorService | null = null;
 let browserAccountSessionManager: BrowserAccountSessionManager | null = null;
 let pendingBrowserAccountReferences: PendingBrowserAccountReferenceRegistry | null = null;
 let browserAccountRuntimeShutdownPromise: Promise<void> | null = null;
@@ -1360,6 +1383,25 @@ function getBalanceService(): BalanceService {
   return balanceService;
 }
 
+function getCustomCompatibilityExecutor(): CustomCompatibilityExecutor {
+  if (!customCompatibilityExecutor) {
+    customCompatibilityExecutor = new CustomCompatibilityExecutor();
+  }
+  return customCompatibilityExecutor;
+}
+
+function getCustomCompatibilityPageService(): CustomCompatibilityPageService {
+  if (!customCompatibilityPageService) {
+    customCompatibilityPageService = new CustomCompatibilityPageService({
+      createSession: (partition) => electronSession.fromPartition(partition),
+      createWindow: (options) => new BrowserWindow(options),
+      getParentWindow: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+      windowIcon: resolveWindowIconPath(),
+    });
+  }
+  return customCompatibilityPageService;
+}
+
 function getCheckinService(): CheckinService {
   if (!checkinService) throw new Error("签到服务尚未初始化。");
   return checkinService;
@@ -1376,6 +1418,18 @@ function getCheckinVerificationService(): CheckinVerificationService {
     });
   }
   return checkinVerificationService;
+}
+
+function getCustomElementSelectorService(): CustomElementSelectorService {
+  if (!customElementSelectorService) {
+    customElementSelectorService = new CustomElementSelectorService({
+      createSession: (partition) => electronSession.fromPartition(partition),
+      createWindow: (options) => new BrowserWindow(options),
+      getParentWindow: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+      windowIcon: resolveWindowIconPath(),
+    });
+  }
+  return customElementSelectorService;
 }
 
 function getBrowserAccountSessionManager(): BrowserAccountSessionManager {
@@ -2148,6 +2202,7 @@ async function initProfileServices(): Promise<void> {
   });
   modelCatalogService = new ModelCatalogService();
   const electronFetch = createChromiumFetch();
+  customCompatibilityExecutor = new CustomCompatibilityExecutor();
   balanceService = new BalanceService(electronFetch);
   checkinService = new CheckinService(electronFetch);
   modelMappingsStateCache = await modelMappingConfigService.load();
@@ -2573,6 +2628,85 @@ async function saveAndEmitBalanceState(profileKeys: ProfileKey[], nextState: Bal
   }
 }
 
+function customCompatibilitySourceOrigin(account: SiteBalanceSession): string {
+  const configured = account.auth_kind === "browser_session"
+    ? account.browser_origin || account.custom_compatibility?.identity_origin || account.base_url
+    : account.custom_compatibility?.identity_origin || account.base_url;
+  return new URL(configured).origin;
+}
+
+function customCompatibilityPartition(account: SiteBalanceSession): string {
+  if (account.auth_kind === "browser_session") {
+    return getBrowserAccountSessionManager().getPartitionName(account);
+  }
+  return customCompatibilityPartitionName(buildCheckinAccountKey(
+    normalizeBalanceBaseUrl(account.base_url),
+    account.id,
+  ));
+}
+
+function getCustomCompatibilityFetch(partition: string): typeof fetch {
+  const current = customCompatibilityFetchesByPartition.get(partition);
+  if (current) return current;
+  const created = createChromiumFetch(8_000, partition);
+  customCompatibilityFetchesByPartition.set(partition, created);
+  return created;
+}
+
+async function buildCustomCompatibilityExecutionOptions(
+  account: SiteBalanceSession,
+  rule: CustomBalanceRule | CustomCheckinRule,
+): Promise<CustomCompatibilityExecutionOptions> {
+  const sourceOrigin = customCompatibilitySourceOrigin(account);
+  const forwardCredential = isCustomCredentialForwardingAllowed(
+    rule,
+    sourceOrigin,
+    rule.target_url,
+  );
+  let headers: Record<string, string> = {};
+  if (
+    rule.mode === "api"
+    && forwardCredential
+    && account.auth_kind === "access_token"
+    && account.access_token.trim()
+  ) {
+    headers = { Authorization: `Bearer ${account.access_token.trim()}` };
+  }
+
+  const partition = customCompatibilityPartition(account);
+  const requestFetch = getCustomCompatibilityFetch(partition);
+  if (account.auth_kind !== "browser_session") {
+    return {
+      request: { fetch: requestFetch, headers },
+      page: getCustomCompatibilityPageService().createTransport(partition),
+    };
+  }
+
+  const accountKey = buildCheckinAccountKey(
+    normalizeBalanceBaseUrl(account.base_url),
+    account.id,
+  );
+  if (
+    rule.mode === "api"
+    && forwardCredential
+    && account.custom_compatibility?.identity_mode !== "user_confirmed"
+  ) {
+    const requestContext = await getBrowserAccountSessionManager().getRequestContext(
+      accountKey,
+      account,
+    );
+    headers = { ...requestContext.headers };
+  }
+  return {
+    request: {
+      fetch: requestFetch,
+      headers,
+      credentials: "include",
+    },
+    page: getCustomCompatibilityPageService().createTransport(partition),
+  };
+}
+
 async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
   const startedAt = Date.now();
   const profiles = getProfileService().getProfiles();
@@ -2600,6 +2734,10 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
   const credentialUpdatedAt = resolvedAuth.kind === "explicit_session"
     ? resolvedAuth.session.updated_at
     : "";
+  const customBalanceRule = resolvedAuth.kind === "explicit_session"
+    && resolvedAuth.session.custom_compatibility?.enabled === true
+    ? resolvedAuth.session.custom_compatibility.balance
+    : undefined;
   const cachedBalancePath = getProfileService().getState().site_capability_cache
     .balance_by_target[capabilityTargetKey];
   const learnedBalancePath = cachedBalancePath
@@ -2665,6 +2803,18 @@ async function runBalanceCheck(profileKey: ProfileKey): Promise<void> {
         message: "该账号使用已停用的手工 Cookie，请通过浏览器重新登录",
         endpoint: `${resolvedAuth.base_url}/api/user/self`,
       };
+    } else if (customBalanceRule && resolvedAuth.kind === "explicit_session") {
+      delete getProfileStateAccessor().get().site_capability_cache
+        .balance_by_target[capabilityTargetKey];
+      finalState = await getCustomCompatibilityExecutor().queryBalance(
+        profile,
+        customBalanceRule,
+        timeoutMs,
+        await buildCustomCompatibilityExecutionOptions(
+          resolvedAuth.session,
+          customBalanceRule,
+        ),
+      );
     } else {
       const managementRequestContext = browserAccountKey
         && resolvedAuth.kind === "explicit_session"
@@ -2784,6 +2934,29 @@ function findCheckinAccount(rawBaseUrl: string, sessionId: string): SiteBalanceS
   return account;
 }
 
+function normalizeCustomSelectorPageUrl(value: string): string {
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error();
+    return parsed.toString();
+  } catch {
+    throw new Error("元素选择页面必须是完整的 http:// 或 https:// URL");
+  }
+}
+
+function isDeclaredCustomSelectorPage(account: SiteBalanceSession, pageUrl: string): boolean {
+  const compatibility = account.custom_compatibility;
+  if (!compatibility?.enabled) return false;
+  const declaredUrls = [
+    compatibility.login_url,
+    compatibility.balance?.page_url,
+    compatibility.balance?.mode === "page" ? compatibility.balance.target_url : undefined,
+    compatibility.checkin?.page_url,
+    compatibility.checkin?.mode === "page" ? compatibility.checkin.target_url : undefined,
+  ].filter((value): value is string => Boolean(value));
+  return declaredUrls.some((value) => normalizeCustomSelectorPageUrl(value) === pageUrl);
+}
+
 function resolveProfileBrowserPartition(
   rawBaseUrl: string,
   targetInput: unknown,
@@ -2887,12 +3060,12 @@ function allocateBrowserAccountSessionId(): string {
 }
 
 function referenceForBrowserSlot(
-  baseUrl: string,
+  browserOrigin: string,
   slot: BrowserIdentitySlot,
 ): { browserSessionId: string; browserOrigin: string } {
   return {
     browserSessionId: slot.browser_session_id,
-    browserOrigin: new URL(baseUrl).origin,
+    browserOrigin: normalizeBrowserOrigin(browserOrigin),
   };
 }
 
@@ -2900,12 +3073,28 @@ async function loginBrowserAccount(
   rawBaseUrl: string,
   existingSessionId?: string,
   requestedBrowserSlot?: number,
+  customCompatibilityInput?: unknown,
 ): Promise<SiteBalanceSession> {
   const baseUrl = normalizeBalanceBaseUrl(rawBaseUrl);
   if (!baseUrl) throw new Error("Base URL 不能为空");
   const existing = existingSessionId
     ? findCheckinAccount(baseUrl, existingSessionId)
     : undefined;
+  const customCompatibility = customCompatibilityInput !== undefined
+    ? normalizeSiteCustomCompatibility(customCompatibilityInput)
+    : existing?.custom_compatibility;
+  const browserOrigin = normalizeBrowserOrigin(
+    customCompatibility?.identity_origin
+      || existing?.browser_origin
+      || baseUrl,
+  );
+  if (
+    existing?.auth_kind === "browser_session"
+    && existing.browser_origin
+    && normalizeBrowserOrigin(existing.browser_origin) !== browserOrigin
+  ) {
+    throw new Error("管理 / 身份 origin 已变化，请删除并重新创建该浏览器账号");
+  }
   if (!existing) {
     const normalizedRequestedSlot = normalizeBrowserSlot(requestedBrowserSlot);
     if (requestedBrowserSlot !== undefined && !normalizedRequestedSlot) {
@@ -2924,11 +3113,27 @@ async function loginBrowserAccount(
         baseUrl,
         sessionId,
         buildCheckinAccountKey(baseUrl, sessionId),
-        referenceForBrowserSlot(baseUrl, sharedSlot),
+        referenceForBrowserSlot(browserOrigin, sharedSlot),
         sharedSlot.slot,
+        undefined,
+        false,
+        customCompatibility,
       );
     }
     const browserSlot = allocateBrowserSlot(identitySlots);
+    if (browserOrigin !== new URL(baseUrl).origin) {
+      const sessionId = allocateBrowserAccountSessionId();
+      return completeBrowserAccountLogin(
+        baseUrl,
+        sessionId,
+        buildCheckinAccountKey(baseUrl, sessionId),
+        getBrowserAccountSessionManager().createReference(browserOrigin),
+        browserSlot,
+        undefined,
+        true,
+        customCompatibility,
+      );
+    }
     return getPendingBrowserAccountReferences().run(baseUrl, async (pending) => (
       completeBrowserAccountLogin(
         baseUrl,
@@ -2936,6 +3141,9 @@ async function loginBrowserAccount(
         pending.accountKey,
         pending.reference,
         browserSlot,
+        undefined,
+        false,
+        customCompatibility,
       )
     ));
   }
@@ -2962,6 +3170,7 @@ async function loginBrowserAccount(
     browserSlot,
     existing,
     !reusableReference,
+    customCompatibility,
   );
 }
 
@@ -2973,14 +3182,23 @@ async function completeBrowserAccountLogin(
   browserSlot: number,
   existing?: SiteBalanceSession,
   discardReferenceOnRejected: boolean = false,
+  customCompatibility?: SiteCustomCompatibility,
 ): Promise<SiteBalanceSession> {
+  const identityMode = customCompatibility?.identity_mode ?? "standard";
   const loginResult = await getBrowserAccountSessionManager().openLogin({
     accountKey,
     browserSessionId: reference.browserSessionId,
     browserOrigin: reference.browserOrigin,
-    ...(existing?.user_id ? { expectedUserId: existing.user_id } : {}),
+    ...(customCompatibility?.login_url ? { loginUrl: customCompatibility.login_url } : {}),
+    identityMode,
+    ...(identityMode === "standard" && existing?.user_id
+      ? { expectedUserId: existing.user_id }
+      : {}),
   });
-  if (loginResult.status !== "ready" || !loginResult.userId) {
+  if (
+    loginResult.status !== "ready"
+    || (identityMode === "standard" && !loginResult.userId)
+  ) {
     if (discardReferenceOnRejected) {
       await getBrowserAccountSessionManager().discardReference(
         accountKey,
@@ -2999,7 +3217,8 @@ async function completeBrowserAccountLogin(
       browser_session_id: reference.browserSessionId,
       browser_slot: browserSlot,
       browser_origin: reference.browserOrigin,
-      user_id: loginResult.userId,
+      user_id: identityMode === "user_confirmed" ? "" : loginResult.userId ?? "",
+      ...(customCompatibility ? { custom_compatibility: customCompatibility } : {}),
     });
   } catch (error) {
     if (discardReferenceOnRejected) {
@@ -3282,6 +3501,20 @@ function mergeCheckinVerificationResult(
   };
 }
 
+function buildCustomManualCheckinPageRule(
+  rule: CustomCheckinRule,
+  manualUrl: string | undefined,
+): CustomCheckinRule | undefined {
+  if (rule.mode !== "page") return undefined;
+  const pageUrl = rule.page_url || manualUrl || rule.target_url;
+  if (!pageUrl) return undefined;
+  return {
+    ...rule,
+    mode: "page",
+    page_url: pageUrl,
+  };
+}
+
 async function executeCheckinAccountOnce(
   account: SiteBalanceSession,
   trigger: CheckinTrigger,
@@ -3291,6 +3524,9 @@ async function executeCheckinAccountOnce(
   const baseUrl = normalizeBalanceBaseUrl(account.base_url);
   const accountKey = buildCheckinAccountKey(baseUrl, account.id);
   const current = getProfileService().getState().checkin_states_by_account[accountKey];
+  const customCheckinRule = account.custom_compatibility?.enabled === true
+    ? account.custom_compatibility.checkin
+    : undefined;
   const runId = randomUUID().replace(/-/g, "").slice(0, 12);
   const startedAt = Date.now();
   const diagnosticAttempts: Array<Pick<
@@ -3316,7 +3552,7 @@ async function executeCheckinAccountOnce(
 
   const cachedPath = getProfileService().getState().site_capability_cache
     .checkin_by_account[accountKey];
-  const learnedPath = cachedPath && isCapabilityPathCurrent(
+  const learnedPath = !customCheckinRule && cachedPath && isCapabilityPathCurrent(
     cachedPath.learned_at,
     cachedPath.credential_updated_at,
     account.updated_at,
@@ -3338,7 +3574,7 @@ async function executeCheckinAccountOnce(
       ...browserLoginRequiredResult(baseUrl),
       message: "该账号使用已停用的手工 Cookie，请通过浏览器重新登录",
     };
-  } else if (account.auth_kind === "browser_session") {
+  } else if (account.auth_kind === "browser_session" && !customCheckinRule) {
     try {
       managementRequestContext = await getBrowserAccountSessionManager().getRequestContext(
         accountKey,
@@ -3359,38 +3595,47 @@ async function executeCheckinAccountOnce(
     result = preflightResult;
   } else {
     try {
-      result = await getCheckinService().checkin(
-        { ...account, base_url: baseUrl },
-        12_000,
-        {
-          runId,
-          trigger,
-          learnedPath,
-          onPathLearned: updateLearnedPath,
-          onPathInvalidated: invalidateLearnedPath,
-          managementRequestContext,
-          onDiagnostic: (event) => {
-            const { duration_ms: durationMs, ...context } = event;
-            diagnosticAttempts.push({
-              stage: event.stage,
-              authorization_mode: event.authorization_mode,
-              cookie_mode: event.cookie_mode,
-              user_id_source: event.user_id_source,
-              method: event.method,
-              endpoint_path: event.endpoint_path,
-              http_status: event.http_status,
-              message_code: event.message_code,
-              ...(event.message_preview
-                ? { message_preview: event.message_preview }
-                : {}),
-            });
-            appLogger.debug("checkin_auth", "auth_attempt", "Check-in authentication attempt", {
-              durationMs,
-              context,
-            });
+      if (customCheckinRule) {
+        invalidateLearnedPath();
+        result = await getCustomCompatibilityExecutor().checkin(
+          customCheckinRule,
+          12_000,
+          await buildCustomCompatibilityExecutionOptions(account, customCheckinRule),
+        );
+      } else {
+        result = await getCheckinService().checkin(
+          { ...account, base_url: baseUrl },
+          12_000,
+          {
+            runId,
+            trigger,
+            learnedPath,
+            onPathLearned: updateLearnedPath,
+            onPathInvalidated: invalidateLearnedPath,
+            managementRequestContext,
+            onDiagnostic: (event) => {
+              const { duration_ms: durationMs, ...context } = event;
+              diagnosticAttempts.push({
+                stage: event.stage,
+                authorization_mode: event.authorization_mode,
+                cookie_mode: event.cookie_mode,
+                user_id_source: event.user_id_source,
+                method: event.method,
+                endpoint_path: event.endpoint_path,
+                http_status: event.http_status,
+                message_code: event.message_code,
+                ...(event.message_preview
+                  ? { message_preview: event.message_preview }
+                  : {}),
+              });
+              appLogger.debug("checkin_auth", "auth_attempt", "Check-in authentication attempt", {
+                durationMs,
+                context,
+              });
+            },
           },
-        },
-      );
+        );
+      }
     } catch (error) {
       if (!(error instanceof BrowserLoginRequiredError) || account.auth_kind !== "browser_session") {
         throw error;
@@ -3420,19 +3665,47 @@ async function executeCheckinAccountOnce(
         : {}),
       ...(result.verification ? { verification: result.verification } : {}),
     });
-    const verificationResult = await getCheckinVerificationService().openVerification({
-      account: { ...account, base_url: baseUrl },
-      trigger,
-      runId,
-      preferredCookieMode: result.verification?.cookie_mode,
-      ...(account.auth_kind === "browser_session" && managementRequestContext
-        ? {
-            browserSessionPartition: getBrowserAccountSessionManager().getPartitionName(account),
-            managementRequestContext,
-          }
-        : {}),
-    });
-    result = mergeCheckinVerificationResult(result, verificationResult);
+    const customManualPageRule = customCheckinRule
+      ? buildCustomManualCheckinPageRule(customCheckinRule, result.manual_url)
+      : undefined;
+    const customApiRule = customCheckinRule?.mode === "api" ? customCheckinRule : undefined;
+    if (customApiRule && !customApiRule.page_url) {
+      result = {
+        ...result,
+        message: "自定义 API 签到需要人工验证，请在规则中配置签到页面 URL",
+      };
+    } else {
+      const customApiExecutionOptions = customApiRule
+        ? await buildCustomCompatibilityExecutionOptions(account, customApiRule)
+        : undefined;
+      const verificationResult = await getCheckinVerificationService().openVerification({
+        account: { ...account, base_url: baseUrl },
+        trigger,
+        runId,
+        preferredCookieMode: result.verification?.cookie_mode,
+        ...(account.auth_kind === "browser_session" && managementRequestContext
+          ? {
+              browserSessionPartition: getBrowserAccountSessionManager().getPartitionName(account),
+              managementRequestContext,
+            }
+          : {}),
+        ...(customCheckinRule && !managementRequestContext
+          ? { browserSessionPartition: customCompatibilityPartition(account) }
+          : {}),
+        ...(customManualPageRule ? { customPageRule: customManualPageRule } : {}),
+        ...(customApiRule && customApiExecutionOptions
+          ? {
+              customApiRule,
+              customApiProbe: () => getCustomCompatibilityExecutor().checkin(
+                customApiRule,
+                12_000,
+                customApiExecutionOptions,
+              ),
+            }
+          : {}),
+      });
+      result = mergeCheckinVerificationResult(result, verificationResult);
+    }
   }
   if (
     account.auth_kind === "browser_session"
@@ -3562,11 +3835,21 @@ async function reopenCheckinVerification(
   const baseUrl = normalizeBalanceBaseUrl(account.base_url);
   const accountKey = buildCheckinAccountKey(baseUrl, account.id);
   const current = getProfileService().getState().checkin_states_by_account[accountKey];
+  const customCheckinRule = account.custom_compatibility?.enabled === true
+    ? account.custom_compatibility.checkin
+    : undefined;
   const runId = current?.diagnostic_run_id
     || randomUUID().replace(/-/g, "").slice(0, 12);
   const manualUrl = current?.manual_url || `${baseUrl}/console/personal`;
+  const customManualPageRule = customCheckinRule
+    ? buildCustomManualCheckinPageRule(customCheckinRule, manualUrl)
+    : undefined;
+  const customApiRule = customCheckinRule?.mode === "api" ? customCheckinRule : undefined;
+  if (customApiRule && !customApiRule.page_url) {
+    throw new Error("自定义 API 签到需要人工验证时必须配置签到页面 URL");
+  }
   let managementRequestContext: ManagementRequestContext | undefined;
-  if (account.auth_kind === "browser_session") {
+  if (account.auth_kind === "browser_session" && !customCheckinRule) {
     try {
       managementRequestContext = await getBrowserAccountSessionManager().getRequestContext(
         accountKey,
@@ -3585,6 +3868,9 @@ async function reopenCheckinVerification(
     manual_url: manualUrl,
     diagnostic_run_id: runId,
   });
+  const customApiExecutionOptions = customApiRule
+    ? await buildCustomCompatibilityExecutionOptions(account, customApiRule)
+    : undefined;
   const verificationResult = await getCheckinVerificationService().openVerification({
     account: { ...account, base_url: baseUrl },
     trigger: "manual",
@@ -3594,6 +3880,20 @@ async function reopenCheckinVerification(
       ? {
           browserSessionPartition: getBrowserAccountSessionManager().getPartitionName(account),
           managementRequestContext,
+        }
+      : {}),
+    ...(customCheckinRule && !managementRequestContext
+      ? { browserSessionPartition: customCompatibilityPartition(account) }
+      : {}),
+    ...(customManualPageRule ? { customPageRule: customManualPageRule } : {}),
+    ...(customApiRule && customApiExecutionOptions
+      ? {
+          customApiRule,
+          customApiProbe: () => getCustomCompatibilityExecutor().checkin(
+            customApiRule,
+            12_000,
+            customApiExecutionOptions,
+          ),
         }
       : {}),
   });
@@ -4684,14 +4984,24 @@ function registerAllIpcHandlers(): void {
   );
   handleIpc(
     "browser-auth:login",
-    async (_event, baseUrl: string, browserSlot?: number): Promise<SiteBalanceSession> => (
-      loginBrowserAccount(baseUrl, undefined, browserSlot)
+    async (
+      _event,
+      baseUrl: string,
+      browserSlot?: number,
+      customCompatibility?: unknown,
+    ): Promise<SiteBalanceSession> => (
+      loginBrowserAccount(baseUrl, undefined, browserSlot, customCompatibility)
     ),
   );
   handleIpc(
     "browser-auth:relogin",
-    async (_event, baseUrl: string, sessionId: string): Promise<SiteBalanceSession> => (
-      loginBrowserAccount(baseUrl, sessionId)
+    async (
+      _event,
+      baseUrl: string,
+      sessionId: string,
+      customCompatibility?: unknown,
+    ): Promise<SiteBalanceSession> => (
+      loginBrowserAccount(baseUrl, sessionId, undefined, customCompatibility)
     ),
   );
   handleIpc(
@@ -4734,6 +5044,7 @@ function registerAllIpcHandlers(): void {
       const accountKey = buildCheckinAccountKey(normalizedBaseUrl, sessionId);
       await checkinVerificationService?.cancelAccount(accountKey);
       if (account.auth_kind === "browser_session") {
+        customCompatibilityFetchesByPartition.delete(customCompatibilityPartition(account));
         const remainingSlotReferences = listCheckinAccounts().filter((item) => (
           buildCheckinAccountKey(normalizeBalanceBaseUrl(item.base_url), item.id) !== accountKey
           && item.auth_kind === "browser_session"
@@ -4755,6 +5066,13 @@ function registerAllIpcHandlers(): void {
           await getProfileService().deleteBrowserIdentitySlot(identitySlot.slot);
         }
         return;
+      }
+      if (account.custom_compatibility?.enabled) {
+        const partition = customCompatibilityPartition(account);
+        customCompatibilityFetchesByPartition.delete(partition);
+        const browserSession = electronSession.fromPartition(partition);
+        await browserSession.clearStorageData();
+        await browserSession.clearCache();
       }
       await getProfileService().deleteSiteBalanceSession(baseUrl, sessionId);
     },
@@ -4983,6 +5301,34 @@ function registerAllIpcHandlers(): void {
       checkinScheduler?.refresh();
       return updated;
     },
+  );
+  handleIpc(
+    "custom-compatibility:select-element",
+    async (
+      _event,
+      baseUrl: string,
+      sessionId: string,
+      pageUrl: string,
+    ): Promise<CustomElementSelectorResult | null> => {
+      const normalizedBaseUrl = normalizeBalanceBaseUrl(baseUrl);
+      const normalizedPageUrl = normalizeCustomSelectorPageUrl(pageUrl);
+      const normalizedSessionId = sessionId.trim();
+      let partition = DEFAULT_PROFILE_BROWSER_PARTITION;
+      if (normalizedSessionId) {
+        const account = findCheckinAccount(normalizedBaseUrl, normalizedSessionId);
+        if (!isDeclaredCustomSelectorPage(account, normalizedPageUrl)) {
+          throw new Error("元素选择页面必须是当前账号已声明的自定义规则页面");
+        }
+        partition = customCompatibilityPartition(account);
+      } else if (new URL(normalizedPageUrl).origin !== new URL(normalizedBaseUrl).origin) {
+        throw new Error("新建账号尚未保存规则时，只允许选择官网同源页面");
+      }
+      return getCustomElementSelectorService().selectElement({
+        pageUrl: normalizedPageUrl,
+        partition,
+      });
+    },
+    { includeArgs: false },
   );
 
   handleIpc(

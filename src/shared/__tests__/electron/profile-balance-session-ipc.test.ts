@@ -59,4 +59,16 @@ describe("profile balance session IPC", () => {
     expect(appSource).toContain('{ kind: "browser_slot", slot }');
     expect(appSource).toContain("window.profileManager.openBaseUrl(draftUrl, target)");
   });
+
+  it("keeps custom API requests, manual verification, and element selection on the account partition", async () => {
+    const mainSource = normalizeNewlines(
+      await readFile(path.join(process.cwd(), "electron", "main.ts"), "utf8"),
+    );
+
+    expect(mainSource).toContain("const partition = customCompatibilityPartition(account);");
+    expect(mainSource).toContain("const requestFetch = getCustomCompatibilityFetch(partition);");
+    expect(mainSource).toContain("createTransport(partition)");
+    expect(mainSource).toContain("partition = customCompatibilityPartition(account);");
+    expect(mainSource).toContain("customCompatibilityPartitionName(buildCheckinAccountKey(");
+  });
 });

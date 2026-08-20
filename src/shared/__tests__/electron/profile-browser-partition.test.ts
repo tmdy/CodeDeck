@@ -5,6 +5,7 @@ import {
   type SiteBalanceSession,
 } from "../../balance/site-balance-sessions.js";
 import {
+  customCompatibilityPartitionName,
   resolveProfileBrowserPartitionRequest,
   type ProfileBrowserPartitionDependencies,
 } from "../../electron/profile-browser-partition.js";
@@ -44,6 +45,15 @@ function createDependencies(options: {
 }
 
 describe("resolveProfileBrowserPartitionRequest", () => {
+  it("creates stable isolated partitions for saved custom compatibility accounts", () => {
+    const first = customCompatibilityPartitionName("https://example.com::session-a");
+
+    expect(first).toMatch(/^persist:codedeck-custom-compatibility-[a-f0-9]{24}$/);
+    expect(customCompatibilityPartitionName("https://example.com::session-a")).toBe(first);
+    expect(customCompatibilityPartitionName("https://example.com::session-b")).not.toBe(first);
+    expect(() => customCompatibilityPartitionName("  ")).toThrow("账号标识不能为空");
+  });
+
   it("keeps default browsing isolated from browser accounts", () => {
     const { dependencies, preparePendingPartition } = createDependencies();
 

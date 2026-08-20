@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { SiteBalanceSessionPanel } from "../../../components/profiles/SiteBalanceSessionPanel.jsx";
 import type { SiteBalanceSession } from "../../balance/site-balance-sessions.js";
+import type { SiteCustomCompatibility } from "../../services/custom-compatibility.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -132,6 +133,67 @@ describe("SiteBalanceSessionPanel", () => {
     expect(html).toContain("保存 PAT 账号");
     expect(html).toContain("删除当前会话");
     expect(html).not.toContain("备注名");
+  });
+
+  it("keeps custom balance and check-in rules independently enabled", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const changes: SiteCustomCompatibility[] = [];
+    const initial: SiteCustomCompatibility = {
+      enabled: true,
+      identity_mode: "standard",
+      balance: {
+        mode: "api",
+        target_url: "https://api.example.com/balance",
+        remaining: { kind: "json_path", path_or_selector: "remaining" },
+        credential_forwarding: "none",
+      },
+    };
+
+    function Harness() {
+      const [customCompatibility, setCustomCompatibility] = useState(initial);
+      return (
+        <SiteBalanceSessionPanel
+          siteBalanceSessions={[]}
+          balanceSessionSelection="new"
+          balanceSessionDraft={{
+            label: "",
+            access_token: "",
+            auth_kind: "browser_session",
+            user_id: "",
+            custom_compatibility: customCompatibility,
+          }}
+          onBalanceSessionSelectionChange={vi.fn()}
+          onBalanceSessionDraftChange={vi.fn()}
+          onCustomCompatibilityChange={(value) => {
+            if (value?.enabled !== true) return;
+            changes.push(value);
+            setCustomCompatibility(value);
+          }}
+          onDeleteSiteBalanceSession={vi.fn()}
+        />
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    const findToggle = (labelText: string) => Array.from(container.querySelectorAll("label"))
+      .find((label) => label.textContent?.includes(labelText))
+      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+
+    expect(findToggle("启用余额规则")?.checked).toBe(true);
+    expect(findToggle("启用签到规则")?.checked).toBe(false);
+
+    await act(async () => findToggle("启用签到规则")?.click());
+    expect(changes.at(-1)?.balance).toBeDefined();
+    expect(changes.at(-1)?.checkin).toBeDefined();
+
+    await act(async () => findToggle("启用余额规则")?.click());
+    expect(changes.at(-1)?.balance).toBeUndefined();
+    expect(changes.at(-1)?.checkin).toBeDefined();
+
+    await act(async () => root.unmount());
+    container.remove();
   });
 
   it("does not report an unprobed browser account as logged in", () => {

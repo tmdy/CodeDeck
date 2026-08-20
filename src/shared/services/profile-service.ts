@@ -48,6 +48,10 @@ import {
   normalizeProfileHealthBaseUrl,
   normalizeProfileHealthRequestBaseUrl,
 } from "../profile-health/types.js";
+import {
+  cloneSiteCustomCompatibility,
+  customCompatibilityEquals,
+} from "./custom-compatibility.js";
 
 // ---- 接口定义 ----
 
@@ -607,7 +611,13 @@ export class ProfileService {
     }
 
     const normalizedDraft = normalizeSiteBalanceSessionDraft(draft);
+    const customCompatibilityProvided = Object.prototype.hasOwnProperty.call(
+      draft,
+      "custom_compatibility",
+    );
     const authKind = normalizedDraft.auth_kind ?? "access_token";
+    const allowsUserConfirmedIdentity = normalizedDraft.custom_compatibility?.identity_mode
+      === "user_confirmed";
     if (authKind !== "browser_session" && !normalizedDraft.access_token) {
       throw new Error("Access Token 不能为空");
     }
@@ -616,7 +626,7 @@ export class ProfileService {
       && (!normalizedDraft.browser_session_id
         || !normalizedDraft.browser_slot
         || !normalizedDraft.browser_origin
-        || !normalizedDraft.user_id)
+        || (!normalizedDraft.user_id && !allowsUserConfirmedIdentity))
     ) {
       throw new Error("浏览器登录会话尚未完成验证");
     }
@@ -644,6 +654,9 @@ export class ProfileService {
     const label = authKind === "browser_session" && normalizedDraft.browser_slot
       ? `账号${normalizedDraft.browser_slot}`
       : normalizedDraft.label || existingSession?.label || `账号${currentSessions.length + 1}`;
+    const customCompatibility = customCompatibilityProvided
+      ? normalizedDraft.custom_compatibility
+      : cloneSiteCustomCompatibility(existingSession?.custom_compatibility);
     const nextSession: SiteBalanceSession = {
       id: sessionId,
       label,
@@ -667,6 +680,7 @@ export class ProfileService {
         : {}),
       user_id: normalizedDraft.user_id,
       auto_checkin_enabled: existingSession?.auto_checkin_enabled ?? false,
+      ...(customCompatibility ? { custom_compatibility: customCompatibility } : {}),
       updated_at: new Date().toISOString(),
     };
     const credentialsChanged = !existingSession
@@ -676,7 +690,11 @@ export class ProfileService {
       || (existingSession.browser_slot ?? 0) !== (nextSession.browser_slot ?? 0)
       || (existingSession.browser_origin ?? "") !== (nextSession.browser_origin ?? "")
       || (existingSession.refresh_token ?? "") !== (nextSession.refresh_token ?? "")
-      || existingSession.user_id !== nextSession.user_id;
+      || existingSession.user_id !== nextSession.user_id
+      || !customCompatibilityEquals(
+        existingSession.custom_compatibility,
+        nextSession.custom_compatibility,
+      );
 
     const index = currentSessions.findIndex((session) => session.id === sessionId);
     const nextSessions = currentSessions.map((session) => ({ ...session }));

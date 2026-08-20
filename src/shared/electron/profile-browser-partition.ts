@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import {
   parseProfileBrowserTarget,
   resolveBaseUrlBrowserTarget,
   type ProfileBrowserTarget,
 } from "./open-url.js";
+
+const CUSTOM_COMPATIBILITY_PARTITION_PREFIX = "persist:codedeck-custom-compatibility-";
 
 export interface SavedProfileBrowserAccount {
   auth_kind?: string;
@@ -82,4 +85,13 @@ export function resolveProfileBrowserPartitionRequest<
   }
 
   return { partition: dependencies.defaultPartition, target };
+}
+
+export function customCompatibilityPartitionName(accountKey: string): string {
+  const normalized = accountKey.trim();
+  if (!normalized) {
+    throw new Error("自定义兼容账号标识不能为空");
+  }
+  const digest = createHash("sha256").update(normalized).digest("hex").slice(0, 24);
+  return `${CUSTOM_COMPATIBILITY_PARTITION_PREFIX}${digest}`;
 }

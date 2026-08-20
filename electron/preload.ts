@@ -171,10 +171,18 @@ const profileApi = {
     baseUrl,
     sessionId,
   ),
-  loginBrowserAccount: (baseUrl: string, browserSlot?: number): Promise<unknown> =>
-    ipcRenderer.invoke("browser-auth:login", baseUrl, browserSlot),
-  reloginBrowserAccount: (baseUrl: string, sessionId: string): Promise<unknown> =>
-    ipcRenderer.invoke("browser-auth:relogin", baseUrl, sessionId),
+  loginBrowserAccount: (
+    baseUrl: string,
+    browserSlot?: number,
+    customCompatibility?: unknown,
+  ): Promise<unknown> =>
+    ipcRenderer.invoke("browser-auth:login", baseUrl, browserSlot, customCompatibility),
+  reloginBrowserAccount: (
+    baseUrl: string,
+    sessionId: string,
+    customCompatibility?: unknown,
+  ): Promise<unknown> =>
+    ipcRenderer.invoke("browser-auth:relogin", baseUrl, sessionId, customCompatibility),
   logoutBrowserAccount: (baseUrl: string, sessionId: string): Promise<void> =>
     ipcRenderer.invoke("browser-auth:logout", baseUrl, sessionId),
   getBrowserAccountStatus: (baseUrl: string, sessionId: string): Promise<unknown> =>
@@ -238,6 +246,16 @@ const profileApi = {
     ipcRenderer.invoke("checkin:run-enabled"),
   openCheckinVerification: (baseUrl: string, sessionId: string): Promise<unknown> =>
     ipcRenderer.invoke("checkin:open-verification", baseUrl, sessionId),
+  selectCustomCompatibilityElement: (
+    baseUrl: string,
+    sessionId: string,
+    pageUrl: string,
+  ): Promise<unknown> => ipcRenderer.invoke(
+    "custom-compatibility:select-element",
+    baseUrl,
+    sessionId,
+    pageUrl,
+  ),
   getCheckinSnapshot: (): Promise<unknown> =>
     ipcRenderer.invoke("checkin:get-snapshot"),
 

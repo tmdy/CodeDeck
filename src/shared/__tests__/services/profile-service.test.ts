@@ -794,6 +794,40 @@ describe("ProfileService", () => {
         .toHaveLength(1);
     });
 
+    it("allows an empty browser user ID only for user-confirmed custom identity", async () => {
+      const localService = new ProfileService([], new MemoryStateAccessor());
+      const browserDraft = {
+        label: "",
+        access_token: "",
+        auth_kind: "browser_session" as const,
+        browser_session_id: "custom-browser-session",
+        browser_slot: 1,
+        browser_origin: "https://custom.example.com",
+        user_id: "",
+      };
+
+      await expect(localService.saveSiteBalanceSession("https://custom.example.com", browserDraft))
+        .rejects.toThrow("浏览器登录会话尚未完成验证");
+
+      const saved = await localService.saveSiteBalanceSession("https://custom.example.com", {
+        ...browserDraft,
+        custom_compatibility: {
+          enabled: true,
+          identity_mode: "user_confirmed",
+          login_url: "https://custom.example.com/login",
+          balance: {
+            mode: "page",
+            target_url: "https://custom.example.com/wallet",
+            remaining: { kind: "css_selector", path_or_selector: ".balance" },
+            credential_forwarding: "none",
+          },
+        },
+      });
+
+      expect(saved.user_id).toBe("");
+      expect(saved.custom_compatibility?.identity_mode).toBe("user_confirmed");
+    });
+
     it("persists the browser identity slot registry with a browser account", async () => {
       const savedConfigs: EncryptedProfileConfig[] = [];
       const profile: Profile = {
@@ -824,6 +858,58 @@ describe("ProfileService", () => {
       expect(savedConfigs.at(-1)?.browser_identity_slots).toEqual([
         { slot: 1, browser_session_id: "shared-identity" },
       ]);
+    });
+
+    it("persists custom compatibility and preserves it for legacy draft updates", async () => {
+      const savedConfigs: EncryptedProfileConfig[] = [];
+      const profile: Profile = {
+        provider: "codex",
+        name: "Relay",
+        url: "https://new-api.example.com/v1",
+        key: "sk-relay",
+      };
+      const localService = new ProfileService([profile], new MemoryStateAccessor(), {
+        async saveConfig(config) {
+          savedConfigs.push(config);
+        },
+      });
+
+      const created = await localService.saveSiteBalanceSession(profile.url, {
+        label: "",
+        access_token: "token-a",
+        user_id: "42",
+        custom_compatibility: {
+          enabled: true,
+          identity_mode: "standard",
+          balance: {
+            mode: "api",
+            target_url: "https://wallet.example.com/api/balance",
+            remaining: { kind: "json_path", path_or_selector: "data.remaining" },
+            credential_forwarding: "none",
+          },
+        },
+      });
+      const updated = await localService.saveSiteBalanceSession(profile.url, {
+        id: created.id,
+        label: "",
+        access_token: "token-b",
+        user_id: "42",
+      });
+
+      expect(updated.custom_compatibility?.balance?.target_url)
+        .toBe("https://wallet.example.com/api/balance");
+      expect(savedConfigs.at(-1)?.site_balance_sessions_by_base_url[
+        "https://new-api.example.com"
+      ][0].custom_compatibility?.balance?.remaining?.path_or_selector).toBe("data.remaining");
+
+      const disabled = await localService.saveSiteBalanceSession(profile.url, {
+        id: created.id,
+        label: "",
+        access_token: "token-b",
+        user_id: "42",
+        custom_compatibility: { enabled: false },
+      });
+      expect(disabled.custom_compatibility).toBeUndefined();
     });
 
     it("rejects deleting a browser identity slot that still has a binding", async () => {

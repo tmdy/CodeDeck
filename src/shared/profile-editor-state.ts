@@ -15,6 +15,11 @@ import {
 } from "./profile/types.js";
 import { normalizeProfilePermissions, type ProfilePermissions } from "./profile/permissions.js";
 import type { SiteBalanceAuthKind } from "./balance/site-balance-sessions.js";
+import {
+  cloneSiteCustomCompatibility,
+  customCompatibilityEquals,
+  type SiteCustomCompatibility,
+} from "./services/custom-compatibility.js";
 
 export interface ProfileEditorDraft {
   name: string;
@@ -36,6 +41,7 @@ export interface ProfileEditorDraft {
     refresh_token?: string;
     token_expires_at?: number;
     user_id: string;
+    custom_compatibility?: SiteCustomCompatibility | { enabled: false };
   };
   cwd: string;
   command_base: string;
@@ -61,6 +67,7 @@ export function buildSelectedProfileDraft(
     refresh_token?: string;
     token_expires_at?: number;
     user_id?: string;
+    custom_compatibility?: SiteCustomCompatibility | { enabled: false };
   },
 ): ProfileEditorDraft {
   const baseRuntime = runtime ?? defaultRuntimeSettings(provider);
@@ -96,6 +103,11 @@ export function buildSelectedProfileDraft(
         ? { token_expires_at: balanceSessionDraft.token_expires_at }
         : {}),
       user_id: balanceSessionDraft?.user_id ?? "",
+      ...(balanceSessionDraft?.custom_compatibility?.enabled === false
+        ? { custom_compatibility: { enabled: false as const } }
+        : balanceSessionDraft?.custom_compatibility
+          ? { custom_compatibility: cloneSiteCustomCompatibility(balanceSessionDraft.custom_compatibility) }
+          : {}),
     },
     cwd: baseRuntime.cwd,
     command_base: baseRuntime.command_base,
@@ -183,6 +195,7 @@ export function hasProfileDraftChanges(
       current.balanceSessionDraft.label ||
       current.balanceSessionDraft.access_token ||
       current.balanceSessionDraft.user_id ||
+      current.balanceSessionDraft.custom_compatibility?.enabled === true ||
       current.advancedModelMapping.claude?.defaultTarget ||
       current.advancedModelMapping.claude?.opusTarget ||
       current.advancedModelMapping.claude?.sonnetTarget ||
@@ -418,7 +431,18 @@ export function balanceSessionDraftsEqual(
     && (left.browser_origin ?? "") === (right.browser_origin ?? "")
     && (left.refresh_token ?? "") === (right.refresh_token ?? "")
     && (left.token_expires_at ?? 0) === (right.token_expires_at ?? 0)
-    && (left.user_id ?? "") === (right.user_id ?? "");
+    && (left.user_id ?? "") === (right.user_id ?? "")
+    && customCompatibilityDraftsEqual(left.custom_compatibility, right.custom_compatibility);
+}
+
+function customCompatibilityDraftsEqual(
+  left: ProfileEditorDraft["balanceSessionDraft"]["custom_compatibility"],
+  right: ProfileEditorDraft["balanceSessionDraft"]["custom_compatibility"],
+): boolean {
+  if (left?.enabled === false || right?.enabled === false) {
+    return left?.enabled === right?.enabled;
+  }
+  return customCompatibilityEquals(left, right);
 }
 
 function cloneAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedModelMapping {

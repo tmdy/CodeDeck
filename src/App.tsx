@@ -69,6 +69,12 @@ import type { EncryptionSetupStatus } from "./shared/encryption-status.js";
 import type { BrowserAccountStatusSnapshot } from "./shared/electron/browser-account-session-manager.js";
 import type { ProfileBrowserTarget } from "./shared/electron/open-url.js";
 import {
+  cloneSiteCustomCompatibility,
+  customCompatibilityEquals,
+  type SiteCustomCompatibility,
+} from "./shared/services/custom-compatibility.js";
+import type { CustomElementSelectorResult } from "./shared/electron/custom-element-selector-service.js";
+import {
   shouldReconcileAfterHidden,
   type AppReactivationEvent,
 } from "./shared/app-reactivation.js";
@@ -109,6 +115,7 @@ type BalanceSessionDraftState = {
   refresh_token: string;
   token_expires_at?: number;
   user_id: string;
+  custom_compatibility?: SiteCustomCompatibility | { enabled: false };
 };
 type HydratedProfilesResult = {
   profiles: Profile[];
@@ -316,7 +323,8 @@ function isEmptyNewBalanceSessionDraft(
   return selection === "new"
     && !draft.access_token.trim()
     && !(draft.refresh_token ?? "").trim()
-    && !draft.user_id.trim();
+    && !draft.user_id.trim()
+    && (!draft.custom_compatibility || draft.custom_compatibility.enabled === false);
 }
 
 function normalizeEmptyNewBalanceSessionDraft(draft: ProfileEditorDraft): ProfileEditorDraft {
@@ -410,6 +418,11 @@ function normalizeBalanceSessionDraftState(
     refresh_token: draft.refresh_token ?? "",
     token_expires_at: draft.token_expires_at,
     user_id: draft.user_id ?? "",
+    ...(draft.custom_compatibility?.enabled === false
+      ? { custom_compatibility: { enabled: false as const } }
+      : draft.custom_compatibility
+        ? { custom_compatibility: cloneSiteCustomCompatibility(draft.custom_compatibility) }
+        : {}),
   };
 }
 
@@ -1652,6 +1665,12 @@ function App() {
           || (existingSession.refresh_token ?? "") !== (snapshot.balanceSessionDraft.refresh_token ?? "")
           || (existingSession.token_expires_at ?? 0) !== (snapshot.balanceSessionDraft.token_expires_at ?? 0)
           || existingSession.user_id !== snapshot.balanceSessionDraft.user_id
+          || !customCompatibilityEquals(
+            existingSession.custom_compatibility,
+            snapshot.balanceSessionDraft.custom_compatibility?.enabled === false
+              ? undefined
+              : snapshot.balanceSessionDraft.custom_compatibility,
+          )
         ) {
           const updated = await window.profileManager.saveSiteBalanceSession(snapshot.url, {
             id: existingSession.id,
@@ -2019,10 +2038,31 @@ function App() {
       if (draftBrowserSlotSelection !== "new" && requestedBrowserSlot === undefined) {
         throw new Error("浏览器账号槽位无效");
       }
+      const customCompatibility = draftBalanceSession.custom_compatibility?.enabled === true
+        ? draftBalanceSession.custom_compatibility
+        : undefined;
       const saved = draftBalanceSessionSelection !== "auto"
         && draftBalanceSessionSelection !== "new"
-        ? await window.profileManager!.reloginBrowserAccount!(draftUrl, draftBalanceSessionSelection)
-        : await window.profileManager!.loginBrowserAccount!(draftUrl, requestedBrowserSlot);
+        ? customCompatibility
+          ? await window.profileManager!.reloginBrowserAccount!(
+              draftUrl,
+              draftBalanceSessionSelection,
+              customCompatibility,
+            )
+          : await window.profileManager!.reloginBrowserAccount!(
+              draftUrl,
+              draftBalanceSessionSelection,
+            )
+        : customCompatibility
+          ? await window.profileManager!.loginBrowserAccount!(
+              draftUrl,
+              requestedBrowserSlot,
+              customCompatibility,
+            )
+          : await window.profileManager!.loginBrowserAccount!(
+              draftUrl,
+              requestedBrowserSlot,
+            );
       if (editingKey) {
         if (!window.profileManager!.bindProfileSiteBalanceSession) {
           throw new Error("当前环境不支持绑定后台账号");
@@ -3744,12 +3784,70 @@ function App() {
       ? normalizeBalanceSessionDraftState(matched)
       : emptyBalanceSessionDraft());
   }, [browserIdentitySlots, draftSiteBalanceSessions]);
-  const handleBalanceSessionDraftChange = useCallback((field: "label" | "access_token" | "auth_kind" | "refresh_token" | "user_id", value: string) => {
+  const handleBalanceSessionDraftChange = useCallback((
+    field: "label" | "access_token" | "auth_kind" | "refresh_token" | "user_id",
+    value: string,
+  ) => {
     setDraftBalanceSession((current) => ({
       ...current,
       [field]: value,
     }));
   }, []);
+  const handleCustomCompatibilityChange = useCallback((
+    value: SiteCustomCompatibility | { enabled: false } | undefined,
+  ) => {
+    setDraftBalanceSession((current) => ({
+      ...current,
+      ...(value ? { custom_compatibility: value } : { custom_compatibility: undefined }),
+    }));
+  }, []);
+  const handleSelectCustomElement = useCallback(async (
+    field: "balance_remaining" | "balance_total" | "balance_used" | "checkin_action" | "checkin_success" | "checkin_already",
+    pageUrl: string,
+  ): Promise<CustomElementSelectorResult | null> => {
+    if (!window.profileManager?.selectCustomCompatibilityElement) {
+      throw new Error("当前环境不支持元素选择器");
+    }
+    const sessionId = draftBalanceSessionSelection === "auto" || draftBalanceSessionSelection === "new"
+      ? ""
+      : draftBalanceSessionSelection;
+    const result = await window.profileManager.selectCustomCompatibilityElement(
+      draftUrl,
+      sessionId,
+      pageUrl,
+    ) as CustomElementSelectorResult | null;
+    if (!result) return null;
+    setDraftBalanceSession((current) => {
+      const custom = current.custom_compatibility;
+      if (!custom || custom.enabled === false) return current;
+      const next = cloneSiteCustomCompatibility(custom);
+      if (!next) return current;
+      if (field.startsWith("balance_") && next.balance) {
+        const key = field.slice("balance_".length) as "remaining" | "total" | "used";
+        next.balance[key] = {
+          ...(next.balance[key] ?? { kind: next.balance.mode === "api" ? "json_path" : "css_selector", path_or_selector: "" }),
+          kind: next.balance.mode === "api" ? "json_path" : "css_selector",
+          path_or_selector: result.selector,
+        };
+      } else if (field === "checkin_action" && next.checkin) {
+        next.checkin.action_selector = result.selector;
+      } else if (field === "checkin_success" && next.checkin) {
+        next.checkin.success = {
+          ...(next.checkin.success ?? { kind: next.checkin.mode === "api" ? "json_path" : "css_selector", path_or_selector: "" }),
+          kind: next.checkin.mode === "api" ? "json_path" : "css_selector",
+          path_or_selector: result.selector,
+        };
+      } else if (field === "checkin_already" && next.checkin) {
+        next.checkin.already_checked = {
+          ...(next.checkin.already_checked ?? { kind: next.checkin.mode === "api" ? "json_path" : "css_selector", path_or_selector: "" }),
+          kind: next.checkin.mode === "api" ? "json_path" : "css_selector",
+          path_or_selector: result.selector,
+        };
+      }
+      return { ...current, custom_compatibility: next };
+    });
+    return result;
+  }, [draftBalanceSessionSelection, draftUrl]);
   const handleAdvancedModelMappingChange = useCallback((next: AdvancedModelMapping) => {
     setDraftAdvancedModelMapping(next);
     const snapshot = {
@@ -4189,6 +4287,8 @@ function App() {
               balanceSessionDraft: draftBalanceSession,
               onBalanceSessionSelectionChange: handleBalanceSessionSelectionChange,
               onBalanceSessionDraftChange: handleBalanceSessionDraftChange,
+              onCustomCompatibilityChange: handleCustomCompatibilityChange,
+              onSelectCustomElement: handleSelectCustomElement,
               onSaveBalanceSession: stableSaveBalanceSessionAction,
               onBrowserLogin: stableHandleBrowserBalanceSessionLogin,
               onBrowserLogout: stableHandleBrowserBalanceSessionLogout,

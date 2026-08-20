@@ -46,6 +46,8 @@ export interface BrowserAccountLoginRequest {
   accountKey: string;
   browserSessionId: string;
   browserOrigin: string;
+  loginUrl?: string;
+  identityMode?: "standard" | "user_confirmed";
   expectedUserId?: string;
 }
 
@@ -1098,13 +1100,15 @@ export class BrowserAccountSessionManager {
       browserWindow.focus();
       await loadWindowUrlWithTimeout(
         browserWindow,
-        task.request.browserOrigin,
+        task.request.loginUrl ?? task.request.browserOrigin,
         this.dependencies.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
       );
       if (task.finished) {
         return;
       }
-      void this.pollLogin(task);
+      if (task.request.identityMode !== "user_confirmed") {
+        void this.pollLogin(task);
+      }
     } catch {
       await this.completeLogin(task, { status: "failed", message: "浏览器登录窗口加载失败" });
     }
@@ -1134,18 +1138,21 @@ export class BrowserAccountSessionManager {
   }
 
   private configureLoginWindow(task: LoginTask, browserWindow: BrowserWindow): void {
-    const allowedOrigin = task.request.browserOrigin;
+    const allowedOrigins = [
+      task.request.browserOrigin,
+      task.request.loginUrl ? new URL(task.request.loginUrl).origin : task.request.browserOrigin,
+    ];
     browserWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (isAllowedBrowserNavigation(url, allowedOrigin)) {
+      if (isAllowedBrowserNavigation(url, allowedOrigins)) {
         void browserWindow.loadURL(url).catch(() => undefined);
       }
       return { action: "deny" };
     });
     browserWindow.webContents.on("will-navigate", (event, targetUrl) => {
-      if (!isAllowedBrowserNavigation(targetUrl, allowedOrigin)) event.preventDefault();
+      if (!isAllowedBrowserNavigation(targetUrl, allowedOrigins)) event.preventDefault();
     });
     browserWindow.webContents.on("will-redirect", (event, targetUrl) => {
-      if (!isAllowedBrowserNavigation(targetUrl, allowedOrigin)) event.preventDefault();
+      if (!isAllowedBrowserNavigation(targetUrl, allowedOrigins)) event.preventDefault();
     });
     browserWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
     browserWindow.webContents.on("will-prevent-unload", (event) => event.preventDefault());
@@ -1284,6 +1291,14 @@ export class BrowserAccountSessionManager {
     if (task.pollTimer) {
       clearTimeout(task.pollTimer);
       task.pollTimer = undefined;
+    }
+    if (task.request.identityMode === "user_confirmed") {
+      await this.getSession(task.request.browserSessionId).cookies.flushStore();
+      await this.completeLogin(task, {
+        status: "ready",
+        message: "已确认浏览器身份",
+      });
+      return;
     }
     const closeProbe = (async (): Promise<BrowserAccountLoginResult | null> => {
       const activeProbe = task.probePromise;
@@ -1543,16 +1558,15 @@ export function browserPartitionName(browserSessionId: string): string {
   return `${PARTITION_PREFIX}${sanitizeOpaqueId(browserSessionId)}`;
 }
 
-export function isAllowedBrowserNavigation(targetUrl: string, allowedOrigin: string): boolean {
+export function isAllowedBrowserNavigation(
+  targetUrl: string,
+  allowedOrigin: string | readonly string[],
+): boolean {
   try {
     const target = new URL(targetUrl);
-    const accountOrigin = normalizeBrowserOrigin(allowedOrigin);
-    if (
-      (target.protocol === "http:" || target.protocol === "https:")
-      && target.origin === accountOrigin
-    ) {
-      return true;
-    }
+    if (target.protocol !== "http:" && target.protocol !== "https:") return false;
+    const origins = Array.isArray(allowedOrigin) ? allowedOrigin : [allowedOrigin];
+    if (origins.some((origin) => target.origin === normalizeBrowserOrigin(origin))) return true;
     return target.protocol === "https:" && LOGIN_NAVIGATION_ORIGINS.has(target.origin);
   } catch {
     return false;
@@ -1607,8 +1621,20 @@ function normalizeLoginRequest(request: BrowserAccountLoginRequest): BrowserAcco
     accountKey: request.accountKey.trim(),
     browserSessionId: sanitizeOpaqueId(request.browserSessionId),
     browserOrigin: normalizeBrowserOrigin(request.browserOrigin),
+    ...(request.loginUrl ? { loginUrl: normalizeBrowserLoginUrl(request.loginUrl) } : {}),
+    identityMode: request.identityMode === "user_confirmed" ? "user_confirmed" : "standard",
     ...(expectedUserId ? { expectedUserId } : {}),
   };
+}
+
+function normalizeBrowserLoginUrl(value: string): string {
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error();
+    return parsed.toString();
+  } catch {
+    throw new Error("浏览器登录 URL 必须是完整的 http:// 或 https:// URL");
+  }
 }
 
 function loginRequestAsAccount(request: BrowserAccountLoginRequest): SiteBalanceSession {

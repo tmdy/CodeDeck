@@ -2,6 +2,11 @@ import type { Profile, ProfileKey } from "../profile/types.js";
 import { normalizeProfile, normalizeRuntimeEnv } from "../profile/types.js";
 import { itemKey, normalizeKeyWithFallback, splitKey } from "../profile/keys-internal.js";
 import type { BalanceCheckState } from "./types.js";
+import {
+  cloneSiteCustomCompatibility,
+  normalizeSiteCustomCompatibility,
+  type SiteCustomCompatibility,
+} from "../services/custom-compatibility.js";
 
 const BASE_URL_SUFFIXES = [
   "/anthropic/v1/messages",
@@ -32,6 +37,8 @@ export interface SiteBalanceSession {
   user_id: string;
   /** Missing in legacy configs; normalization always supplies false. */
   auto_checkin_enabled?: boolean;
+  /** Optional declarative rules for non-standard balance and check-in sites. */
+  custom_compatibility?: SiteCustomCompatibility;
   updated_at: string;
 }
 
@@ -46,7 +53,15 @@ export interface SiteBalanceSessionDraft {
   refresh_token?: string;
   token_expires_at?: number;
   user_id: string;
+  custom_compatibility?: SiteCustomCompatibility | { enabled: false };
 }
+
+export type NormalizedSiteBalanceSessionDraft = Omit<
+  SiteBalanceSessionDraft,
+  "custom_compatibility"
+> & {
+  custom_compatibility?: SiteCustomCompatibility;
+};
 
 export type SiteBalanceAuthKind = "access_token" | "session_cookie" | "browser_session";
 
@@ -156,7 +171,12 @@ export function cloneSiteBalanceSessionsByBaseUrl(
   return Object.fromEntries(
     Object.entries(value).map(([baseUrl, sessions]) => [
       baseUrl,
-      sessions.map((session) => ({ ...session })),
+      sessions.map((session) => ({
+        ...session,
+        ...(session.custom_compatibility
+          ? { custom_compatibility: cloneSiteCustomCompatibility(session.custom_compatibility) }
+          : {}),
+      })),
     ]),
   );
 }
@@ -248,7 +268,7 @@ export function normalizeSiteBalanceSessionsByBaseUrl(value: unknown): SiteBalan
 
 export function normalizeSiteBalanceSessionDraft(
   draft: SiteBalanceSessionDraft,
-): SiteBalanceSessionDraft {
+): NormalizedSiteBalanceSessionDraft {
   const authKind = normalizeSiteBalanceAuthKind(draft.auth_kind);
   const browserSessionId = draft.browser_session_id?.trim()
     ? normalizeBrowserSessionId(draft.browser_session_id)
@@ -257,6 +277,7 @@ export function normalizeSiteBalanceSessionDraft(
     ? normalizeBrowserOrigin(draft.browser_origin)
     : undefined;
   const browserSlot = normalizeBrowserSlot(draft.browser_slot);
+  const customCompatibility = normalizeSiteCustomCompatibility(draft.custom_compatibility);
   return {
     id: draft.id?.trim() || undefined,
     label: draft.label.trim(),
@@ -273,6 +294,7 @@ export function normalizeSiteBalanceSessionDraft(
       ? draft.token_expires_at
       : undefined,
     user_id: draft.user_id.trim(),
+    ...(customCompatibility ? { custom_compatibility: customCompatibility } : {}),
   };
 }
 
@@ -406,13 +428,20 @@ function normalizeSiteBalanceSession(
     : undefined;
   const userId = record.user_id?.trim() ?? "";
   const baseUrl = normalizeBalanceBaseUrl(record.base_url ?? fallbackBaseUrl);
+  let customCompatibility: SiteCustomCompatibility | undefined;
+  try {
+    customCompatibility = normalizeSiteCustomCompatibility(record.custom_compatibility);
+  } catch {
+    customCompatibility = undefined;
+  }
+  const allowsUserConfirmedIdentity = customCompatibility?.identity_mode === "user_confirmed";
 
   if (
     !id
     || !label
     || !baseUrl
     || (authKind === "browser_session"
-      ? !browserSessionId || !browserOrigin || !userId
+      ? !browserSessionId || !browserOrigin || (!userId && !allowsUserConfirmedIdentity)
       : !accessToken)
   ) {
     return null;
@@ -437,6 +466,7 @@ function normalizeSiteBalanceSession(
     ...(authKind !== "browser_session" && tokenExpiresAt ? { token_expires_at: tokenExpiresAt } : {}),
     user_id: userId,
     auto_checkin_enabled: record.auto_checkin_enabled === true,
+    ...(customCompatibility ? { custom_compatibility: customCompatibility } : {}),
     updated_at: record.updated_at?.trim() || "",
   };
 }
