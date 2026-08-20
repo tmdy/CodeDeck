@@ -11,6 +11,7 @@ export interface CodexCommandOptions {
   baseUrl: string;
   model?: string;
   modelOverride?: string;
+  modelProviderOverride?: string;
   wireApi?: string;
   trustedProjectPath?: string;
   disableHooks?: boolean;
@@ -52,8 +53,11 @@ export function buildCodexArgs(options: CodexCommandOptions): string[] {
   if (model) {
     parts.push("--model", model);
   }
-
   parts.push(...parseCliArgs(options.extraArgs));
+  const modelProvider = options.modelProviderOverride?.trim() ?? "";
+  if (modelProvider) {
+    parts.push("-c", `model_provider=${JSON.stringify(modelProvider)}`);
+  }
   if (options.trustedProjectPath) {
     parts.push("-c", buildTrustedProjectOverride(options.trustedProjectPath));
   }

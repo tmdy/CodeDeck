@@ -68,6 +68,16 @@ function describeStatus(snapshot: TerminalSessionSnapshot | null): string {
   return `${snapshot.commandExecutable} 运行中，PID ${snapshot.pid}；${activity}；${autoContinue}`;
 }
 
+function describeCodexActiveWriter(snapshot: TerminalSessionSnapshot | null): string | null {
+  if (
+    snapshot?.provider !== "codex"
+    || !/already has an active writer|failed to open thread writer lock/i.test(snapshot.output)
+  ) {
+    return null;
+  }
+  return "该 Codex 会话当前由另一个客户端持有写锁，CodeDeck 无法强制接管。请完全退出占用该会话的客户端（若为 Codex Desktop，请从托盘退出而非只关闭窗口），确认其进程结束后再重试。";
+}
+
 export default function TerminalApp() {
   const sessionId = useMemo(readSessionId, []);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -268,6 +278,7 @@ export default function TerminalApp() {
   const headerTitle = snapshot
     ? buildTerminalHeaderTitle(snapshot.provider, snapshot.displayTitle)
     : "受监控终端";
+  const activeWriterMessage = describeCodexActiveWriter(snapshot);
   const controlsDisabled = !snapshot || snapshot.status !== "running";
   const pauseDisabled = controlsDisabled || !snapshot.autoContinue.enabled;
 
@@ -287,7 +298,7 @@ export default function TerminalApp() {
     return () => {
       window.cancelAnimationFrame(animationFrame);
     };
-  }, [sessionId, snapshot, headerTitle, status, controlError, error]);
+  }, [sessionId, snapshot, headerTitle, status, activeWriterMessage, controlError, error]);
 
   return (
     <div className="terminal-shell">
@@ -295,6 +306,7 @@ export default function TerminalApp() {
         <div className="terminal-header-main">
           <h1>{headerTitle}</h1>
           <p className="terminal-status">{status}</p>
+          {activeWriterMessage && <p className="terminal-error">{activeWriterMessage}</p>}
           {controlError && <p className="terminal-error">{controlError}</p>}
         </div>
         <form

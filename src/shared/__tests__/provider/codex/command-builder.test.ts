@@ -85,6 +85,30 @@ describe("buildCodexCommand", () => {
     expect(cmd).toBe('codex resume "session-456"');
   });
 
+  it("should add a structured provider override for resume without changing new launches", () => {
+    expect(buildCodexArgs({
+      commandBase: "codex",
+      launchMode: "resume_selected",
+      extraArgs: '-c model_provider="historical"',
+      sessionId: "session-456",
+      baseUrl: "",
+      modelProviderOverride: "openai_http",
+    })).toEqual([
+      "resume",
+      "session-456",
+      "-c",
+      "model_provider=historical",
+      "-c",
+      'model_provider="openai_http"',
+    ]);
+    expect(buildCodexArgs({
+      commandBase: "codex",
+      launchMode: "new",
+      extraArgs: "",
+      baseUrl: "",
+    })).toEqual([]);
+  });
+
   it("should force hooks disabled after user feature arguments", () => {
     const cmd = buildCodexCommand({
       commandBase: "codex",

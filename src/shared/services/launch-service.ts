@@ -32,7 +32,6 @@ import { buildCodexArgs, buildCodexCommand } from "../provider/codex/command-bui
 import type { ModelMappingsState } from "../model-mapping/config-types.js";
 import type { ProfileService } from "./profile-service.js";
 import {
-  buildCodexSiteApiKeyEnv,
   buildCodexSiteProfileName,
   buildCodexSiteProviderId,
 } from "./model-mapping-config-service.js";
@@ -47,7 +46,7 @@ export interface CodexConfigWritePlan {
   baseUrl: string;
   providerId: string;
   providerName: string;
-  apiKeyEnv: string;
+  authCommand: string;
   targetModel: string;
 }
 
@@ -95,6 +94,7 @@ export interface LaunchServiceOptions {
   getModelMappingsState: () => ModelMappingsState;
   codexProfilesRoot: string;
   codexHome?: string;
+  codexAuthCommand?: string;
 }
 
 export interface BuildExecutionPlanOptions {
@@ -188,6 +188,7 @@ export class LaunchService {
       runOverrides,
       request.disable_codex_hooks === true,
       options.codexHomeOverride,
+      request.codex_model_provider_override,
     );
   }
 
@@ -232,6 +233,7 @@ export class LaunchService {
     runOverrides?: RunOverrides,
     disableCodexHooks = false,
     codexHomeOverride?: string,
+    codexModelProviderOverride?: string,
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
     const isNativeStartup = normalizedRuntime.startup_mode === "native";
@@ -275,6 +277,7 @@ export class LaunchService {
         normalizedSessionId,
         runOverrides,
         disableCodexHooks,
+        codexModelProviderOverride,
       );
     } else {
       const permissions = resolveEffectivePermissions({
@@ -305,6 +308,13 @@ export class LaunchService {
           );
     }
     const env = this.mergeInjectedEnv(artifacts.env, normalizedRuntime.extra_env);
+    if (!isNativeStartup && profile.provider === PROVIDER_CODEX) {
+      for (const key of Object.keys(env)) {
+        if (/^CODEX_SITE_API_KEY_/i.test(key)) {
+          delete env[key];
+        }
+      }
+    }
     const terminalMode = profile.provider === PROVIDER_CLAUDE
       ? this.buildClaudeTerminalMode(terminalModeOverride ?? normalizedRuntime.terminal_mode)
       : this.buildCodexTerminalMode(terminalModeOverride ?? normalizedRuntime.terminal_mode);
@@ -341,6 +351,7 @@ export class LaunchService {
     sessionId: string,
     runOverrides?: RunOverrides,
     disableCodexHooks = false,
+    codexModelProviderOverride?: string,
   ): ProviderLaunchArtifacts {
     const commandBase = normalizeCommandExecutable(
       runtime.command_base,
@@ -384,6 +395,9 @@ export class LaunchService {
       sessionId,
       baseUrl: "",
       modelOverride: runOverrides?.model,
+      modelProviderOverride: runtime.launch_mode === "new"
+        ? undefined
+        : codexModelProviderOverride?.trim() || "openai",
       trustedProjectPath: runtime.cwd,
       disableHooks: disableCodexHooks,
     };
@@ -497,7 +511,6 @@ export class LaunchService {
     const reasoningEffort = normalizeCodexReasoningEffort(profile.advancedModelMapping?.codex?.reasoningEffort);
     const profileKey = itemKey(profile);
     const siteProfileName = buildCodexSiteProfileName(profileKey);
-    const apiKeyEnv = buildCodexSiteApiKeyEnv(profileKey);
     const providerId = buildCodexSiteProviderId(profileKey);
     const providerName = `${profile.name} Site`;
     const codexHome = this.getCodexHome(codexHomeOverride);
@@ -531,9 +544,8 @@ export class LaunchService {
       command,
       env: {
         CODEX_HOME: profilePath,
-        [apiKeyEnv]: profile.key.trim(),
       },
-      requiredEnvKeys: ["CODEX_HOME", apiKeyEnv],
+      requiredEnvKeys: ["CODEX_HOME"],
       codexConfig: {
         profilePath,
         configFilePath,
@@ -543,7 +555,7 @@ export class LaunchService {
           providerId,
           providerName,
           baseUrl: profile.url,
-          apiKeyEnv,
+          authCommand: this.getCodexAuthCommand(),
           targetModel: selectedModelId,
           wireApi,
           skipGitRepoCheck: codexSettings.skip_git_repo_check,
@@ -552,7 +564,7 @@ export class LaunchService {
         baseUrl: profile.url,
         providerId,
         providerName,
-        apiKeyEnv,
+        authCommand: this.getCodexAuthCommand(),
         targetModel: selectedModelId,
       },
       permissionSummary: summarizePermissions(profile.provider, permissions),
@@ -802,7 +814,7 @@ export class LaunchService {
     providerId: string;
     providerName: string;
     baseUrl: string;
-    apiKeyEnv: string;
+    authCommand: string;
     targetModel: string;
     wireApi: string;
     skipGitRepoCheck: boolean;
@@ -826,7 +838,7 @@ export class LaunchService {
     const shellEnvironmentLines = options.permissions.common.denyEnvFiles
       ? [
           "[shell_environment_policy]",
-          'exclude = ["*KEY*", "*TOKEN*", "*SECRET*", "*PASSWORD*", "CODEX_SITE_API_KEY_*"]',
+          'exclude = ["*KEY*", "*TOKEN*", "*SECRET*", "*PASSWORD*"]',
           "",
         ]
       : [];
@@ -854,13 +866,20 @@ export class LaunchService {
       `[model_providers.${options.providerId}]`,
       `name = ${JSON.stringify(options.providerName)}`,
       `base_url = ${JSON.stringify(options.baseUrl)}`,
-      `env_key = ${JSON.stringify(options.apiKeyEnv)}`,
       `wire_api = ${JSON.stringify(wireApi)}`,
+      "",
+      `[model_providers.${options.providerId}.auth]`,
+      `command = ${JSON.stringify(options.authCommand)}`,
+      `args = ["auth-token", "--provider", ${JSON.stringify(options.providerId)}]`,
       "",
       "[windows]",
       'sandbox = "elevated"',
       "",
     ].join("\n");
+  }
+
+  private getCodexAuthCommand(): string {
+    return this.options.codexAuthCommand?.trim() || "codedeck-agent";
   }
 }
 

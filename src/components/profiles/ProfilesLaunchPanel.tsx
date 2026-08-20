@@ -27,6 +27,8 @@ interface ProfilesLaunchPanelProps {
   onRefreshSessions: () => void;
   onToggleFavorite?: (session: SessionSummary) => void;
   onDirectLaunch: () => void;
+  desktopHandoffEnabled?: boolean;
+  onDesktopHandoffChange?: (enabled: boolean) => void;
   onContinueLaunch: () => void;
   onResumeLaunch: () => void;
   onTemporaryReadonlyLaunch?: () => void;
@@ -56,6 +58,8 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
   onRefreshSessions,
   onToggleFavorite,
   onDirectLaunch,
+  desktopHandoffEnabled,
+  onDesktopHandoffChange,
   onContinueLaunch,
   onResumeLaunch,
   onTemporaryReadonlyLaunch,
@@ -84,6 +88,8 @@ export const ProfilesLaunchPanel = memo(function ProfilesLaunchPanel({
         monitorModeEnabled={monitorModeEnabled}
         onMonitorModeChange={onMonitorModeChange}
         onDirectLaunch={onDirectLaunch}
+        desktopHandoffEnabled={desktopHandoffEnabled}
+        onDesktopHandoffChange={onDesktopHandoffChange}
         onContinueLaunch={onContinueLaunch}
         onResumeLaunch={onResumeLaunch}
         onTemporaryReadonlyLaunch={onTemporaryReadonlyLaunch}

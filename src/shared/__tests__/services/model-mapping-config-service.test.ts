@@ -1,14 +1,19 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelMappingsState } from "../../model-mapping/config-types.js";
+import type { Profile } from "../../profile/types.js";
 import {
   buildCodexProfileDirectoryName,
-  buildCodexSiteApiKeyEnv,
   buildCodexSiteProfileName,
   buildCodexSiteProviderId,
+  CODEDECK_PROVIDER_REGISTRY_BEGIN,
+  CODEDECK_PROVIDER_REGISTRY_END,
+  findCodexSiteProfileByProviderId,
   ModelMappingConfigService,
+  resolveCodexSiteProviderToken,
 } from "../../services/model-mapping-config-service.js";
 
 const tempDirs: string[] = [];
@@ -126,7 +131,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Demo Site",
       baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "glm-4.5",
       content: [
         `[profiles.${JSON.stringify(buildCodexSiteProfileName("codex::demo"))}]`,
@@ -136,8 +141,11 @@ describe("ModelMappingConfigService", () => {
         `[model_providers.${buildCodexSiteProviderId("codex::demo")}]`,
         'name = "Demo Site"',
         'base_url = "https://open.bigmodel.cn/api/paas/v4"',
-        `env_key = ${JSON.stringify(buildCodexSiteApiKeyEnv("codex::demo"))}`,
         'wire_api = "responses"',
+        "",
+        `[model_providers.${buildCodexSiteProviderId("codex::demo")}.auth]`,
+        'command = "C:/CodeDeck/codedeck-agent.cmd"',
+        `args = ["auth-token", "--provider", ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}]`,
         "",
       ].join("\n"),
     });
@@ -148,7 +156,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::other"),
       providerName: "Other Site",
       baseUrl: "https://api.moonshot.cn/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::other"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "kimi-k2-0711-preview",
       content: [
         `[profiles.${JSON.stringify(buildCodexSiteProfileName("codex::other"))}]`,
@@ -158,8 +166,11 @@ describe("ModelMappingConfigService", () => {
         `[model_providers.${buildCodexSiteProviderId("codex::other")}]`,
         'name = "Other Site"',
         'base_url = "https://api.moonshot.cn/v1"',
-        `env_key = ${JSON.stringify(buildCodexSiteApiKeyEnv("codex::other"))}`,
         'wire_api = "responses"',
+        "",
+        `[model_providers.${buildCodexSiteProviderId("codex::other")}.auth]`,
+        'command = "C:/CodeDeck/codedeck-agent.cmd"',
+        `args = ["auth-token", "--provider", ${JSON.stringify(buildCodexSiteProviderId("codex::other"))}]`,
         "",
       ].join("\n"),
     });
@@ -174,7 +185,8 @@ describe("ModelMappingConfigService", () => {
     expect(firstContent).toContain(`model_provider = ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}`);
     expect(firstContent).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
     expect(firstContent).toContain('base_url = "https://open.bigmodel.cn/api/paas/v4"');
-    expect(firstContent).toContain(`env_key = ${JSON.stringify(buildCodexSiteApiKeyEnv("codex::demo"))}`);
+    expect(firstContent).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}.auth]`);
+    expect(firstContent).not.toContain("env_key");
     expect(firstContent).toContain('wire_api = "responses"');
     expect(firstContent).not.toContain("[profiles.");
     expect(secondContent).toContain('model = "kimi-k2-0711-preview"');
@@ -195,7 +207,6 @@ describe("ModelMappingConfigService", () => {
     expect(service.getCodexHome()).toBe(path.join(root, ".codex"));
     expect(buildCodexSiteProfileName("codex::999Code")).toBe("site-dc74f0e0abf0f9c2");
     expect(buildCodexSiteProviderId("codex::999Code")).toBe("site_provider_dc74f0e0abf0f9c2");
-    expect(buildCodexSiteApiKeyEnv("codex::999Code")).toBe("CODEX_SITE_API_KEY_DC74F0E0ABF0F9C2");
     expect(buildCodexSiteProfileName("codex::999Code")).not.toContain("999Code");
     expect(buildCodexSiteProviderId("codex::999Code")).not.toContain("999Code");
   });
@@ -237,7 +248,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "",
     });
 
@@ -246,6 +257,9 @@ describe("ModelMappingConfigService", () => {
     expect(content).not.toContain("model_provider =");
     expect(content).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}]`);
     expect(content).toContain('base_url = "https://api.openai.com/v1"');
+    expect(content).toContain(`[model_providers.${buildCodexSiteProviderId("codex::demo")}.auth]`);
+    expect(content).toContain('command = "C:/CodeDeck/codedeck-agent.cmd"');
+    expect(content).not.toContain("env_key");
     expect(content).not.toContain("[profiles.");
   });
 
@@ -258,7 +272,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-5.4",
       wireApi: "chat",
       skipGitRepoCheck: true,
@@ -278,7 +292,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-5.4",
     });
 
@@ -313,7 +327,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-5.4",
       content: [
         `profile = ${JSON.stringify(profileName)}`,
@@ -332,8 +346,11 @@ describe("ModelMappingConfigService", () => {
         `[model_providers.${buildCodexSiteProviderId("codex::demo")}]`,
         'name = "Current Site"',
         'base_url = "https://api.openai.com/v1"',
-        `env_key = ${JSON.stringify(buildCodexSiteApiKeyEnv("codex::demo"))}`,
         'wire_api = "responses"',
+        "",
+        `[model_providers.${buildCodexSiteProviderId("codex::demo")}.auth]`,
+        'command = "C:/CodeDeck/codedeck-agent.cmd"',
+        `args = ["auth-token", "--provider", ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}]`,
         "",
         "[mcp_servers.playwright]",
         'command = "cmd"',
@@ -382,7 +399,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-5.4",
     });
 
@@ -409,7 +426,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-5.4",
       content: [
         'model = "gpt-5.4"',
@@ -418,8 +435,11 @@ describe("ModelMappingConfigService", () => {
         `[model_providers.${buildCodexSiteProviderId("codex::demo")}]`,
         'name = "Current Site"',
         'base_url = "https://api.openai.com/v1"',
-        `env_key = ${JSON.stringify(buildCodexSiteApiKeyEnv("codex::demo"))}`,
         'wire_api = "responses"',
+        "",
+        `[model_providers.${buildCodexSiteProviderId("codex::demo")}.auth]`,
+        'command = "C:/CodeDeck/codedeck-agent.cmd"',
+        `args = ["auth-token", "--provider", ${JSON.stringify(buildCodexSiteProviderId("codex::demo"))}]`,
         "",
         "[marketplaces.openai-bundled]",
         'source_type = "local"',
@@ -451,7 +471,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-5.4",
     });
 
@@ -466,7 +486,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-5.6",
     };
 
@@ -485,7 +505,7 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::demo"),
       providerName: "Current Site",
       baseUrl: "https://api.openai.com/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::demo"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-5.4",
     };
 
@@ -514,11 +534,119 @@ describe("ModelMappingConfigService", () => {
       providerId: buildCodexSiteProviderId("codex::health"),
       providerName: "Health Site",
       baseUrl: "https://relay.example/v1",
-      apiKeyEnv: buildCodexSiteApiKeyEnv("codex::health"),
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
       targetModel: "gpt-health",
     });
 
     expect(path.dirname(configPath)).toBe(healthHome);
     expect(await readFile(configPath, "utf8")).toContain('model = "gpt-health"');
+  });
+
+  it("should resolve the native provider from top-level config with the official fallback", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+    const configPath = path.join(service.getCodexHome(), "config.toml");
+    await mkdir(path.dirname(configPath), { recursive: true });
+
+    await expect(service.resolveNativeCodexModelProvider()).resolves.toBe("openai");
+    await writeFile(configPath, 'model_provider = "openai_http"\n\n[profiles.demo]\nmodel_provider = "ignored"\n', "utf8");
+    await expect(service.resolveNativeCodexModelProvider()).resolves.toBe("openai_http");
+  });
+
+  it("should map only an exact stable provider id to one saved Codex site Profile", () => {
+    const profiles: Profile[] = [{
+      provider: "codex",
+      name: "Demo",
+      url: "https://example.com/v1",
+      key: "secret-value",
+    }];
+    const providerId = buildCodexSiteProviderId("codex::Demo");
+
+    expect(findCodexSiteProfileByProviderId(profiles, providerId)).toBe(profiles[0]);
+    expect(findCodexSiteProfileByProviderId(profiles, providerId.toUpperCase())).toBeUndefined();
+    expect(findCodexSiteProfileByProviderId(profiles, "codex::Demo")).toBeUndefined();
+    expect(resolveCodexSiteProviderToken(undefined, providerId)).toEqual({
+      ok: false,
+      code: "store_locked",
+    });
+    expect(resolveCodexSiteProviderToken(profiles, providerId.toUpperCase())).toEqual({
+      ok: false,
+      code: "provider_not_found",
+    });
+    expect(resolveCodexSiteProviderToken(profiles, buildCodexSiteProviderId("codex::Missing"))).toEqual({
+      ok: false,
+      code: "profile_not_found",
+    });
+    expect(resolveCodexSiteProviderToken(profiles, providerId)).toEqual({
+      ok: true,
+      token: "secret-value",
+    });
+    expect(resolveCodexSiteProviderToken([{ ...profiles[0], key: "" }], providerId)).toEqual({
+      ok: false,
+      code: "profile_not_found",
+    });
+  });
+
+  it("should atomically manage provider registry content without changing user bytes", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+    const configPath = path.join(service.getCodexHome(), "config.toml");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    const userContent = 'model_provider = "openai_http"\r\n\r\n[mcp_servers.demo]\r\ncommand = "demo"\r\n';
+    await writeFile(configPath, userContent, "utf8");
+    const providerId = buildCodexSiteProviderId("codex::demo");
+    const options = {
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
+      providers: [{
+        providerId,
+        providerName: "Demo Site",
+        baseUrl: "https://example.com/v1",
+        wireApi: "responses",
+      }],
+    };
+
+    await service.syncCodexProviderRegistry(options);
+    const first = await readFile(configPath, "utf8");
+    expect(first.startsWith(CODEDECK_PROVIDER_REGISTRY_BEGIN)).toBe(true);
+    expect(first).toContain(`model_providers.${providerId} = {`);
+    expect(first).toContain('auth = { command = "C:/CodeDeck/codedeck-agent.cmd"');
+    expect(first).toContain(`args = ["auth-token", "--provider", "${providerId}"]`);
+    expect(first).not.toContain("env_key");
+    expect(first.slice(first.indexOf(CODEDECK_PROVIDER_REGISTRY_END) + CODEDECK_PROVIDER_REGISTRY_END.length + 2)).toBe(userContent);
+    await expect(service.resolveNativeCodexModelProvider()).resolves.toBe("openai_http");
+
+    await service.syncCodexProviderRegistry(options);
+    expect(await readFile(configPath, "utf8")).toBe(first);
+
+    await service.syncCodexProviderRegistry({ ...options, providers: [] });
+    expect(await readFile(configPath, "utf8")).toBe(userContent);
+  });
+
+  it("should reject external provider conflicts and preserve the previous config on write failure", async () => {
+    const root = await makeTempDir();
+    const service = createService(root);
+    const configPath = path.join(service.getCodexHome(), "config.toml");
+    await mkdir(path.dirname(configPath), { recursive: true });
+    const providerId = buildCodexSiteProviderId("codex::demo");
+    const original = `[model_providers.${providerId}]\nname = "User Owned"\n`;
+    await writeFile(configPath, original, "utf8");
+    const options = {
+      authCommand: "C:/CodeDeck/codedeck-agent.cmd",
+      providers: [{ providerId, providerName: "Demo", baseUrl: "https://example.com/v1" }],
+    };
+
+    await expect(service.syncCodexProviderRegistry(options)).rejects.toThrow("provider_conflict");
+    expect(await readFile(configPath, "utf8")).toBe(original);
+
+    const quotedOriginal = `["model_providers" . "${providerId}"]\nname = "User Owned"\n`;
+    await writeFile(configPath, quotedOriginal, "utf8");
+    await expect(service.syncCodexProviderRegistry(options)).rejects.toThrow("provider_conflict");
+    expect(await readFile(configPath, "utf8")).toBe(quotedOriginal);
+
+    await writeFile(configPath, 'model_provider = "openai"\n', "utf8");
+    const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(new Error("rename failed"));
+    await expect(service.syncCodexProviderRegistry(options)).rejects.toThrow("rename failed");
+    rename.mockRestore();
+    expect(await readFile(configPath, "utf8")).toBe('model_provider = "openai"\n');
   });
 });

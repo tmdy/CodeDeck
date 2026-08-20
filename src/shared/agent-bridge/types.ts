@@ -24,6 +24,7 @@ export interface AgentProfileSummary {
 
 export type AgentBridgeRequest =
   | { request_id?: string; command: "profiles" }
+  | { request_id?: string; command: "auth_token"; provider_id: string }
   | {
       request_id?: string;
       command: "run";
@@ -99,6 +100,7 @@ export type AgentBridgeResponse =
       profiles: AgentProfileSummary[];
       capacity: { running: number; limit: number };
     }
+  | { ok: true; request_id?: string; token: string }
   | (AgentTaskResponse & { request_id?: string })
   | { ok: false; request_id?: string; error: AgentBridgeError };
 

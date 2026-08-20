@@ -6,6 +6,7 @@
 
 - Trigger: any change to `electron/agent-cli.ts`, `electron/main.ts`, `src/shared/agent-bridge/*`, `src/shared/services/launch-service.ts`, or `src/shared/provider/codex/command-builder.ts` that affects delegated launch, Codex project trust, task lifetime, automatic return, or peer interruption.
 - The bridge is a local Electron-main-owned capability boundary. It is not a general terminal-control API.
+- `auth_token` is a separate narrow capability that remains available when delegation is disabled. It accepts exactly one stable `site_provider_<hash>` ID and never accepts a Profile key, list operation, or bulk secret request.
 - A root caller may explicitly launch a tracked orchestrator. The orchestrator may launch one live bound child, while an ordinary tracked task cannot become a parent.
 - Existing untracked monitored terminals retain parent-bound delegation. Every delegated child is depth-limited and cannot recursively delegate through the supported CLI.
 
@@ -15,6 +16,10 @@
 type AgentReturnPolicy = "once" | "continuous" | "manual";
 
 type AgentBridgeRequest =
+  | {
+      command: "auth_token";
+      provider_id: string;
+    }
   | {
       command: "run";
       profile_key: string;
@@ -56,6 +61,7 @@ codedeck-agent continue --session <id> [--return-policy once|continuous|manual]
 codedeck-agent interrupt --session <id>
 codedeck-agent policy [--return-policy once|continuous|manual]
 codedeck-agent interrupt-parent
+codedeck-agent auth-token --provider <stable-provider-id>
 ```
 
 Codex launch options own the structured one-run trust input:
@@ -68,6 +74,7 @@ interface CodexCommandOptions {
   sessionId?: string;
   baseUrl: string;
   modelOverride?: string;
+  modelProviderOverride?: string;
   trustedProjectPath?: string;
   disableHooks?: boolean;
 }
@@ -76,6 +83,9 @@ interface CodexCommandOptions {
 ### 3. Contracts
 
 - Electron generates `CODEDECK_TERMINAL_SESSION_ID` and `CODEDECK_TERMINAL_PARENT_TOKEN` for every monitored terminal. A parent binding is accepted only when both values match a running managed terminal.
+- Electron resolves `auth_token` against the currently unlocked saved Codex Profiles and returns only that Profile's active token. Invalid provider syntax, a deleted Profile, and a locked store fail without fallback to files or environment variables.
+- `codedeck-agent auth-token` writes only the token plus a final newline to stdout on success. On failure stdout is empty, stderr contains only a stable code and non-secret message, and the process exits non-zero.
+- Site Profile TOML and the global managed provider registry use the same `auth.command/args` definition and never combine it with `env_key`, `experimental_bearer_token`, or `requires_openai_auth`.
 - `orchestrator: true` is valid only for an unbound root `run`. The orchestrator remains owned by `AgentTaskManager`, receives the terminal parent identity, and does not receive `CODEDECK_DELEGATED=1`.
 - An ordinary tracked task cannot become a parent. A tracked parent is accepted only when its task record is an explicit orchestrator; nested orchestrators are rejected.
 - An orchestrator may have only one bound child whose terminal is running. The manager reserves that parent during child launch so concurrent `run` requests cannot race past the limit. A new child is allowed after the previous child terminal stops.
@@ -131,6 +141,10 @@ interface CodexCommandOptions {
 | Associated turn returns idle after current-turn busy evidence but no lifecycle event arrives | Complete through the evidence-gated `idle_prompt` fallback |
 | Parent closes with pending delivery | `delivery_status=failed` with inspectable error |
 | Bridge disabled or app quitting | delegated tasks are shut down cleanly |
+| Token request while Profile store is locked | `store_locked`; stdout empty |
+| Token request has malformed provider ID | `provider_not_found`; stdout empty |
+| Stable provider has no saved Profile | `profile_not_found`; stdout empty |
+| CodeDeck connection file/pipe is unavailable | `app_unavailable`; stdout empty |
 
 ### 5. Good/Base/Bad Cases
 
@@ -158,6 +172,7 @@ interface CodexCommandOptions {
 - Launch-service tests assert valid provider normalization, managed/native model behavior, cloned overlays, and no stored Profile mutation.
 - Launch-service and command-builder tests assert every Codex launch appends one trusted-project override for the normalized `cwd` after user arguments. Bridge requests append the exact final `--disable hooks` pair, while ordinary UI requests omit it. Windows backslashes, spaces, and non-ASCII paths remain one argv value, while Claude launches remain unchanged.
 - Server/CLI tests assert global-token and scoped-token routing and recursive delegation rejection.
+- Protocol/server/CLI tests assert single-provider token parsing, exact provider mapping, locked/unavailable failures, raw-token-only success stdout, empty failure stdout, and no token in stderr or JSON diagnostics.
 - Skill validation runs `quick_validate.py` against the `.codex/skills` source. A fresh Codex session must also discover the Skill through `.agents/skills` without a trust prompt; the exact-`cwd` response remains a legacy compatibility check.
 - Full verification requires `npm test`, `npm run typecheck`, and `npm run build:electron`.
 

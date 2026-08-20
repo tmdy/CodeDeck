@@ -8,6 +8,7 @@ import {
   nativeTheme,
   safeStorage,
   session as electronSession,
+  shell,
   Tray,
 } from "electron";
 import path from "node:path";
@@ -15,6 +16,7 @@ import { existsSync, readFileSync, promises as fs } from "node:fs";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import readline from "node:readline";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   CODEDECK_PROJECT_ROOT_CONFIG_FILE,
@@ -27,6 +29,15 @@ import {
 import { resolveElectronRuntimePaths } from "../src/shared/electron-runtime-paths.js";
 import { revealAndFocusMainWindow } from "../src/shared/electron/main-window-reactivation.js";
 import { createChromiumFetch } from "../src/shared/electron/chromium-fetch.js";
+import {
+  buildCodexAppServerArgs,
+  buildCodexDesktopThreadStartRequest,
+  buildCodexDesktopNewThreadUrl,
+  buildCodexDesktopThreadUrl,
+  hasCodexDesktopHandoffMarker,
+  validateCodexDesktopHandoffLaunch,
+  validateCodexDesktopThreadProvider,
+} from "../src/shared/electron/codex-desktop-handoff.js";
 import {
   resolveDefaultPaths,
   type PreviewAction,
@@ -47,7 +58,11 @@ import { ProfileService } from "../src/shared/services/profile-service.js";
 import { LaunchService } from "../src/shared/services/launch-service.js";
 import { CapabilityOverlayService } from "../src/shared/services/capability-overlay-service.js";
 import { SettingsStateService, type SessionsTabStatePatch } from "../src/shared/services/settings-state-service.js";
-import { ModelMappingConfigService } from "../src/shared/services/model-mapping-config-service.js";
+import {
+  ModelMappingConfigService,
+  buildCodexSiteProviderId,
+  resolveCodexSiteProviderToken,
+} from "../src/shared/services/model-mapping-config-service.js";
 import { ModelCatalogService } from "../src/shared/services/model-catalog-service.js";
 import { BalanceService, normalizeBalanceBaseUrl } from "../src/shared/services/balance-service.js";
 import {
@@ -194,7 +209,7 @@ import {
   defaultBalanceCheckState,
   type BalanceCheckState,
 } from "../src/shared/balance/types.js";
-import type { ParameterSettings } from "../src/shared/parameter/types.js";
+import { defaultParameterSettings, type ParameterSettings } from "../src/shared/parameter/types.js";
 import type { ModelMappingsState } from "../src/shared/model-mapping/config-types.js";
 import { normalizeThemeMode } from "../src/shared/theme.js";
 import { createStartupTheme, serializeStartupTheme } from "../src/shared/startup-theme.js";
@@ -316,6 +331,7 @@ const terminalSessionManager = new TerminalSessionManager({
 });
 const terminalAttachmentDisposers = new Map<string, () => void>();
 const managedTerminalParentTokens = new Map<string, string>();
+const terminalIdlePromptSessions = new Set<string>();
 const terminalWindows = new Map<string, BrowserWindow>();
 const terminalFlashTimers = new Map<string, NodeJS.Timeout>();
 const terminalTitlePollTimers = new Map<string, NodeJS.Timeout>();
@@ -748,6 +764,9 @@ function settleActiveProfileHealthTurn(
 
 function handleTerminalActivityChange(event: TerminalSessionActivityEvent): void {
   agentTaskManager?.handleActivityChange(event);
+  if (event.reason === "idle_prompt") {
+    terminalIdlePromptSessions.add(event.sessionId);
+  }
   if (event.reason === "turn_completed") {
     const healthWatcher = terminalLifecycleWatchers.get(event.sessionId);
     if (activeProfileHealthTurnWaiters.has(event.sessionId)) {
@@ -768,6 +787,7 @@ function handleTerminalActivityChange(event: TerminalSessionActivityEvent): void
     }
   }
   if (event.reason === "process_exit" || event.reason === "session_closed") {
+    terminalIdlePromptSessions.delete(event.sessionId);
     const snapshot = terminalSessionManager.getSnapshot(event.sessionId);
     const output = cleanTerminalText(snapshot?.output ?? "").slice(-2_000);
     settleActiveProfileHealthTurn(
@@ -1659,6 +1679,291 @@ async function launchMonitoredTerminalSession(
   return snapshot;
 }
 
+const DESKTOP_HANDOFF_TIMEOUT_MS = 30_000;
+const DESKTOP_HANDOFF_POLL_MS = 250;
+const DESKTOP_HANDOFF_READY_TIMEOUT_MS = 15_000;
+const DESKTOP_HANDOFF_SUBMIT_DELAY_MS = 100;
+const DESKTOP_HANDOFF_ROUTE_DELAY_MS = 750;
+const DESKTOP_HANDOFF_LOCK_TIMEOUT_MS = 10_000;
+const DESKTOP_HANDOFF_APP_SERVER_TIMEOUT_MS = 15_000;
+
+async function waitForDesktopHandoffPrompt(sessionId: string): Promise<void> {
+  const deadline = Date.now() + DESKTOP_HANDOFF_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const current = terminalSessionManager.getSnapshot(sessionId);
+    if (!current) {
+      throw new Error("Desktop 交接失败：临时终端会话不存在。");
+    }
+    if (current.status !== "running") {
+      throw new Error("Desktop 交接失败：Codex CLI 在等待输入前已退出。");
+    }
+    // The initial snapshot is idle before Codex renders its first prompt. The
+    // detector emits idle_prompt only after actual output reaches a stable TUI
+    // prompt, so require both signals before submitting /app.
+    if (current.output.trim() && terminalIdlePromptSessions.has(sessionId)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, DESKTOP_HANDOFF_POLL_MS));
+  }
+  throw new Error("Desktop 交接超时：Codex CLI 未进入可交互提示。");
+}
+
+async function waitForPathState(
+  targetPath: string,
+  expectedExists: boolean,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(targetPath) === expectedExists) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, DESKTOP_HANDOFF_POLL_MS));
+  }
+  return existsSync(targetPath) === expectedExists;
+}
+
+interface CodexAppServerThreadResult {
+  threadId: string;
+  modelProvider: string;
+}
+
+async function stopCodexAppServer(child: ReturnType<typeof spawn>): Promise<void> {
+  if (child.exitCode !== null) return;
+  child.stdin?.end();
+  const exited = await Promise.race([
+    new Promise<boolean>((resolve) => child.once("exit", () => resolve(true))),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3_000)),
+  ]);
+  if (!exited && child.exitCode === null) {
+    child.kill();
+    await Promise.race([
+      new Promise<void>((resolve) => child.once("exit", () => resolve())),
+      new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
+    ]);
+  }
+}
+
+async function createBlankCodexDesktopThread(
+  plan: Parameters<typeof executeLaunchPlan>[0],
+): Promise<CodexAppServerThreadResult> {
+  await validateLaunchPlan(plan);
+  const appServerSpec = buildWindowsPtyLaunchSpec({
+    ...plan,
+    commandArgs: buildCodexAppServerArgs(plan.commandArgs, plan.codexConfig?.providerId),
+  });
+  const child = spawn(
+    appServerSpec.filePath,
+    appServerSpec.args,
+    {
+      cwd: appServerSpec.cwd,
+      env: {
+        ...process.env,
+        ...plan.env,
+      },
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  const output = readline.createInterface({ input: child.stdout });
+  const requestId = 1;
+  const persistRequestId = 2;
+  let createdThread: CodexAppServerThreadResult | undefined;
+  const resultPromise = new Promise<CodexAppServerThreadResult>((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      reject(new Error("Desktop 交接超时：Codex app-server 未创建空白会话。"));
+    }, DESKTOP_HANDOFF_APP_SERVER_TIMEOUT_MS);
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      output.close();
+      callback();
+    };
+    child.once("error", (error) => {
+      settle(() => reject(new Error(`Desktop 交接失败：无法启动 Codex app-server（${error.message}）。`)));
+    });
+    child.once("exit", (code) => {
+      settle(() => reject(new Error(`Desktop 交接失败：Codex app-server 在创建会话前退出（${code ?? "unknown"}）。`)));
+    });
+    output.on("line", (line) => {
+      let message: {
+        id?: number;
+        result?: { thread?: { id?: string; modelProvider?: string } };
+        error?: { message?: string };
+      };
+      try {
+        message = JSON.parse(line) as typeof message;
+      } catch {
+        return;
+      }
+      if (message.id !== requestId && message.id !== persistRequestId) return;
+      if (message.error) {
+        settle(() => reject(new Error(
+          `Desktop 交接失败：Codex app-server 拒绝创建会话（${message.error?.message || "unknown error"}）。`,
+        )));
+        return;
+      }
+      if (message.id === requestId) {
+        const threadId = message.result?.thread?.id?.trim() ?? "";
+        const modelProvider = message.result?.thread?.modelProvider?.trim() ?? "";
+        if (!threadId) {
+          settle(() => reject(new Error("Desktop 交接失败：Codex app-server 未返回 thread ID。")));
+          return;
+        }
+        createdThread = { threadId, modelProvider };
+        // Codex does not persist a new thread until it receives at least one
+        // rollout item. An empty assistant item creates the rollout without a
+        // user turn, model request, or visible conversation content.
+        send({
+          method: "thread/inject_items",
+          id: persistRequestId,
+          params: {
+            threadId,
+            items: [{
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "" }],
+            }],
+          },
+        });
+        return;
+      }
+      const persistedThread = createdThread;
+      if (!persistedThread) {
+        settle(() => reject(new Error("Desktop 交接失败：空白会话持久化顺序异常。")));
+        return;
+      }
+      settle(() => resolve(persistedThread));
+    });
+  });
+
+  const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
+  send({
+    method: "initialize",
+    id: 0,
+    params: {
+      clientInfo: {
+        name: "codedeck",
+        title: "CodeDeck",
+        version: app.getVersion(),
+      },
+    },
+  });
+  send({ method: "initialized", params: {} });
+  send(buildCodexDesktopThreadStartRequest(requestId, {
+    cwd: plan.cwd,
+    model: plan.codexConfig?.targetModel,
+    modelProvider: plan.codexConfig?.providerId,
+  }));
+
+  try {
+    return await resultPromise;
+  } finally {
+    await stopCodexAppServer(child);
+  }
+}
+
+async function openCodexDesktopThread(
+  plan: Parameters<typeof executeLaunchPlan>[0],
+  providerSessionId: string,
+  resetFailedRoute: boolean,
+): Promise<void> {
+  const codexHome = plan.env.CODEX_HOME?.trim();
+  if (!codexHome) {
+    throw new Error("Desktop 交接失败：未找到 Codex Home，无法验证 writer 接管状态。");
+  }
+  const writerLockPath = path.join(
+    codexHome,
+    "thread-writer-locks",
+    `${providerSessionId}.lock`,
+  );
+  if (!(await waitForPathState(writerLockPath, false, DESKTOP_HANDOFF_LOCK_TIMEOUT_MS))) {
+    throw new Error("Desktop 交接失败：CodeDeck 临时 writer 未释放，请关闭监控会话后重试。");
+  }
+  if (resetFailedRoute) {
+    await shell.openExternal(buildCodexDesktopNewThreadUrl(plan.cwd));
+    await new Promise((resolve) => setTimeout(resolve, DESKTOP_HANDOFF_ROUTE_DELAY_MS));
+  }
+  await shell.openExternal(buildCodexDesktopThreadUrl(providerSessionId));
+  if (!(await waitForPathState(writerLockPath, true, DESKTOP_HANDOFF_LOCK_TIMEOUT_MS))) {
+    throw new Error(
+      "Desktop 已收到会话打开请求，但未确认取得 writer。请在 Codex Desktop 中打开该会话并点击“重试”。",
+    );
+  }
+}
+
+async function completeNewDesktopHandoff(
+  plan: Parameters<typeof executeLaunchPlan>[0],
+): Promise<void> {
+  const created = await createBlankCodexDesktopThread(plan);
+  validateCodexDesktopThreadProvider(
+    plan.codexConfig?.providerId,
+    created.modelProvider,
+  );
+  appLogger.info("launcher", "desktop_blank_thread_created", "Blank Codex Desktop thread created", {
+    context: {
+      provider: plan.provider,
+      modelProvider: created.modelProvider,
+      threadId: created.threadId,
+    },
+  });
+  await openCodexDesktopThread(plan, created.threadId, false);
+}
+
+async function completeDesktopHandoff(
+  snapshot: TerminalSessionSnapshot,
+  plan: Parameters<typeof executeLaunchPlan>[0],
+): Promise<void> {
+  const providerSessionId = validateCodexDesktopHandoffLaunch(
+    plan.launchMode,
+    plan.sessionId,
+  );
+  if (!providerSessionId) {
+    throw new Error("Desktop 交接失败：恢复会话缺少 Codex session ID。");
+  }
+  await waitForDesktopHandoffPrompt(snapshot.sessionId);
+  terminalSessionManager.sendInput(snapshot.sessionId, "/app");
+  await new Promise((resolve) => setTimeout(resolve, DESKTOP_HANDOFF_SUBMIT_DELAY_MS));
+  const beforeSubmit = terminalSessionManager.getSnapshot(snapshot.sessionId);
+  if (beforeSubmit?.status !== "running") {
+    throw new Error("Desktop 交接失败：Codex CLI 在提交 /app 前已退出。");
+  }
+  const handoffOutputStart = beforeSubmit.output.length;
+  terminalSessionManager.sendInput(snapshot.sessionId, "\r");
+  const deadline = Date.now() + DESKTOP_HANDOFF_TIMEOUT_MS;
+  let openAcknowledged = false;
+  while (Date.now() < deadline) {
+    const current = terminalSessionManager.getSnapshot(snapshot.sessionId);
+    if (!current) {
+      throw new Error("Desktop 交接失败：临时终端会话不存在。");
+    }
+    if (current.status === "exited") {
+      throw new Error("Desktop 交接失败：Codex CLI 在 Desktop 确认打开前已退出。");
+    }
+    if (hasCodexDesktopHandoffMarker(current.output.slice(handoffOutputStart))) {
+      openAcknowledged = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, DESKTOP_HANDOFF_POLL_MS));
+  }
+  if (!openAcknowledged) {
+    throw new Error("Desktop 交接超时：未确认 Desktop 接管，请检查 Desktop 是否已安装并重试。");
+  }
+
+  const current = terminalSessionManager.getSnapshot(snapshot.sessionId);
+  if (current?.status === "running") {
+    await terminalSessionManager.closeSession(snapshot.sessionId, "desktop_handoff_open_acknowledged");
+  }
+
+  // `/app` reaches Desktop while the CLI still owns the writer, so Desktop can
+  // render an active-writer error and will not retry after the CLI closes. Move
+  // away from that failed route, then reopen the exact thread after the lock is
+  // released. The recreated writer lock is the takeover evidence.
+  await openCodexDesktopThread(plan, providerSessionId, true);
+}
+
 interface PrepareLaunchExecutionOptions {
   codexHomeOverride?: string;
 }
@@ -1705,9 +2010,23 @@ async function prepareLaunchExecution(
 }> {
   await validateCodexResumeSession(request);
   const capability_overlay = await prepareCapabilityOverlay(request, options);
+  const selectedProfile = getProfileService().getProfiles()
+    .find((profile) => itemKey(profile) === request.profile_key);
+  const codexModelProviderOverride = request.provider === "codex"
+    && selectedProfile
+    && isOfficialNativeProfile(selectedProfile)
+    && request.runtime_settings.launch_mode !== "new"
+    ? await getModelMappingConfigService().resolveNativeCodexModelProvider()
+    : undefined;
   const planRequest: LaunchRequest = {
     ...request,
+    ...(request.desktop_handoff
+      ? { terminal_mode: "monitored" as const, disable_codex_hooks: true }
+      : {}),
     capability_overlay,
+    ...(codexModelProviderOverride
+      ? { codex_model_provider_override: codexModelProviderOverride }
+      : {}),
   };
   const plan = getLaunchService().buildExecutionPlan(planRequest, {
     codexHomeOverride: options.codexHomeOverride,
@@ -1750,7 +2069,7 @@ async function prepareLaunchExecution(
       providerId: plan.codexConfig.providerId,
       providerName: plan.codexConfig.providerName,
       baseUrl: plan.codexConfig.baseUrl,
-      apiKeyEnv: plan.codexConfig.apiKeyEnv,
+      authCommand: plan.codexConfig.authCommand,
       targetModel: plan.codexConfig.targetModel,
       content: plan.codexConfig.content,
     });
@@ -1893,11 +2212,39 @@ async function initializeProfilesAndState(passphrase: string): Promise<{
   return { config, state };
 }
 
+function getCodexAuthHelperPath(): string {
+  return app.isPackaged
+    ? path.join(path.dirname(process.execPath), "codedeck-agent.cmd")
+    : path.join(projectRoot, "scripts", "codedeck-agent.cmd");
+}
+
+async function syncCodexProviderRegistry(
+  profiles: Profile[],
+  parameterSettings: ParameterSettings = defaultParameterSettings(),
+): Promise<void> {
+  const wireApi = parameterSettings.cli_settings.codex.wire_api.trim() || "responses";
+  await getModelMappingConfigService().syncCodexProviderRegistry({
+    authCommand: getCodexAuthHelperPath(),
+    providers: profiles
+      .filter((profile) => profile.provider === "codex" && !isOfficialNativeProfile(profile))
+      .map((profile) => ({
+        providerId: buildCodexSiteProviderId(itemKey(profile)),
+        providerName: `${profile.name} Site`,
+        baseUrl: profile.url,
+        wireApi,
+      })),
+  });
+}
+
 async function activateProfileServices(
   passphrase: string,
   config: EncryptedProfileConfig,
   state: LocalState,
 ): Promise<BootstrapResult> {
+  await syncCodexProviderRegistry(
+    config.profiles,
+    state.parameter_settings ?? defaultParameterSettings(),
+  );
   currentPassphrase = passphrase;
   const stateAccessor = new StateAccessor(localStateStore!, state);
   profileStateAccessor = stateAccessor;
@@ -1921,6 +2268,7 @@ async function activateProfileServices(
     getModelMappingsState: () => currentModelMappingsState(),
     codexProfilesRoot: getModelMappingConfigService().getCodexProfilesRoot(),
     codexHome: getModelMappingConfigService().getCodexHome(),
+    codexAuthCommand: getCodexAuthHelperPath(),
   });
   settingsStateService = new SettingsStateService(stateAccessor, syncStore);
   startCheckinScheduler();
@@ -2085,6 +2433,25 @@ function ensureAgentTaskManager(): AgentTaskManager {
 async function handleAgentBridgeRequest(
   request: AgentBridgeRequest,
 ): Promise<AgentBridgeResponse> {
+  if (request.command === "auth_token") {
+    const resolution = resolveCodexSiteProviderToken(
+      profileService?.getProfiles(),
+      request.provider_id,
+    );
+    if (!resolution.ok) {
+      const messages = {
+        store_locked: "CodeDeck Profile 尚未解锁。",
+        provider_not_found: "Provider ID 无效。",
+        profile_not_found: "对应的 Codex Profile 不存在或未配置 token。",
+      } as const;
+      throw new AgentBridgeRequestError(
+        resolution.code,
+        messages[resolution.code],
+        resolution.code === "store_locked",
+      );
+    }
+    return { ok: true, token: resolution.token };
+  }
   if (!profileService || !settingsStateService) {
     throw new AgentBridgeRequestError(
       "profiles_locked",
@@ -4172,18 +4539,32 @@ function registerAllIpcHandlers(): void {
       draft: Profile,
       runtime: RuntimeSettings,
     ) => {
-      return getProfileService().saveProfile(targetKey, draft, runtime);
+      const saved = await getProfileService().saveProfile(targetKey, draft, runtime);
+      await syncCodexProviderRegistry(
+        getProfileService().getProfiles(),
+        getProfileService().getState().parameter_settings,
+      );
+      return saved;
     },
   );
 
   handleIpc("profile:delete", async (_event, key: ProfileKey) => {
     await getProfileService().deleteProfile(key);
+    await syncCodexProviderRegistry(
+      getProfileService().getProfiles(),
+      getProfileService().getState().parameter_settings,
+    );
   });
 
   handleIpc(
     "profile:clone",
     async (_event, sourceKey: ProfileKey, targetProvider: string) => {
-      return getProfileService().cloneProfileToProvider(sourceKey, targetProvider);
+      const cloned = await getProfileService().cloneProfileToProvider(sourceKey, targetProvider);
+      await syncCodexProviderRegistry(
+        getProfileService().getProfiles(),
+        getProfileService().getState().parameter_settings,
+      );
+      return cloned;
     },
   );
 
@@ -4442,6 +4823,34 @@ function registerAllIpcHandlers(): void {
     const startedAt = Date.now();
     const { planRequest, plan } = await prepareLaunchExecution(request);
     try {
+      if (request.desktop_handoff) {
+        if (request.provider !== "codex") {
+          throw new Error("Desktop 交接仅支持 Codex。");
+        }
+        validateCodexDesktopHandoffLaunch(plan.launchMode, plan.sessionId);
+        let temporarySessionId: string | undefined;
+        if (plan.launchMode === "new") {
+          await completeNewDesktopHandoff(plan);
+        } else {
+          const snapshot = await launchMonitoredTerminalSession(plan, { showWindow: false });
+          temporarySessionId = snapshot.sessionId;
+          await completeDesktopHandoff(snapshot, plan);
+        }
+        invalidateSessionCaches(request.provider);
+        appLogger.info("launcher", "desktop_handoff_success", "Codex Desktop handoff completed", {
+          durationMs: Date.now() - startedAt,
+          context: {
+            provider: request.provider,
+            profileKey: request.profile_key,
+            launchMode: plan.launchMode,
+            cwd: plan.cwd,
+            commandExecutable: plan.commandExecutable,
+            temporarySessionId,
+            hasCodexConfig: !!plan.codexConfig,
+          },
+        });
+        return describeLaunchResult("direct");
+      }
       if (plan.terminalMode === "monitored") {
         const snapshot = await launchMonitoredTerminalSession(plan);
         const launchedProfile = getProfileService().getProfiles()
@@ -4493,7 +4902,7 @@ function registerAllIpcHandlers(): void {
       });
       return describeLaunchResult(plan.terminalMode);
     } catch (error) {
-      if (plan.terminalMode === "monitored") {
+      if (plan.terminalMode === "monitored" && !request.desktop_handoff) {
         appLogger.error("launcher", "launch_monitored_fallback", "Monitored launch failed, falling back to direct launch", {
           durationMs: Date.now() - startedAt,
           context: {
@@ -4728,6 +5137,7 @@ function registerAllIpcHandlers(): void {
         await agentTaskManager.shutdown();
         agentTaskManager = null;
       }
+      await syncCodexProviderRegistry(getProfileService().getProfiles(), updated);
       return updated;
     },
   );

@@ -63,6 +63,17 @@ describe("agent bridge protocol", () => {
     })).toThrow("wait_ms");
   });
 
+  it("accepts only one bounded provider id for token requests", () => {
+    expect(parseAgentBridgeRequest({
+      command: "auth_token",
+      provider_id: " site_provider_0123456789abcdef ",
+    })).toEqual({
+      command: "auth_token",
+      provider_id: "site_provider_0123456789abcdef",
+    });
+    expect(() => parseAgentBridgeRequest({ command: "auth_token" })).toThrow("provider_id");
+  });
+
   it("parses bound child and scoped parent control requests", () => {
     expect(parseAgentBridgeRequest({
       command: "interrupt",

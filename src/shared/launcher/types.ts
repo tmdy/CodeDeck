@@ -18,6 +18,8 @@ export interface LaunchRequest {
   model_override?: string;
   reasoning_effort_override?: string;
   disable_codex_hooks?: boolean;
+  desktop_handoff?: boolean;
+  codex_model_provider_override?: string;
 }
 
 export interface LaunchSessionSource {

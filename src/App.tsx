@@ -620,6 +620,7 @@ function App() {
   // 命令预览 & 余额检测
   const [preview, setPreview] = useState<CommandPreview>(emptyPreview());
   const [profilesLaunchMonitorModeEnabled, setProfilesLaunchMonitorModeEnabled] = useState(true);
+  const [profilesDesktopHandoffEnabled, setProfilesDesktopHandoffEnabled] = useState(false);
   const [balanceState, setBalanceState] = useState<BalanceCheckState | null>(null);
   const [balanceKey, setBalanceKey] = useState<ProfileKey>("");
   const [checkinActionBusy, setCheckinActionBusy] = useState(false);
@@ -2144,7 +2145,8 @@ function App() {
       cwd: runtime.cwd.trim() || defaultWorkingDirectory,
     };
 
-    const requestedTerminalMode = profilesLaunchMonitorModeEnabled ? "monitored" : "direct";
+    const desktopHandoff = launchState.selected_provider === "codex" && profilesDesktopHandoffEnabled;
+    const requestedTerminalMode = desktopHandoff || profilesLaunchMonitorModeEnabled ? "monitored" : "direct";
     const request: LaunchRequest = {
       profile_key: launchState.selected_profile_key,
       provider: launchState.selected_provider,
@@ -2153,12 +2155,16 @@ function App() {
       session_id: sessionId,
       session_source: sessionSource,
       permission_override: permissionOverride,
+      desktop_handoff: desktopHandoff,
+      disable_codex_hooks: desktopHandoff,
     };
 
     try {
       const launchResult = await window.profileManager.launch(request);
       const prefersMonitoredTerminal = requestedTerminalMode === "monitored";
-      if (launchResult?.monitoringActive) {
+      if (desktopHandoff) {
+        setSuccessMessage("已将会话交接到 Codex Desktop。");
+      } else if (launchResult?.monitoringActive) {
         setSuccessMessage("已打开受监控终端窗口。");
       } else if (prefersMonitoredTerminal && launchResult?.terminalMode === "direct") {
         setSuccessMessage("监控终端不可用，已回退到系统直连启动。");
@@ -4270,6 +4276,8 @@ function App() {
               onRefreshSessions: stableRefreshProfilesSessionsAction,
               onToggleFavorite: stableHandleToggleSessionFavorite,
               onDirectLaunch: stableDirectLaunchAction,
+              desktopHandoffEnabled: profilesDesktopHandoffEnabled,
+              onDesktopHandoffChange: setProfilesDesktopHandoffEnabled,
               onContinueLaunch: stableContinueLaunchAction,
               onResumeLaunch: stableResumeLaunchAction,
               onTemporaryReadonlyLaunch: stableTemporaryReadonlyLaunchAction,

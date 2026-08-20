@@ -172,6 +172,47 @@ describe("TerminalApp layout", () => {
     expect(cssRule(".terminal-stage")).toContain("overflow: hidden");
   });
 
+  it("explains Codex active-writer conflicts without claiming takeover support", async () => {
+    window.history.replaceState(null, "", "/?sessionId=session-1");
+    window.terminalManager = {
+      attachSession: vi.fn().mockResolvedValue(createSnapshot({
+        status: "exited",
+        exitCode: 1,
+        output: "Error: thread 01a0 already has an active writer (code -32600)",
+      })),
+      sendInput: vi.fn().mockResolvedValue(undefined),
+      resizeSession: vi.fn().mockResolvedValue(undefined),
+      updateAutoContinueConfig: vi.fn().mockResolvedValue(undefined),
+      closeSession: vi.fn().mockResolvedValue(undefined),
+      readClipboardText: vi.fn().mockResolvedValue(""),
+      writeClipboardText: vi.fn().mockResolvedValue(undefined),
+      onOutput: vi.fn(() => vi.fn()),
+      onStatus: vi.fn(() => vi.fn()),
+    };
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    const { default: TerminalApp } = await import("../../../TerminalApp.js");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<TerminalApp />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("当前由另一个客户端持有写锁");
+    expect(container.textContent).toContain("CodeDeck 无法强制接管");
+    expect(container.textContent).toContain("请从托盘退出而非只关闭窗口");
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
   it("refits the terminal after the resolved title changes header height", async () => {
     window.history.replaceState(null, "", "/?sessionId=session-1");
 

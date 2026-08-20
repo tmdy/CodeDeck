@@ -6,6 +6,8 @@ interface LaunchControlsProps {
   provider: "claude" | "codex";
   monitorModeEnabled?: boolean;
   onMonitorModeChange?: (enabled: boolean) => void;
+  desktopHandoffEnabled?: boolean;
+  onDesktopHandoffChange?: (enabled: boolean) => void;
   onDirectLaunch: () => void;
   onContinueLaunch: () => void;
   onResumeLaunch: () => void;
@@ -16,8 +18,11 @@ interface LaunchControlsProps {
 }
 
 export const LaunchControls = memo(function LaunchControls({
+  provider,
   monitorModeEnabled,
   onMonitorModeChange,
+  desktopHandoffEnabled,
+  onDesktopHandoffChange,
   onDirectLaunch,
   onContinueLaunch,
   onResumeLaunch,
@@ -39,18 +44,24 @@ export const LaunchControls = memo(function LaunchControls({
           <span>开启监控模式</span>
         </label>
       )}
+      {provider === "codex" && onDesktopHandoffChange && (
+        <label className="launch-monitor-toggle launch-desktop-toggle">
+          <input
+            type="checkbox"
+            checked={Boolean(desktopHandoffEnabled)}
+            onChange={(event) => onDesktopHandoffChange(event.target.checked)}
+            disabled={disabled}
+          />
+          <span>桌面版启动</span>
+        </label>
+      )}
       <button type="button" className="launch-btn primary" onClick={onDirectLaunch} disabled={disabled}>
         直接启动
       </button>
       <button type="button" className="launch-btn" onClick={onContinueLaunch} disabled={disabled}>
         继续上次
       </button>
-      <button
-        type="button"
-        className="launch-btn"
-        onClick={onResumeLaunch}
-        disabled={disabled || resumeDisabled}
-      >
+      <button type="button" className="launch-btn" onClick={onResumeLaunch} disabled={disabled || resumeDisabled}>
         恢复选中
       </button>
       <button type="button" className="launch-btn" onClick={onTemporaryReadonlyLaunch} disabled={disabled || !onTemporaryReadonlyLaunch}>

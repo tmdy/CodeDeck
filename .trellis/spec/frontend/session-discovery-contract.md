@@ -115,7 +115,7 @@ interface CodexConfigWritePlan {
   configFilePath: string;   // <Home>/site-<hash>.config.toml
   profileName: string;      // site-<hash>
   content: string;
-  apiKeyEnv: string;
+  authCommand: string;
 }
 ```
 
@@ -128,8 +128,10 @@ Normal discovery supplies exactly one Home:
 ### 3. Contracts
 
 - Native and site launches set `CODEX_HOME` to the same canonical Home.
-- Site launches add `--profile site-<hash>` and inject the API key through the generated environment variable. Secret values never appear in TOML.
-- Profile writes own only `<Home>/site-<hash>.config.toml`. They do not rewrite `<Home>/config.toml`, `rules/managed-permissions.rules`, global Agents, unrelated Profiles, Providers, MCP, Plugins, Projects, or Skills.
+- Site launches add `--profile site-<hash>` and use the provider's `auth.command`; they do not inject API keys into the child environment. Secret values never appear in TOML.
+- Profile writes own `<Home>/site-<hash>.config.toml`. CodeDeck may also atomically replace only the provider registry between `# BEGIN CODEDECK MANAGED SITE PROVIDERS` and `# END CODEDECK MANAGED SITE PROVIDERS` at the start of `<Home>/config.toml`; every byte outside that block remains user-owned and unchanged.
+- The managed registry contains only stable provider IDs, display names, base URLs, wire APIs, and the packaged `codedeck-agent auth-token --provider <id>` command. It never contains tokens, models, MCP, Plugins, Projects, Skills, or permission settings.
+- A same-ID provider table outside the managed block is a `provider_conflict`; CodeDeck preserves the previous file instead of overwriting the user definition.
 - Resume validates the session in canonical Home and uses the original session ID in place. It does not copy JSONL files or append copied index records.
 - Codex detail lookup ignores caller-provided `source_home`, returns `source_kind: "global_codex"`, and reads canonical Home only.
 - `app_runtime` remains in compatibility types for stored favorites/migration tooling, but normal launch rejects it and normal UI hides legacy Codex favorites with that source.
@@ -147,7 +149,10 @@ Normal discovery supplies exactly one Home:
 | Caller supplies stale/non-canonical `source_home` | Ignore it for Codex detail lookup |
 | Old catalog snapshot version is loaded | Rebuild from active sources; never import Runtime summaries |
 | Site Profile write fails | Preserve the prior Profile and user base config |
+| Managed registry write fails | Preserve the prior `config.toml` atomically |
+| Same provider ID exists outside the managed block | Fail with `provider_conflict`; do not modify the file |
 | Capability source equals target Home | Return an empty overlay; create no self-links/copies |
+| Another Codex client owns the thread writer | Preserve the CLI failure and show an actionable exit-and-retry message; do not kill the owner, edit lock state, or claim takeover support |
 
 ### 5. Good / Base / Bad Cases
 
@@ -159,8 +164,8 @@ Normal discovery supplies exactly one Home:
 
 ### 6. Tests Required
 
-- Launch: native and site plans use the canonical Home; site plans keep `--profile` and secret env indirection.
-- Profile writer: only the CodeDeck-owned site Profile changes; unrelated `config.toml` remains byte-equivalent; failed writes leave the previous file usable.
+- Launch: native and site plans use the canonical Home; native resume adds the current effective provider override, while site plans keep `--profile` and command authentication without secret environment variables.
+- Profile writer: the CodeDeck-owned site Profile and marked provider registry use the same `auth.command`; unrelated `config.toml` bytes remain equivalent; conflicts and failed writes leave the previous file usable.
 - Resume/detail: canonical session succeeds, missing session fails, `app_runtime` source fails, stale `source_home` cannot redirect lookup, and no transfer helper is called.
 - Catalog/cache: stale snapshot version rebuilds; inactive Runtime entries are filtered before pagination; singleton Home is part of cache identity.
 - UI/favorites: legacy Runtime favorites are not shown or launchable; global favorite keys retain source metadata compatibility.

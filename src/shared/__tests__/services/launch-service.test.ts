@@ -103,17 +103,20 @@ describe("LaunchService", () => {
         extra_env: { CODEX_HOME: "C:/user/override" },
       }),
       session_id: "session-global",
+      codex_model_provider_override: "openai_http",
     });
 
     expect(plan.valid).toBe(true);
     expect(plan.command).toBe(
-      `codex resume "session-global" --enable hooks -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `codex resume "session-global" --enable hooks -c model_provider="openai_http" -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
     );
     expect(plan.commandArgs).toEqual([
       "resume",
       "session-global",
       "--enable",
       "hooks",
+      "-c",
+      'model_provider="openai_http"',
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
     ]);
@@ -174,6 +177,8 @@ describe("LaunchService", () => {
       "session-ordered",
       "--enable",
       "hooks",
+      "-c",
+      'model_provider="openai"',
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
       "--disable",
@@ -822,19 +827,12 @@ describe("LaunchService", () => {
     );
     expect(preview.cwd).toBe("C:/workspace/current-project");
     expect(preview.command).not.toContain("--model");
-    expect(preview.env).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "CODEX_HOME",
-          displayValue: "C:/Users/test/.codex",
-        }),
-        expect.objectContaining({
-          name: "CODEX_SITE_API_KEY_A632B8AC583C81DE",
-          displayValue: "[已设置]",
-          sensitive: true,
-        }),
-      ]),
-    );
+    expect(preview.env).toEqual([
+      expect.objectContaining({
+        name: "CODEX_HOME",
+        displayValue: "C:/Users/test/.codex",
+      }),
+    ]);
     expect(plan.commandArgs).toEqual([
       "--profile",
       "site-a632b8ac583c81de",
@@ -844,12 +842,15 @@ describe("LaunchService", () => {
     expect(plan.codexConfig?.content).toContain('model = "glm-4.6"');
     expect(plan.codexConfig?.content).toContain('base_url = "https://open.bigmodel.cn/api/paas/v4"');
     expect(plan.codexConfig?.content).toContain("[model_providers.site_provider_a632b8ac583c81de]");
+    expect(plan.codexConfig?.content).toContain("[model_providers.site_provider_a632b8ac583c81de.auth]");
+    expect(plan.codexConfig?.content).toContain('args = ["auth-token", "--provider", "site_provider_a632b8ac583c81de"]');
+    expect(plan.codexConfig?.content).not.toContain("env_key");
     expect(plan.codexConfig?.content).not.toContain("[profiles.");
     expect(plan.codexConfig?.content).not.toContain("trust_level");
     expect(plan.codexConfig?.profileName).toBe("site-a632b8ac583c81de");
     expect(plan.codexConfig?.configFilePath).toBe("C:/Users/test/.codex/site-a632b8ac583c81de.config.toml");
     expect(plan.env.CODEX_HOME).toBe("C:/Users/test/.codex");
-    expect(plan.env.CODEX_SITE_API_KEY_A632B8AC583C81DE).toBe("sk-glm");
+    expect(plan.env).not.toHaveProperty("CODEX_SITE_API_KEY_A632B8AC583C81DE");
   });
 
   it("should isolate a Codex health plan in an explicit home without changing ordinary plans", () => {
@@ -1007,7 +1008,7 @@ describe("LaunchService", () => {
     expect(plan.env.PROFILE_ONLY).toBe("profile");
     expect(plan.env.SHARED_ENV).toBe("profile-value");
     expect(plan.env.CODEX_HOME).toBe("C:/Users/test/.codex");
-    expect(plan.env[apiKeyEnv]).toBe("sk-glm");
+    expect(plan.env).not.toHaveProperty(apiKeyEnv);
   });
 
   it("should not generate a global Codex worker mapping from a site model", () => {

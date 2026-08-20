@@ -43,7 +43,11 @@ describe("profile balance session IPC", () => {
     expect(mainSource).toContain("runBrowserNavigationAction(browserWindow.webContents, action)");
     expect(mainSource).toContain('{ label: "后退", accelerator: "Alt+Left"');
     expect(mainSource).toContain('{ label: "前进", accelerator: "Alt+Right"');
-    expect(mainSource).not.toContain("shell.openExternal");
+    const profileBrowserBlock = mainSource.slice(
+      mainSource.indexOf("async function openProfileSiteBrowser"),
+      mainSource.indexOf("function installBrowserNavigationMenu"),
+    );
+    expect(profileBrowserBlock).not.toContain("shell.openExternal");
     expect(preloadSource).toContain(
       'openBaseUrl: (baseUrl: string, target: ProfileBrowserTarget): Promise<void> =>\n    ipcRenderer.invoke("profile:open-base-url", baseUrl, target)',
     );

@@ -273,7 +273,7 @@ describe("LaunchService permissions", () => {
     expect(plan.valid).toBe(true);
     expect(plan.codexConfig).not.toHaveProperty("rulesContent");
     expect(plan.codexConfig?.content).toContain("[shell_environment_policy]");
-    expect(plan.codexConfig?.content).toContain('exclude = ["*KEY*", "*TOKEN*", "*SECRET*", "*PASSWORD*", "CODEX_SITE_API_KEY_*"]');
+    expect(plan.codexConfig?.content).toContain('exclude = ["*KEY*", "*TOKEN*", "*SECRET*", "*PASSWORD*"]');
   });
 
   it("should let a temporary readonly override beat profile and global permissions", () => {

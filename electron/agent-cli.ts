@@ -79,6 +79,16 @@ async function buildRequest(parsed: ParsedArguments): Promise<AgentBridgeRequest
   if (parsed.command === "profiles") {
     return { command: "profiles", request_id };
   }
+  if (parsed.command === "auth-token") {
+    if (parsed.options.size !== 1 || !parsed.options.has("provider")) {
+      throw new Error("auth-token 只接受 --provider <id>。");
+    }
+    return {
+      command: "auth_token",
+      request_id,
+      provider_id: requiredOption(parsed.options, "provider"),
+    };
+  }
   if (parsed.command === "run") {
     const cwd = parsed.options.get("cwd");
     const requestedWaitMs = waitMs(parsed.options);
@@ -160,7 +170,7 @@ async function buildRequest(parsed: ParsedArguments): Promise<AgentBridgeRequest
     };
   }
   throw new Error(
-    "用法：codedeck-agent profiles | run --profile <key> [--cwd <path>] [--model <id>] "
+    "用法：codedeck-agent profiles | auth-token --provider <id> | run --profile <key> [--cwd <path>] [--model <id>] "
     + "[--reasoning-effort <level>] [--return-policy once|continuous|manual] [--wait-ms <ms>] "
     + "[--show-terminal] [--orchestrator] | continue --session <id> [--return-policy ...] "
     + "| status/wait/interrupt/cancel --session <id> | policy [--return-policy ...] "
@@ -205,12 +215,30 @@ function writeResponse(response: AgentBridgeResponse): void {
   process.exitCode = response.ok ? 0 : 2;
 }
 
+function writeAuthTokenResponse(response: AgentBridgeResponse): void {
+  if (response.ok && "token" in response) {
+    process.stdout.write(response.token + "\n");
+    process.exitCode = 0;
+    return;
+  }
+  const error = response.ok
+    ? { code: "invalid_response", message: "CodeDeck 未返回 provider token。" }
+    : response.error;
+  process.stderr.write(`${error?.code || "invalid_response"}: ${error?.message || "CodeDeck 未返回 provider token。"}\n`);
+  process.exitCode = 2;
+}
+
 async function main(): Promise<void> {
   try {
+    const parsed = parseArguments(process.argv.slice(2));
+    if (parsed.command === "auth-token") {
+      const request = await buildRequest(parsed);
+      writeAuthTokenResponse(await sendAgentBridgeRequest(await resolveConnectionFile(), request));
+      return;
+    }
     if (process.env.CODEDECK_DELEGATED === "1") {
       const scopedToken = process.env.CODEDECK_AGENT_SCOPED_TOKEN?.trim();
       const scopedPipe = process.env.CODEDECK_AGENT_SCOPED_PIPE?.trim();
-      const parsed = parseArguments(process.argv.slice(2));
       if (
         scopedToken
         && scopedPipe
@@ -256,7 +284,7 @@ async function main(): Promise<void> {
       });
       return;
     }
-    const request = await buildRequest(parseArguments(process.argv.slice(2)));
+    const request = await buildRequest(parsed);
     writeResponse(await sendAgentBridgeRequest(await resolveConnectionFile(), request));
   } catch (error) {
     process.stderr.write((error instanceof Error ? error.message : String(error)) + "\n");

@@ -91,6 +91,43 @@ describe("ProfilesLaunchPanel", () => {
     expect(html).not.toContain("模型映射");
   });
 
+  it("renders an independent Codex Desktop handoff toggle without adding one for Claude", () => {
+    const codexHtml = renderToStaticMarkup(
+      <ProfilesLaunchPanel
+        provider="codex"
+        monitorModeEnabled={false}
+        onMonitorModeChange={vi.fn()}
+        sessions={[]}
+        onSelectSession={vi.fn()}
+        onRefreshSessions={vi.fn()}
+        onDirectLaunch={vi.fn()}
+        desktopHandoffEnabled={false}
+        onDesktopHandoffChange={vi.fn()}
+        onContinueLaunch={vi.fn()}
+        onResumeLaunch={vi.fn()}
+      />,
+    );
+    expect(codexHtml.indexOf("开启监控模式")).toBeLessThan(codexHtml.indexOf("桌面版启动"));
+    expect(codexHtml).toContain("桌面版启动");
+    expect(codexHtml).toContain("launch-desktop-toggle");
+    expect(codexHtml).toContain('launch-monitor-toggle launch-desktop-toggle');
+
+    const claudeHtml = renderToStaticMarkup(
+      <ProfilesLaunchPanel
+        provider="claude"
+        sessions={[]}
+        onSelectSession={vi.fn()}
+        onRefreshSessions={vi.fn()}
+        onDirectLaunch={vi.fn()}
+        desktopHandoffEnabled={false}
+        onDesktopHandoffChange={vi.fn()}
+        onContinueLaunch={vi.fn()}
+        onResumeLaunch={vi.fn()}
+      />,
+    );
+    expect(claudeHtml).not.toContain("桌面版启动");
+  });
+
   it("passes session favorite controls into the resume picker", async () => {
     const onToggleFavorite = vi.fn();
     const container = document.createElement("div");
@@ -152,7 +189,9 @@ describe("ProfilesLaunchPanel", () => {
     );
     expect(css).toMatch(/\.profiles-launch-panel\s+\.launch-btn\.primary\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
     expect(css).toMatch(/\.profiles-launch-panel\s+\.launch-btn\s*\{[^}]*padding:\s*0\.38rem\s+0\.58rem/s);
-    expect(css).toMatch(/\.profiles-launch-panel\s+\.launch-monitor-toggle\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+    expect(css).toMatch(
+      /\.profiles-launch-panel\s+\.launch-monitor-toggle\s*\{[^}]*grid-column:\s*auto[^}]*width:\s*100%[^}]*box-sizing:\s*border-box/s,
+    );
   });
 
   it("shows a monitor toggle for Codex launches and notifies changes", () => {

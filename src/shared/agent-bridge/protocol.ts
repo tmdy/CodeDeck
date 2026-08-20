@@ -9,6 +9,7 @@ import {
 
 const MAX_PROMPT_CHARS = 1_000_000;
 const MAX_MODEL_CHARS = 256;
+const MAX_PROVIDER_ID_CHARS = 128;
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -80,6 +81,20 @@ export function parseAgentBridgeRequest(value: unknown): AgentBridgeRequest {
 
   if (command === "profiles") {
     return { command, ...(request_id ? { request_id } : {}) };
+  }
+  if (command === "auth_token") {
+    const provider_id = requiredString(record, "provider_id");
+    if (provider_id.length > MAX_PROVIDER_ID_CHARS) {
+      throw new AgentBridgeRequestError(
+        "invalid_request",
+        `provider_id 超过 ${MAX_PROVIDER_ID_CHARS} 字符限制。`,
+      );
+    }
+    return {
+      command,
+      provider_id,
+      ...(request_id ? { request_id } : {}),
+    };
   }
   if (command === "run") {
     const cwd = typeof record.cwd === "string" && record.cwd.trim()

@@ -56,6 +56,52 @@ function runAgentCli(
 }
 
 describe("codedeck-agent CLI", () => {
+  it("writes only the requested token to stdout", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "codedeck-agent-token-"));
+    cleanupPaths.push(directory);
+    const connectionFile = path.join(directory, "connection.json");
+    const token = "secret-token-value";
+    const server = new AgentBridgeServer({
+      connectionFile,
+      handleRequest: async (request) => request.command === "auth_token"
+        ? { ok: true, token }
+        : { ok: false, error: { code: "invalid_request", message: "wrong command", retryable: false } },
+    });
+    await server.start();
+    try {
+      const result = await runAgentCli([
+        "auth-token",
+        "--provider",
+        "site_provider_0123456789abcdef",
+      ], {
+        CODEDECK_AGENT_CONNECTION_FILE: connectionFile,
+        CODEDECK_DELEGATED: "1",
+      });
+
+      expect(result).toEqual({ exitCode: 0, stdout: `${token}\n`, stderr: "" });
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("keeps stdout empty when the app is unavailable", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "codedeck-agent-token-error-"));
+    cleanupPaths.push(directory);
+    const result = await runAgentCli([
+      "auth-token",
+      "--provider",
+      "site_provider_0123456789abcdef",
+    ], {
+      CODEDECK_AGENT_CONNECTION_FILE: path.join(directory, "missing.json"),
+      CODEDECK_DELEGATED: "0",
+    });
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("app_unavailable");
+    expect(result.stderr).not.toContain("secret-token-value");
+  });
+
   it("rejects recursive delegation before opening the global bridge", async () => {
     const result = await runAgentCli(
       ["run", "--profile", "codex::demo", "--wait-ms", "0"],

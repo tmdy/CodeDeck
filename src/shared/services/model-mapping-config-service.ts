@@ -9,6 +9,12 @@ import {
 } from "../model-mapping/config-types.js";
 import { ensureDirectory, pathExists, readJson, writeJson } from "../filesystem.js";
 import { resolveCanonicalCodexHome } from "./codex-home.js";
+import { itemKey } from "../profile/keys-internal.js";
+import {
+  getProfileApiKey,
+  isOfficialNativeProfile,
+  type Profile,
+} from "../profile/types.js";
 
 export interface ModelMappingConfigServiceOptions {
   appDataRoot: string;
@@ -21,12 +27,34 @@ export interface WriteCodexProfileOptions {
   providerId: string;
   providerName: string;
   baseUrl: string;
-  apiKeyEnv: string;
+  authCommand: string;
   targetModel: string;
   wireApi?: string;
   skipGitRepoCheck?: boolean;
   content?: string;
 }
+
+export interface CodexSiteProviderDefinition {
+  providerId: string;
+  providerName: string;
+  baseUrl: string;
+  wireApi?: string;
+}
+
+export interface SyncCodexProviderRegistryOptions {
+  providers: CodexSiteProviderDefinition[];
+  authCommand: string;
+}
+
+export type CodexSiteProviderTokenResolution =
+  | { ok: true; token: string }
+  | {
+      ok: false;
+      code: "store_locked" | "provider_not_found" | "profile_not_found";
+    };
+
+export const CODEDECK_PROVIDER_REGISTRY_BEGIN = "# BEGIN CODEDECK MANAGED SITE PROVIDERS";
+export const CODEDECK_PROVIDER_REGISTRY_END = "# END CODEDECK MANAGED SITE PROVIDERS";
 
 export function sanitizeCodexProfileId(profileId: string): string {
   return buildLegacyCodexProfileDirectoryName(profileId);
@@ -48,8 +76,40 @@ export function buildCodexSiteProviderId(profileId: string): string {
   return `site_provider_${codexProfileHash(profileId)}`;
 }
 
-export function buildCodexSiteApiKeyEnv(profileId: string): string {
-  return `CODEX_SITE_API_KEY_${codexProfileHash(profileId).toUpperCase()}`;
+export function findCodexSiteProfileByProviderId(
+  profiles: Profile[],
+  providerId: string,
+): Profile | undefined {
+  const normalizedProviderId = providerId.trim();
+  if (!/^site_provider_[a-f0-9]{16}$/.test(normalizedProviderId)) {
+    return undefined;
+  }
+  return profiles.find((profile) => (
+    profile.provider === "codex"
+    && !isOfficialNativeProfile(profile)
+    && buildCodexSiteProviderId(itemKey(profile)) === normalizedProviderId
+  ));
+}
+
+export function resolveCodexSiteProviderToken(
+  profiles: Profile[] | undefined,
+  providerId: string,
+): CodexSiteProviderTokenResolution {
+  if (!profiles) {
+    return { ok: false, code: "store_locked" };
+  }
+  const normalizedProviderId = providerId.trim();
+  if (!/^site_provider_[a-f0-9]{16}$/.test(normalizedProviderId)) {
+    return { ok: false, code: "provider_not_found" };
+  }
+  const profile = findCodexSiteProfileByProviderId(profiles, normalizedProviderId);
+  if (!profile) {
+    return { ok: false, code: "profile_not_found" };
+  }
+  const token = getProfileApiKey(profile).trim();
+  return token
+    ? { ok: true, token }
+    : { ok: false, code: "profile_not_found" };
 }
 
 export function buildLegacyCodexProfileDirectoryName(profileId: string): string {
@@ -122,6 +182,30 @@ export class ModelMappingConfigService {
     return profileConfigPath;
   }
 
+  async resolveNativeCodexModelProvider(): Promise<string> {
+    const configContent = await readTextIfExists(path.join(this.codexHome, "config.toml"));
+    return readTopLevelTomlString(configContent, "model_provider") || "openai";
+  }
+
+  async syncCodexProviderRegistry(options: SyncCodexProviderRegistryOptions): Promise<string> {
+    const codexHome = await this.ensureCodexHome();
+    const configPath = path.join(codexHome, "config.toml");
+    const existing = await readTextIfExists(configPath);
+    const { externalContent } = splitManagedProviderRegistry(existing);
+    const providers = normalizeProviderDefinitions(options.providers);
+    for (const provider of providers) {
+      if (hasProviderTable(externalContent, provider.providerId)) {
+        throw new Error(`provider_conflict: ${provider.providerId}`);
+      }
+    }
+    const eol = existing.includes("\r\n") ? "\r\n" : "\n";
+    const managedBlock = providers.length > 0
+      ? renderProviderRegistry(providers, options.authCommand, eol)
+      : "";
+    await writeTextWithBackupIfChanged(configPath, managedBlock + externalContent);
+    return configPath;
+  }
+
   buildCodexProfileContent(options: WriteCodexProfileOptions): string {
     const targetModel = options.targetModel.trim();
     const wireApi = options.wireApi?.trim() || "responses";
@@ -141,8 +225,11 @@ export class ModelMappingConfigService {
       `[model_providers.${options.providerId}]`,
       `name = ${JSON.stringify(options.providerName.trim())}`,
       `base_url = ${JSON.stringify(options.baseUrl.trim())}`,
-      `env_key = ${JSON.stringify(options.apiKeyEnv.trim())}`,
       `wire_api = ${JSON.stringify(wireApi)}`,
+      "",
+      `[model_providers.${options.providerId}.auth]`,
+      `command = ${JSON.stringify(options.authCommand.trim())}`,
+      `args = ["auth-token", "--provider", ${JSON.stringify(options.providerId.trim())}]`,
       "",
       "[windows]",
       'sandbox = "elevated"',
@@ -194,6 +281,94 @@ export class ModelMappingConfigService {
       throw new Error("拒绝访问 Codex profiles 根目录之外的路径");
     }
   }
+}
+
+function readTopLevelTomlString(content: string, key: string): string {
+  for (const line of content.replace(/\r\n/g, "\n").split("\n")) {
+    if (/^\s*\[/.test(line)) {
+      break;
+    }
+    const match = line.match(new RegExp(`^\\s*${key}\\s*=\\s*("(?:[^"\\\\]|\\\\.)*"|'[^']*')\\s*(?:#.*)?$`));
+    if (!match) continue;
+    if (match[1].startsWith("\"")) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        return typeof parsed === "string" ? parsed.trim() : "";
+      } catch {
+        return "";
+      }
+    }
+    return match[1].slice(1, -1).trim();
+  }
+  return "";
+}
+
+function splitManagedProviderRegistry(content: string): { externalContent: string } {
+  const begin = content.indexOf(CODEDECK_PROVIDER_REGISTRY_BEGIN);
+  const end = content.indexOf(CODEDECK_PROVIDER_REGISTRY_END);
+  if (begin === -1 && end === -1) {
+    return { externalContent: content };
+  }
+  if (begin !== 0 || end < begin) {
+    throw new Error("provider_registry_invalid: CodeDeck managed provider markers are malformed");
+  }
+  const afterMarker = end + CODEDECK_PROVIDER_REGISTRY_END.length;
+  const blockEnd = content.startsWith("\r\n", afterMarker)
+    ? afterMarker + 2
+    : content.startsWith("\n", afterMarker)
+      ? afterMarker + 1
+      : afterMarker;
+  return { externalContent: content.slice(blockEnd) };
+}
+
+function normalizeProviderDefinitions(
+  providers: CodexSiteProviderDefinition[],
+): CodexSiteProviderDefinition[] {
+  const byId = new Map<string, CodexSiteProviderDefinition>();
+  for (const provider of providers) {
+    const providerId = provider.providerId.trim();
+    if (!/^site_provider_[a-f0-9]{16}$/.test(providerId)) {
+      throw new Error(`provider_not_found: ${providerId || "empty"}`);
+    }
+    if (byId.has(providerId)) {
+      throw new Error(`provider_conflict: ${providerId}`);
+    }
+    byId.set(providerId, {
+      providerId,
+      providerName: provider.providerName.trim(),
+      baseUrl: provider.baseUrl.trim(),
+      wireApi: provider.wireApi?.trim() || "responses",
+    });
+  }
+  return Array.from(byId.values()).sort((left, right) => left.providerId.localeCompare(right.providerId));
+}
+
+function hasProviderTable(content: string, providerId: string): boolean {
+  const escaped = providerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const root = `(?:model_providers|"model_providers"|'model_providers')`;
+  const segment = `(?:${escaped}|"${escaped}"|'${escaped}')`;
+  return new RegExp(`^\\s*\\[\\s*${root}\\s*\\.\\s*${segment}(?:\\s*\\.|\\s*\\])`, "m").test(content)
+    || new RegExp(`^\\s*${root}\\s*\\.\\s*${segment}\\s*=`, "m").test(content);
+}
+
+function renderProviderRegistry(
+  providers: CodexSiteProviderDefinition[],
+  authCommand: string,
+  eol: string,
+): string {
+  const lines = [CODEDECK_PROVIDER_REGISTRY_BEGIN];
+  for (const provider of providers) {
+    lines.push(
+      `model_providers.${provider.providerId} = { `
+        + `name = ${JSON.stringify(provider.providerName)}, `
+        + `base_url = ${JSON.stringify(provider.baseUrl)}, `
+        + `wire_api = ${JSON.stringify(provider.wireApi || "responses")}, `
+        + `auth = { command = ${JSON.stringify(authCommand.trim())}, `
+        + `args = ["auth-token", "--provider", ${JSON.stringify(provider.providerId)}] } }`,
+    );
+  }
+  lines.push(CODEDECK_PROVIDER_REGISTRY_END);
+  return lines.join(eol) + eol;
 }
 
 interface TomlBlock {
