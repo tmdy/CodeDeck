@@ -176,3 +176,24 @@ Trust the selected Codex cwd per launch, preserve hooks disablement, normalize W
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: 修复 Profile 浏览器首次可见延迟
+
+**Date**: 2026-08-20
+**Task**: 修复 Profile 浏览器首次可见延迟
+**Branch**: `main`
+
+### Summary
+
+确认 Profile Base URL 窗口因等待初始导航完成才显示而体感缓慢；改为先显示和聚焦窗口，再执行 30 秒有界导航，保留分区、安全导航与失败关闭行为，并通过完整测试和类型检查。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3dfcfd3` | (see git log) |
+
+### Status
+
+[OK] **Completed**
