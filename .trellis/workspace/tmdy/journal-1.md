@@ -155,3 +155,24 @@ Trust the selected Codex cwd per launch, preserve hooks disablement, normalize W
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: 自定义余额与签到兼容
+
+**Date**: 2026-08-20
+**Task**: 自定义余额与签到兼容
+**Branch**: `main`
+
+### Summary
+
+完成可选的自定义余额/签到兼容规则：支持独立 API、网页 CSS selector、页面签到与人工验证码回流；统一账号 partition、跨 origin 明确授权和旧路径兼容。聚焦测试、完整测试与 typecheck 通过；Windows 打包受运行中的 CodeDeck 进程锁定而未完成。其他并行任务改动未纳入。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b19563` | (see git log) |
+
+### Status
+
+[OK] **Completed**

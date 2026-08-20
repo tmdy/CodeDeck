@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-08-17
+- **Total Sessions**: 8
+- **Last Active**: 2026-08-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~157 | Active |
+| `journal-1.md` | ~178 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-08-20 | 自定义余额与签到兼容 | `9b19563` | `main` |
 | 7 | 2026-08-17 | 修复浏览器验证码签到回调 | `d6a33bf` | `main` |
 | 6 | 2026-08-16 | 统一 Codex Home 与共享会话 | `db450d3` | `main` |
 | 5 | 2026-08-16 | 修复站点登录态浏览器分区 | `bd69a2a` | `main` |
