@@ -100,6 +100,7 @@ class PendingBrowserAccountReferenceRegistry {
 - A verified browser login persists the sanitized account first. Existing Profiles bind through `ProfileService.bindProfileSiteBalanceSession`, which may change only `balance_session_id`; unsaved new Profiles keep the saved session selected only in renderer draft state.
 - Balance testing must reject an empty `selection === "new"` draft before generic empty-new-to-auto normalization. Browser mode prompts for login; PAT mode prompts for credentials/save. A complete PAT draft may continue through the existing save-then-test flow, while explicit `selection === "auto"` remains unchanged.
 - Profile Base URL opening uses a sandboxed CodeDeck BrowserWindow and a strict `ProfileBrowserTarget`. Saved sessions reuse their verified account partition, existing slots reuse their global opaque partition, and a new browser identity prepares/reuses a bounded pending partition before login. Auto/PAT browsing uses the dedicated application browser partition. Malformed targets, missing sessions/slots, and saved-session origin mismatches fail closed; this action never calls `shell.openExternal`.
+- Profile Base URL opening shows and focuses its BrowserWindow before awaiting the initial origin navigation. That navigation is bounded to 30 seconds; a timeout stops loading, closes the failed window through the existing cleanup path, and propagates the error. Page readiness may remain pending after the window becomes visible, but visibility must not be gated by document/network completion.
 - Entering a new browser-session draft defaults to the lowest numbered existing identity slot. It falls back to a new identity only when no slot exists, and later data refreshes must not overwrite an explicit user selection.
 - `GET /api/user/checkin?month=YYYY-MM` may return `data.checkin_nonce`; the following POST must send `{ "checkin_nonce": "..." }`.
 - Native verification polling must treat an explicit record for the current local date in `checkin_history`, `checkins`, `records`, or `history` as today's check-in only when the record is not an explicit failure; historical records and failed/error payloads must not complete the verification task.
@@ -158,6 +159,7 @@ class PendingBrowserAccountReferenceRegistry {
 - Adding generic `Veloera-User`, `X-Api-User`, or other vendor aliases to an already verified browser request context.
 - Persisting Sub2API `auth_token`/`refresh_token`, sending them through renderer IPC, or refreshing again from a delayed 401 after credentials already rotated.
 - Opening a Profile Base URL in the system default browser or a partition different from its selected browser account.
+- Creating a Profile BrowserWindow hidden and awaiting its initial `loadURL()` before showing/focusing it; this makes target-site latency appear to be window-creation latency.
 - Retaining a tentative new-account partition beyond its bounded retry lifetime or application shutdown, or retaining a failed migration partition.
 
 ### 6. Tests Required
@@ -183,6 +185,7 @@ class PendingBrowserAccountReferenceRegistry {
 - State normalization tests prove interrupted persisted `running` becomes retryable `failed`, while persisted `verifying` remains recoverable as `manual_required`.
 - Profile service/IPC tests prove binding validates normalized URL/session existence and changes only `balance_session_id` plus related balance caches.
 - Profile browser routing tests cover strict target parsing, default/saved/slot/pending partitions, missing slots, saved-session origin mismatch, normalized pending keys, and no silent default fallback.
+- Profile browser lifecycle tests assert that `show()` and `focus()` occur before the initial navigation wait, and that stalled initial navigation is bounded, stops loading, closes the window, and propagates an error.
 - Renderer tests prove existing Profiles bind without saving unrelated draft fields, unsaved new Profiles remain unsaved, browser reference fields survive hydration, empty new browser/PAT drafts never route to API auto during balance testing, complete PAT drafts save before testing, and new browser drafts default to the lowest existing slot without overwriting later manual choices.
 
 ### 7. Wrong vs Correct

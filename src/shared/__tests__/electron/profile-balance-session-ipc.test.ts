@@ -47,7 +47,15 @@ describe("profile balance session IPC", () => {
       mainSource.indexOf("async function openProfileSiteBrowser"),
       mainSource.indexOf("function installBrowserNavigationMenu"),
     );
+    const showIndex = profileBrowserBlock.indexOf("browserWindow.show();");
+    const focusIndex = profileBrowserBlock.indexOf("browserWindow.focus();");
+    const loadIndex = profileBrowserBlock.indexOf("await loadProfileBrowserUrlWithTimeout(");
     expect(profileBrowserBlock).not.toContain("shell.openExternal");
+    expect(showIndex).toBeGreaterThan(-1);
+    expect(focusIndex).toBeGreaterThan(showIndex);
+    expect(loadIndex).toBeGreaterThan(focusIndex);
+    expect(mainSource).toContain("const PROFILE_BROWSER_NAVIGATION_TIMEOUT_MS = 30_000;");
+    expect(profileBrowserBlock).toContain("browserWindow.webContents.stop();");
     expect(preloadSource).toContain(
       'openBaseUrl: (baseUrl: string, target: ProfileBrowserTarget): Promise<void> =>\n    ipcRenderer.invoke("profile:open-base-url", baseUrl, target)',
     );

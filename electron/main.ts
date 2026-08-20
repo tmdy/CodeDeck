@@ -300,6 +300,7 @@ let currentPassphrase: string = "";
 const legacyCleanupWarnings = new Set<string>();
 let mainWindow: BrowserWindow | null = null;
 const profileBrowserWindows = new Set<BrowserWindow>();
+const PROFILE_BROWSER_NAVIGATION_TIMEOUT_MS = 30_000;
 let appTray: Tray | null = null;
 let closeToTrayEnabled = false;
 let isExplicitlyQuitting = false;
@@ -3018,14 +3019,32 @@ async function openProfileSiteBrowser(rawBaseUrl: string, targetInput: unknown):
   browserWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
   browserWindow.on("closed", () => profileBrowserWindows.delete(browserWindow));
   try {
-    await browserWindow.loadURL(targetUrl);
-    if (!browserWindow.isDestroyed()) {
-      browserWindow.show();
-      browserWindow.focus();
-    }
+    browserWindow.show();
+    browserWindow.focus();
+    await loadProfileBrowserUrlWithTimeout(browserWindow, targetUrl);
   } catch (error) {
     if (!browserWindow.isDestroyed()) browserWindow.close();
     throw error;
+  }
+}
+
+async function loadProfileBrowserUrlWithTimeout(
+  browserWindow: BrowserWindow,
+  url: string,
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      browserWindow.loadURL(url),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          if (!browserWindow.isDestroyed()) browserWindow.webContents.stop();
+          reject(new Error("浏览器页面加载超时"));
+        }, PROFILE_BROWSER_NAVIGATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
