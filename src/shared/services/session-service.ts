@@ -1020,8 +1020,9 @@ async function readCodexIndex(indexPath: string): Promise<CodexIndexEntry[]> {
         const buffer = Buffer.alloc(stat.size - cached.size);
         await handle.read(buffer, 0, buffer.length, cached.size);
         const appendedEntries: CodexIndexEntry[] = [];
-        let validTail = true;
-        for (const line of buffer.toString("utf-8").split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
+        const appendedText = buffer.toString("utf-8");
+        let validTail = appendedText.endsWith("\n");
+        for (const line of appendedText.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
           try {
             const entry = parseCodexIndexEntry(JSON.parse(line));
             if (entry) {
@@ -1033,7 +1034,7 @@ async function readCodexIndex(indexPath: string): Promise<CodexIndexEntry[]> {
           }
         }
         if (validTail) {
-          const entries = [...cached.entries, ...appendedEntries];
+          const entries = mergeCodexIndexEntries([...cached.entries, ...appendedEntries]);
           codexIndexCache.set(indexPath, {
             mtimeMs: stat.mtimeMs,
             size: stat.size,
@@ -1045,10 +1046,18 @@ async function readCodexIndex(indexPath: string): Promise<CodexIndexEntry[]> {
         await handle.close();
       }
     }
-    const records = await safeReadJsonl(indexPath);
-    const entries = records
+    const records: unknown[] = [];
+    const indexText = await fs.readFile(indexPath, "utf8");
+    for (const line of indexText.split(/\r?\n/).slice(0, -1)) {
+      try {
+        records.push(JSON.parse(line));
+      } catch {
+        // Append-only index writes may expose a partial or damaged record.
+      }
+    }
+    const entries = mergeCodexIndexEntries(records
       .map((record) => parseCodexIndexEntry(record))
-      .filter((record): record is CodexIndexEntry => record !== null);
+      .filter((record): record is CodexIndexEntry => record !== null));
     codexIndexCache.set(indexPath, {
       mtimeMs: stat.mtimeMs,
       size: stat.size,
@@ -1071,6 +1080,26 @@ export function invalidateCodexSessionCache(home?: string): void {
       codexFallbackMapCache.delete(key);
     }
   }
+}
+
+function mergeCodexIndexEntries(entries: CodexIndexEntry[]): CodexIndexEntry[] {
+  const merged = new Map<string, CodexIndexEntry>();
+  for (const entry of entries) {
+    const previous = merged.get(entry.session_id);
+    merged.set(entry.session_id, {
+      ...entry,
+      cwd: entry.cwd || previous?.cwd || "",
+      updated_at: entry.updated_at || previous?.updated_at || "",
+      preview: entry.preview || previous?.preview || "",
+    });
+  }
+  return [...merged.values()];
+}
+
+export async function readCodexSessionTitle(home: string, sessionId: string): Promise<string | undefined> {
+  const path = await import("node:path");
+  const entries = await readCodexIndex(path.join(home, "session_index.jsonl"));
+  return entries.find((entry) => entry.session_id === sessionId)?.preview || undefined;
 }
 
 function codexSummaryFromCompleteIndexEntry(entry: CodexIndexEntry): SessionSummary | null {
@@ -1567,7 +1596,10 @@ export async function findMonitoredTerminalSessionTitle(
       cwd,
       startedAtMs,
     )) {
-      merged.set(session.session_id, session);
+      const indexed = merged.get(session.session_id);
+      merged.set(session.session_id, { ...session, ...(indexed ? {
+        preview: indexed.preview || session.preview,
+      } : {}) });
     }
     sessions = Array.from(merged.values());
   }

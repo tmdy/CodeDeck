@@ -1,6 +1,7 @@
 // ProfileItem 列表项组件
 
 import { memo } from "react";
+import type { CheckinAttentionEntry } from "../../shared/checkin/presentation.js";
 
 interface ProfileItemProps {
   name: string;
@@ -11,6 +12,7 @@ interface ProfileItemProps {
   healthLabel?: string;
   healthStatus?: string;
   healthTitle?: string;
+  checkinEntry?: CheckinAttentionEntry;
   pinned?: boolean;
   onSelect: () => void;
 }
@@ -24,13 +26,14 @@ export const ProfileItem = memo(function ProfileItem({
   healthLabel,
   healthStatus,
   healthTitle,
+  checkinEntry,
   pinned = false,
   onSelect,
 }: ProfileItemProps) {
   return (
     <button
       type="button"
-      className={`profile-item ${isSelected ? "selected" : ""}`}
+      className={`profile-item ${isSelected ? "selected" : ""}${checkinEntry ? " has-checkin-attention" : ""}`}
       onClick={onSelect}
     >
       <span className="profile-item-drag">{pinned ? "CLI" : "::"}</span>
@@ -46,6 +49,13 @@ export const ProfileItem = memo(function ProfileItem({
       {balanceLabel && (
         <span className={`profile-item-balance ${balanceStatus ?? ""}`}>
           {balanceLabel}
+        </span>
+      )}
+      {checkinEntry && (
+        <span className="profile-item-checkin-line">
+          <span className={`profile-item-checkin ${checkinEntry.variant}`} title={checkinEntry.title}>
+            <span aria-hidden="true">⚠</span> {checkinEntry.label}
+          </span>
         </span>
       )}
     </button>

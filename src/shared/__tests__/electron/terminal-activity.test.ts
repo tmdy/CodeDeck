@@ -102,6 +102,50 @@ describe("TerminalActivityDetector", () => {
     });
   });
 
+  it.each(["  Worked for 1h 23m 3s • 02:34", "─ Worked for 1h 23m 3s • 02:34 ─────────────────"])("recognizes the screenshot's current Codex idle placeholder after its completed-work separator: %s", (separator) => {
+    const detector = new TerminalActivityDetector();
+    detector.recordInput("inspect repository\r");
+    detector.observeOutput("› inspect repository\r\nWorking (83m • esc to interrupt)\r\n");
+    expect(detector.observeOutput([
+      "• completed result",
+      separator,
+      "› Ask Codex to do anything",
+    ].join("\r\n"))).toEqual({ activity: "idle", reason: "idle_prompt" });
+  });
+
+  it("does not settle an active turn from a previous completion row or a prose mention", () => {
+    for (const completion of ["Worked for a long time", "Worked for 1h 23m 3s • 02:34"]) {
+      const detector = new TerminalActivityDetector();
+      expect(detector.observeOutput([
+        "› inspect repository", completion,
+        "Working (8s • esc to interrupt)", "› Ask Codex to do anything",
+      ].join("\r\n"))).toEqual({ activity: "busy", reason: "busy_output" });
+    }
+  });
+
+  it.each([
+    ["```", "Worked for 8s • 02:34", "```"],
+    ["~~~text", "Worked for 8s • 02:34", "~~~"],
+    ["```text", "Worked for 8s • 02:34"],
+    ["Worked for 8s • 02:34", "This is an example of a completion row."],
+  ].map((answer) => ({ answer })))("does not settle from a quoted completion row in current answer text: %j", ({ answer }) => {
+    const detector = new TerminalActivityDetector();
+    expect(detector.observeOutput([
+      "› inspect repository", "Working (8s • esc to interrupt)",
+      ...answer, "› Ask Codex to do anything",
+    ].join("\r\n"))).toEqual({ activity: "busy", reason: "busy_output" });
+  });
+
+  it("accepts the real final separator after a closed code example and old interactive text", () => {
+    const detector = new TerminalActivityDetector();
+    expect(detector.observeOutput([
+      "› inspect repository", "Working (8s • esc to interrupt)",
+      "Earlier the tool asked: Do you want to proceed? (y/n)",
+      "```", "Worked for 3s • 02:30", "```", "Completed answer.",
+      "─ Worked for 8s • 02:34 ───────────", "› Ask Codex to do anything",
+    ].join("\r\n"))).toEqual({ activity: "idle", reason: "idle_prompt" });
+  });
+
   it("ignores Working from an older submitted turn after a newer turn has completed", () => {
     const detector = new TerminalActivityDetector();
 

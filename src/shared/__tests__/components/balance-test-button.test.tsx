@@ -26,6 +26,29 @@ function makeFailedState(): BalanceCheckState {
 }
 
 describe("BalanceTestButton", () => {
+  it("shows an accessible login warning and clears the panel after check-in recovery", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const onBrowserLogin = vi.fn();
+    const props = { state: null, onTest: vi.fn(), onCheckin: vi.fn(), onBrowserLogin, checkinAvailable: true, autoCheckinEnabled: true };
+    await act(async () => root.render(<BalanceTestButton {...props} checkinState={{
+      status: "login_required", trigger: "automatic", message: "登录状态已过期", last_attempt_at: "2026-09-12T06:00:00Z",
+    }} />));
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("需重新登录");
+    expect(container.querySelector(".checkin-result.warning")?.textContent).toContain("登录状态已过期");
+    expect(container.querySelector("time")?.getAttribute("dateTime")).toBe("2026-09-12T06:00:00Z");
+    const login = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "重新登录");
+    expect(login).toBeInstanceOf(HTMLButtonElement);
+    await act(async () => login?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onBrowserLogin).toHaveBeenCalledOnce();
+    await act(async () => root.render(<BalanceTestButton {...props} checkinState={{
+      status: "already_checked", trigger: "manual", message: "今日已签到", satisfied_local_date: localDateKey(),
+    }} />));
+    expect(container.querySelector(".checkin-result")).toBeNull();
+    expect(container.textContent).toContain("今日已签到");
+    await act(async () => root.unmount());
+  });
+
   it("keeps balance metadata out of the balance action area", () => {
     const html = renderToStaticMarkup(
       <BalanceTestButton
@@ -111,7 +134,7 @@ describe("BalanceTestButton", () => {
 
     expect(container.textContent).toContain("立即签到");
     expect(container.textContent).toContain("签到已启用账号 (2)");
-    expect(container.textContent).toContain("需要人工验证");
+    expect(container.textContent).toContain("需人工验证");
     expect(container.textContent).toContain("诊断编号：abcdef123456");
     const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
     expect(checkbox?.checked).toBe(true);
@@ -202,7 +225,7 @@ describe("BalanceTestButton", () => {
     expect(html).toContain("$112.17 剩余");
     expect(html).toContain("签到成功 · $1.23");
     expect(html).toContain("奖励：$1.23");
-    expect(html).toContain("最近签到：");
+    expect(html).toContain("最近手动签到：");
     expect(html).not.toContain("奖励：614271");
     expect(html).not.toContain("checkin-result");
     expect(html).not.toContain("USD: 剩余");

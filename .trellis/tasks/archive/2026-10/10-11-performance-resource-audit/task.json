@@ -1,0 +1,42 @@
+{
+  "id": "performance-resource-audit",
+  "name": "performance-resource-audit",
+  "title": "CodeDeck 性能基线审计与低风险资源优化",
+  "description": "第一阶段性能审计、Windows 可复用基线与确认的低风险资源修复；后续原生管道和活动解析优化见审计报告。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "tmdy",
+  "assignee": "tmdy",
+  "createdAt": "2026-10-11",
+  "completedAt": "2026-10-11",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "docs/performance-audit-2026-10-11.md",
+    "scripts/performance/README.md",
+    "src/TerminalApp.tsx",
+    "src/shared/electron/terminal-session-manager.ts",
+    "src/shared/electron/terminal-output-buffer.ts",
+    "src/shared/electron/session-list-cache.ts",
+    "src/shared/__tests__/electron/terminal-resource-lifecycle.test.ts",
+    "src/shared/__tests__/electron/terminal-output-buffer.test.ts",
+    "src/shared/__tests__/electron/session-list-cache-capacity.test.ts",
+    "src/shared/__tests__/components/terminal-app-layout.test.tsx"
+  ],
+  "notes": "第一阶段已验收；保留任务开始前 62 项未提交工作。本轮未提交、推送或发布。原生管道残留、活动解析和长时间真实 CLI 验证未宣称完成。",
+  "meta": {
+    "phase": "phase1_audit_and_low_risk_fixes",
+    "final_regression_tests_passed": 84,
+    "typecheck": "passed",
+    "evidence": "evidence-summary.json"
+  }
+}

@@ -1,0 +1,151 @@
+{
+  "researched_on": "2026-09-12",
+  "timezone": "Asia/Shanghai",
+  "method": "Public GitHub REST metadata and revision-pinned raw files; no git operations; no live login or check-in",
+  "files": [
+    {
+      "local_path": "upstream/all-api-hub/src/constants/siteType.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/constants/siteType.ts",
+      "sha256": "dedd7e0beda28e93884b8fd3e34dd8a1bcf3d0a57e16520add60a6013db76f9e",
+      "bytes": 2130
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/accountSiteDefinitions/definitions.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/accountSiteDefinitions/definitions.ts",
+      "sha256": "82bda9052f68339605fe80efc371cd633884ea2b06888aa44e2c2abfa4b7d701",
+      "bytes": 29119
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/apiService/anyrouter/index.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/apiService/anyrouter/index.ts",
+      "sha256": "ad5b8091837ac92d9ac52d5c5bde2f7310918dff9cf4dfc32c0f6c7a3924d243",
+      "bytes": 159
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/apiService/newApiFamily/request.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/apiService/newApiFamily/request.ts",
+      "sha256": "ba8da56224468cc2abcfb0c9cef113d192733c5963b0de6b07a356a4e230bbfb",
+      "bytes": 322
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/apiService/newApiFamily/variants/anyrouter.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/apiService/newApiFamily/variants/anyrouter.ts",
+      "sha256": "e7d157e6da9b4eb8ea37dd79158a8065c917ce78994f7bc058226a2bf2eba068",
+      "bytes": 4176
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/apiTransport/compatHeaders.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/apiTransport/compatHeaders.ts",
+      "sha256": "4d237f125b5430eecac0eda7edc197a430f9abfe1bce812ebc51db3dc47226fe",
+      "bytes": 1917
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/apiTransport/request.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/apiTransport/request.ts",
+      "sha256": "565e82835338000ce88f94339036e4a47b537f53606559d36b9342f8516647cc",
+      "bytes": 29301
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/checkin/autoCheckin/providers/anyrouter.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/checkin/autoCheckin/providers/anyrouter.ts",
+      "sha256": "8cf94236edb172be94018555ded92bdefdb2cf26de5c3623b6daad7718228fd4",
+      "bytes": 4642
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/checkin/autoCheckin/providers/detection.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/checkin/autoCheckin/providers/detection.ts",
+      "sha256": "324e7f2d6da793d316175a3404b21a536d92d03e6c10130afad2bb1b457419a8",
+      "bytes": 2460
+    },
+    {
+      "local_path": "upstream/all-api-hub/src/services/checkin/autoCheckin/providers/shared.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/src/services/checkin/autoCheckin/providers/shared.ts",
+      "sha256": "dcc36929abcf861d2e76c5fe08e99b8c5059506563f3d21b02baf2ace5cded55",
+      "bytes": 5785
+    },
+    {
+      "local_path": "upstream/all-api-hub/tests/services/apiService/anyrouter.index.test.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/tests/services/apiService/anyrouter.index.test.ts",
+      "sha256": "82e41512b80958181b798d7879d6904f017b23bb011e79e89b6828c3a648edcf",
+      "bytes": 9262
+    },
+    {
+      "local_path": "upstream/all-api-hub/tests/services/autoCheckin/providers/anyrouter.test.ts",
+      "repository": "qixing-jk/all-api-hub",
+      "revision": "2ffe529e1d92e616c5a6ad605ed406b61b5ef628",
+      "source_url": "https://github.com/qixing-jk/all-api-hub/blob/2ffe529e1d92e616c5a6ad605ed406b61b5ef628/tests/services/autoCheckin/providers/anyrouter.test.ts",
+      "sha256": "77ef262703535bbe95d32798c4402e7d37325e1612afe6522eaf35eac2e4b8a9",
+      "bytes": 14674
+    },
+    {
+      "local_path": "upstream/metapi/src/server/services/checkinService.ts",
+      "repository": "cita-777/metapi",
+      "revision": "88634b0d7207039e8d0c0d026c38870cf74bf2bc",
+      "source_url": "https://github.com/cita-777/metapi/blob/88634b0d7207039e8d0c0d026c38870cf74bf2bc/src/server/services/checkinService.ts",
+      "sha256": "5e35009fd49913f67468c07782ab2dd9532c5695d61a62f4cdf70e72d2b8fab6",
+      "bytes": 15318
+    },
+    {
+      "local_path": "upstream/metapi/src/server/services/platforms/anyrouter.ts",
+      "repository": "cita-777/metapi",
+      "revision": "88634b0d7207039e8d0c0d026c38870cf74bf2bc",
+      "source_url": "https://github.com/cita-777/metapi/blob/88634b0d7207039e8d0c0d026c38870cf74bf2bc/src/server/services/platforms/anyrouter.ts",
+      "sha256": "00e1b39234c16629a6fd4598fc83511db8ed7a66642624d2a7c725f3d17d4bff",
+      "bytes": 289
+    },
+    {
+      "local_path": "upstream/metapi/src/server/services/platforms/newApi.ts",
+      "repository": "cita-777/metapi",
+      "revision": "88634b0d7207039e8d0c0d026c38870cf74bf2bc",
+      "source_url": "https://github.com/cita-777/metapi/blob/88634b0d7207039e8d0c0d026c38870cf74bf2bc/src/server/services/platforms/newApi.ts",
+      "sha256": "bcf21b217dad13c65fc414938675b0746d6fe662539551977ad14cf6ef1e3423",
+      "bytes": 54032
+    },
+    {
+      "local_path": "upstream/anyrouter-check-in/checkin.py",
+      "repository": "millylee/anyrouter-check-in",
+      "revision": "3b16662142c68703ea3e79c77c06a8cf6bba7990",
+      "source_url": "https://github.com/millylee/anyrouter-check-in/blob/3b16662142c68703ea3e79c77c06a8cf6bba7990/checkin.py",
+      "sha256": "50f76632820f91feca5225acfc6309d057cf110429ab00c32850e26c8a08e2ea",
+      "bytes": 22344
+    },
+    {
+      "local_path": "upstream/anyrouter-check-in/README.md",
+      "repository": "millylee/anyrouter-check-in",
+      "revision": "3b16662142c68703ea3e79c77c06a8cf6bba7990",
+      "source_url": "https://github.com/millylee/anyrouter-check-in/blob/3b16662142c68703ea3e79c77c06a8cf6bba7990/README.md",
+      "sha256": "b19cfc25dc0c911ec73d392905776dd17a6049ebcac31bafe20b746f5eebd536",
+      "bytes": 14243
+    },
+    {
+      "local_path": "upstream/anyrouter-check-in/utils/config.py",
+      "repository": "millylee/anyrouter-check-in",
+      "revision": "3b16662142c68703ea3e79c77c06a8cf6bba7990",
+      "source_url": "https://github.com/millylee/anyrouter-check-in/blob/3b16662142c68703ea3e79c77c06a8cf6bba7990/utils/config.py",
+      "sha256": "042fb6b4d36f453e8689acc9f6244a38930c4fa220fb93f3fb2d4e4eb1d6e1f7",
+      "bytes": 7363
+    }
+  ]
+}

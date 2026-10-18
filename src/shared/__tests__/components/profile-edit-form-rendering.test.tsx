@@ -42,6 +42,7 @@ describe("ProfileEditForm rendering", () => {
       },
       codex: {
         subagentTarget: "",
+        subagentReasoningEffort: "",
       },
     };
   }
@@ -143,7 +144,7 @@ describe("ProfileEditForm rendering", () => {
     container.remove();
   });
 
-  it("marks Codex worker model mapping as disabled in the shared Home mode", async () => {
+  it("renders editable Codex worker model mapping controls in the shared Home mode", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -161,7 +162,7 @@ describe("ProfileEditForm rendering", () => {
             advancedModelMapping: {
               ...makeAdvancedMapping(),
               enabled: true,
-              codex: { subagentTarget: "worker-model" },
+              codex: { subagentTarget: "worker-model", subagentReasoningEffort: "high" },
             },
           }}
           runtime={{ ...stableProps.runtime, command_base: "codex" }}
@@ -170,9 +171,17 @@ describe("ProfileEditForm rendering", () => {
       );
     });
 
-    expect(container.textContent).toContain("当前版本不提供 Codex Worker 子代理模型覆盖");
-    const mappingInput = container.querySelector('input[value="worker-model"]') as HTMLInputElement | null;
-    expect(mappingInput?.disabled).toBe(true);
+    expect(container.textContent).not.toContain("当前版本不提供 Codex Worker 子代理模型覆盖");
+    expect(container.textContent).toContain("为当前 Codex Profile 的子代理请求设置模型和思考等级");
+    const mappingCard = container.querySelector('[data-testid="glass-card-Codex 子代理模型映射"]');
+    const mappingCheckbox = mappingCard?.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    expect(mappingCheckbox?.checked).toBe(true);
+    expect(mappingCheckbox?.disabled).toBe(false);
+    const mappingInput = mappingCard?.querySelector('input[value="worker-model"]') as HTMLInputElement | null;
+    expect(mappingInput?.disabled).toBe(false);
+    const effortSelect = mappingCard?.querySelector('select') as HTMLSelectElement | null;
+    expect(effortSelect?.value).toBe("high");
+    expect(effortSelect?.disabled).toBe(false);
     expect(onAdvancedModelMappingChange).not.toHaveBeenCalled();
 
     await act(async () => {

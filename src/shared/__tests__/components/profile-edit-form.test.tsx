@@ -26,6 +26,7 @@ describe("ProfileEditForm", () => {
       },
       codex: {
         subagentTarget: "",
+        subagentReasoningEffort: "",
       },
     };
   }
@@ -451,9 +452,7 @@ describe("ProfileEditForm", () => {
       );
     });
 
-    const effortSelect = Array.from(container.querySelectorAll("select")).find(
-      (select) => select.textContent?.includes("minimal") && select.textContent?.includes("ultra"),
-    );
+    const effortSelect = container.querySelector(".model-config-card select");
     expect(effortSelect).toBeInstanceOf(HTMLSelectElement);
 
     await act(async () => {
@@ -814,7 +813,7 @@ describe("ProfileEditForm", () => {
     expect(html.indexOf("<h3>Codex 子代理模型映射</h3>")).toBeLessThan(html.indexOf("<h3>模型配置</h3>"));
   });
 
-  it("should keep the Codex subagent model mapping disabled", async () => {
+  it("should allow enabling Codex subagent mapping while keeping its fields disabled until enabled", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -845,12 +844,101 @@ describe("ProfileEditForm", () => {
       );
     });
 
-    const mappingLabel = Array.from(container.querySelectorAll("label")).find(
-      (label) => label.textContent?.includes("启用子代理模型映射"),
+    const mappingCard = Array.from(container.querySelectorAll(".glass-card")).find(
+      (card) => card.textContent?.includes("Codex 子代理模型映射"),
     );
-    const checkbox = mappingLabel?.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    expect(checkbox?.disabled).toBe(true);
-    expect(onAdvancedModelMappingChange).not.toHaveBeenCalled();
+    const checkbox = mappingCard?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    const modelInput = mappingCard?.querySelector<HTMLInputElement>('input:not([type="checkbox"])');
+    const effortSelect = mappingCard?.querySelector<HTMLSelectElement>("select");
+    expect(checkbox?.disabled).toBe(false);
+    expect(checkbox?.checked).toBe(false);
+    expect(modelInput?.disabled).toBe(true);
+    expect(effortSelect?.disabled).toBe(true);
+
+    await act(async () => {
+      checkbox?.click();
+    });
+
+    expect(onAdvancedModelMappingChange).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: true,
+    }));
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("should update the Codex subagent model and reasoning effort fields when enabled", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onAdvancedModelMappingChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProfileEditForm
+          draft={{
+            name: "Codex",
+            url: "https://api.openai.com/v1",
+            key: "sk",
+            selectedModelId: "gpt-5.6",
+            advancedModelMapping: {
+              ...makeAdvancedMapping(),
+              enabled: true,
+              codex: {
+                subagentTarget: "worker-model",
+                subagentReasoningEffort: "low",
+              },
+            },
+          }}
+          runtime={{
+            cwd: "",
+            command_base: "codex",
+            settings_file: "",
+            extra_args: "",
+            launch_mode: "new",
+            exclude_user_settings: true,
+          }}
+          provider="codex"
+          modelOptions={[]}
+          onChange={vi.fn()}
+          onAdvancedModelMappingChange={onAdvancedModelMappingChange}
+          onRuntimeChange={vi.fn()}
+          onFetchModels={vi.fn()}
+          onPickCwd={vi.fn()}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+    });
+
+    const mappingCard = Array.from(container.querySelectorAll(".glass-card")).find(
+      (card) => card.textContent?.includes("Codex 子代理模型映射"),
+    );
+    const modelInput = mappingCard?.querySelector<HTMLInputElement>('input:not([type="checkbox"])');
+    const effortSelect = mappingCard?.querySelector<HTMLSelectElement>("select");
+    expect(modelInput?.disabled).toBe(false);
+    expect(effortSelect?.disabled).toBe(false);
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      valueSetter?.call(modelInput, "worker-model-next");
+      modelInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(onAdvancedModelMappingChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      codex: expect.objectContaining({ subagentTarget: "worker-model-next" }),
+    }));
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      valueSetter?.call(effortSelect, "high");
+      effortSelect?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(onAdvancedModelMappingChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      enabled: true,
+      codex: expect.objectContaining({ subagentReasoningEffort: "high" }),
+    }));
 
     await act(async () => {
       root.unmount();

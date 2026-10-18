@@ -122,6 +122,12 @@ function waitingStatus(status: AgentTaskStatus): boolean {
   return status === "starting" || status === "running";
 }
 
+function isTurnNoLongerActive(task: AgentTaskRecord, turnNumber: number): boolean {
+  return task.status === "cancelled"
+    || task.status === "failed"
+    || task.turnNumber !== turnNumber;
+}
+
 export class AgentTaskManager {
   private readonly tasks = new Map<string, AgentTaskRecord>();
   private readonly terminalToTask = new Map<string, string>();
@@ -492,6 +498,16 @@ export class AgentTaskManager {
     if (!task) {
       return;
     }
+    if (event.reason === "turn_failed") {
+      this.failTurn(task, event.error);
+      return;
+    }
+    // A provider failure is terminal for the current turn. Ignore lifecycle
+    // records that were already in flight until the caller explicitly resumes
+    // the same session with continue().
+    if (task.status === "failed") {
+      return;
+    }
     if (
       event.activity === "busy"
       && (
@@ -572,6 +588,8 @@ export class AgentTaskManager {
   private async completeTurn(task: AgentTaskRecord): Promise<void> {
     const turnNumber = task.turnNumber;
     if (
+      isTurnNoLongerActive(task, turnNumber)
+      ||
       task.completedTurnNumber === turnNumber
       || task.completingTurnNumber === turnNumber
     ) {
@@ -589,7 +607,7 @@ export class AgentTaskManager {
             .catch(() => "");
         }
       }
-      if (task.status === "cancelled" || task.turnNumber !== turnNumber) {
+      if (isTurnNoLongerActive(task, turnNumber)) {
         return;
       }
       task.assistantText = assistantText;
@@ -607,6 +625,29 @@ export class AgentTaskManager {
         task.completingTurnNumber = undefined;
       }
     }
+  }
+
+  private failTurn(
+    task: AgentTaskRecord,
+    error: AgentBridgeError | undefined,
+  ): void {
+    if (task.status === "cancelled") {
+      return;
+    }
+    this.clearStartupTimers(task);
+    task.pendingInitialInput = null;
+    task.status = "failed";
+    task.assistantText = "";
+    task.question = null;
+    task.error = error ?? {
+      code: "provider_error",
+      message: "代理 CLI 报告当前回合失败。",
+      retryable: false,
+    };
+    task.busyTurnNumber = undefined;
+    task.interactiveResponseTurnNumber = undefined;
+    task.updatedAt = this.now();
+    this.notify(task);
   }
 
   private handleOutput(task: AgentTaskRecord, chunk: string): void {

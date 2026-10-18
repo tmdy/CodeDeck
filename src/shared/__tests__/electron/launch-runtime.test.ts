@@ -180,6 +180,20 @@ describe("launch-runtime", () => {
     expect(innerScript).not.toContain("$process.StandardInput.WriteLine($autoContinuePrompt)");
   });
 
+  it("removes inherited TERM for Codex in an external PowerShell terminal", () => {
+    const spec = buildWindowsExternalTerminalLaunchSpec(createPlan({ provider: "codex" }));
+    const innerScript = decodeInnerScript(spec);
+
+    expect(innerScript).toContain("$env:TERM = $null");
+  });
+
+  it("preserves inherited TERM for non-Codex external terminals", () => {
+    const spec = buildWindowsExternalTerminalLaunchSpec(createPlan({ provider: "claude" }));
+    const innerScript = decodeInnerScript(spec);
+
+    expect(innerScript).not.toContain("$env:TERM = $null");
+  });
+
   it("passes an agent prompt through a temporary environment variable instead of the TUI", () => {
     const envKey = "CODEDECK_AGENT_INITIAL_PROMPT_BASE64";
     const spec = buildWindowsPtyLaunchSpec(createPlan({

@@ -1209,6 +1209,38 @@ button.profile-group-heading:hover:not(:disabled),
   font-size: 0.86rem;
 }
 
+.profile-item.has-checkin-attention {
+  flex-wrap: wrap;
+  row-gap: 5px;
+}
+
+.profile-item-checkin-line {
+  flex: 0 0 100%;
+  min-width: 0;
+  padding-left: 22px;
+  text-align: left;
+}
+
+.profile-item-checkin {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.profile-item-checkin.danger {
+  background: var(--app-danger-bg);
+  color: var(--app-danger-text);
+}
+
+.profile-item-checkin.warning {
+  background: var(--app-warning-bg);
+  color: var(--app-warning-text);
+}
+
 .profile-item-health {
   flex: 0 0 auto;
   font-size: 0.7rem;
@@ -2102,14 +2134,38 @@ button.profile-group-heading:hover:not(:disabled),
 }
 
 .checkin-result {
-  display: flex;
-  align-items: center;
+  display: grid;
+  justify-items: start;
   gap: 6px;
-  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid currentColor;
+  overflow-wrap: anywhere;
+}
+
+.checkin-result.danger {
+  color: var(--app-danger-text);
+  background: var(--app-danger-bg);
+  border-color: color-mix(in srgb, var(--app-danger-text) 28%, transparent);
+}
+
+.checkin-result.warning {
+  color: var(--app-warning-text);
+  background: var(--app-warning-bg);
+  border-color: color-mix(in srgb, var(--app-warning-text) 28%, transparent);
+}
+
+.checkin-result-meta {
+  font-size: 0.72rem;
 }
 
 .checkin-result button {
   width: auto;
+}
+
+.checkin-result .secondary-button {
+  color: inherit;
+  border-color: currentColor;
 }
 
 .session-list {
@@ -3220,10 +3276,10 @@ button.skills-inline-status:hover:not(:disabled) {
 
 .terminal-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(240px, 30%) minmax(0, 1fr);
   align-items: start;
-  gap: 8px 14px;
-  padding: 10px 16px 8px;
+  gap: 6px 12px;
+  padding: 8px 12px 7px;
   border-bottom: 1px solid rgba(220, 230, 242, 0.1);
   background: rgba(9, 14, 21, 0.72);
   backdrop-filter: blur(12px);
@@ -3232,7 +3288,7 @@ button.skills-inline-status:hover:not(:disabled) {
 .terminal-header-main {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .terminal-header h1 {
@@ -3245,9 +3301,10 @@ button.skills-inline-status:hover:not(:disabled) {
 }
 
 .terminal-status,
+.terminal-schedule,
 .terminal-error {
   margin: 0;
-  font-size: 0.88rem;
+  font-size: 0.8rem;
   line-height: 1.35;
 }
 
@@ -3258,6 +3315,14 @@ button.skills-inline-status:hover:not(:disabled) {
   color: rgba(220, 230, 242, 0.72);
 }
 
+.terminal-schedule {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #eac28a;
+  font-variant-numeric: tabular-nums;
+}
+
 .terminal-error {
   color: #fca5a5;
 }
@@ -3265,24 +3330,24 @@ button.skills-inline-status:hover:not(:disabled) {
 .terminal-controls {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   align-items: flex-end;
   gap: 6px;
   min-width: 0;
-  max-width: min(68vw, 900px);
 }
 
 .terminal-control-field {
   display: grid;
   gap: 3px;
-  min-width: 74px;
+  min-width: 0;
+  flex: 0 0 auto;
   color: rgba(220, 230, 242, 0.72);
   font-size: 0.75rem;
 }
 
 .terminal-control-field input,
 .terminal-control-field select {
-  width: 82px;
+  width: 72px;
   min-height: 30px;
   border: 1px solid rgba(220, 230, 242, 0.18);
   border-radius: 6px;
@@ -3292,15 +3357,16 @@ button.skills-inline-status:hover:not(:disabled) {
 }
 
 .terminal-control-keywords {
-  flex: 1 1 250px;
+  flex: 1 1 140px;
 }
 
 .terminal-control-keywords input {
   width: 100%;
-  min-width: 220px;
+  min-width: 0;
 }
 
 .terminal-controls button {
+  flex: 0 0 auto;
   min-height: 30px;
   border-radius: 8px;
   padding: 0 12px;

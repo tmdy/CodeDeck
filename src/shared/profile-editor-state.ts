@@ -204,6 +204,7 @@ export function hasProfileDraftChanges(
       current.advancedModelMapping.claude?.reasoningEffort ||
       current.advancedModelMapping.codex?.subagentTarget ||
       current.advancedModelMapping.codex?.reasoningEffort ||
+      current.advancedModelMapping.codex?.subagentReasoningEffort ||
       current.cwd ||
       current.command_base ||
       current.settings_file ||
@@ -283,9 +284,12 @@ export function hasOnlyProfileDraftReasoningEffortChange(
   const baselineClaudeEffort = baseline.advancedModelMapping.claude?.reasoningEffort ?? "";
   const currentCodexEffort = current.advancedModelMapping.codex?.reasoningEffort ?? "";
   const baselineCodexEffort = baseline.advancedModelMapping.codex?.reasoningEffort ?? "";
+  const currentCodexSubagentEffort = current.advancedModelMapping.codex?.subagentReasoningEffort ?? "";
+  const baselineCodexSubagentEffort = baseline.advancedModelMapping.codex?.subagentReasoningEffort ?? "";
   if (
     currentClaudeEffort === baselineClaudeEffort
     && currentCodexEffort === baselineCodexEffort
+    && currentCodexSubagentEffort === baselineCodexSubagentEffort
   ) {
     return false;
   }
@@ -302,6 +306,7 @@ export function hasOnlyProfileDraftReasoningEffortChange(
         codex: {
           ...current.advancedModelMapping.codex,
           reasoningEffort: baselineCodexEffort,
+          subagentReasoningEffort: baselineCodexSubagentEffort,
         },
       },
     },
@@ -343,7 +348,8 @@ function advancedModelMappingsEqual(left: AdvancedModelMapping, right: AdvancedM
     && (left.claude?.subagentTarget ?? "") === (right.claude?.subagentTarget ?? "")
     && (left.claude?.reasoningEffort ?? "") === (right.claude?.reasoningEffort ?? "")
     && (left.codex?.subagentTarget ?? "") === (right.codex?.subagentTarget ?? "")
-    && (left.codex?.reasoningEffort ?? "") === (right.codex?.reasoningEffort ?? "");
+    && (left.codex?.reasoningEffort ?? "") === (right.codex?.reasoningEffort ?? "")
+    && (left.codex?.subagentReasoningEffort ?? "") === (right.codex?.subagentReasoningEffort ?? "");
 }
 
 function profilePermissionsEqual(left: ProfilePermissions | null, right: ProfilePermissions | null): boolean {
@@ -461,6 +467,7 @@ function cloneAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedModelM
     codex: {
       subagentTarget: value?.codex?.subagentTarget ?? legacyCodex?.commandLineModelOverride ?? "",
       reasoningEffort: normalizeCodexReasoningEffort(value?.codex?.reasoningEffort),
+      subagentReasoningEffort: normalizeCodexReasoningEffort(value?.codex?.subagentReasoningEffort),
     },
   };
 }

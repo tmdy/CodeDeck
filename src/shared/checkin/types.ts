@@ -16,6 +16,7 @@ export interface CheckinVerificationMetadata {
 export type CheckinVerificationResultStatus =
   | "success"
   | "already_checked"
+  | "login_required"
   | "canceled"
   | "timeout"
   | "account_mismatch"

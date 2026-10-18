@@ -236,6 +236,9 @@ export class LaunchService {
     codexModelProviderOverride?: string,
   ): LaunchExecutionPlan {
     const normalizedRuntime = normalizeRuntimeSettings(runtime, profile.provider);
+    const terminalMode = profile.provider === PROVIDER_CLAUDE
+      ? this.buildClaudeTerminalMode(terminalModeOverride ?? normalizedRuntime.terminal_mode)
+      : this.buildCodexTerminalMode(terminalModeOverride ?? normalizedRuntime.terminal_mode);
     const isNativeStartup = normalizedRuntime.startup_mode === "native";
     const normalizedSessionId = (sessionId ?? "").trim();
     const selectedModelId = resolveSelectedModelId(profile, normalizedRuntime);
@@ -278,6 +281,7 @@ export class LaunchService {
         runOverrides,
         disableCodexHooks,
         codexModelProviderOverride,
+        terminalMode === "monitored",
       );
     } else {
       const permissions = resolveEffectivePermissions({
@@ -305,6 +309,7 @@ export class LaunchService {
             permissions,
             disableCodexHooks,
             codexHomeOverride,
+            terminalMode === "monitored",
           );
     }
     const env = this.mergeInjectedEnv(artifacts.env, normalizedRuntime.extra_env);
@@ -315,9 +320,6 @@ export class LaunchService {
         }
       }
     }
-    const terminalMode = profile.provider === PROVIDER_CLAUDE
-      ? this.buildClaudeTerminalMode(terminalModeOverride ?? normalizedRuntime.terminal_mode)
-      : this.buildCodexTerminalMode(terminalModeOverride ?? normalizedRuntime.terminal_mode);
 
     return {
       valid: true,
@@ -352,6 +354,7 @@ export class LaunchService {
     runOverrides?: RunOverrides,
     disableCodexHooks = false,
     codexModelProviderOverride?: string,
+    monitored = false,
   ): ProviderLaunchArtifacts {
     const commandBase = normalizeCommandExecutable(
       runtime.command_base,
@@ -391,6 +394,7 @@ export class LaunchService {
       extraArgs: [
         extraArgs,
         reasoningEffort ? `-c model_reasoning_effort=${reasoningEffort}` : "",
+        ...this.buildCodexSubagentCliArgs(profile),
       ].filter(Boolean).join(" "),
       sessionId,
       baseUrl: "",
@@ -400,6 +404,7 @@ export class LaunchService {
         : codexModelProviderOverride?.trim() || "openai",
       trustedProjectPath: runtime.cwd,
       disableHooks: disableCodexHooks,
+      monitored,
     };
     return {
       commandExecutable: commandBase,
@@ -507,6 +512,7 @@ export class LaunchService {
     permissions: ProfilePermissions,
     disableCodexHooks = false,
     codexHomeOverride?: string,
+    monitored = false,
   ): ProviderLaunchArtifacts {
     const reasoningEffort = normalizeCodexReasoningEffort(profile.advancedModelMapping?.codex?.reasoningEffort);
     const profileKey = itemKey(profile);
@@ -521,6 +527,7 @@ export class LaunchService {
       `--profile ${JSON.stringify(siteProfileName)}`,
       ...this.buildCodexPermissionCliArgs(permissions),
       reasoningEffort ? `-c model_reasoning_effort=${reasoningEffort}` : "",
+      ...this.buildCodexSubagentCliArgs(profile),
     ].filter(Boolean).join(" ").trim();
     const commandBase = normalizeCommandExecutable(runtime.command_base, DEFAULT_CODEX_COMMAND);
     const codexSettings = this.getParameterSettings().cli_settings.codex;
@@ -534,6 +541,7 @@ export class LaunchService {
       wireApi,
       trustedProjectPath: runtime.cwd,
       disableHooks: disableCodexHooks,
+      monitored,
     };
     const commandArgs = buildCodexArgs(commandOptions);
     const command = buildCodexCommand(commandOptions);
@@ -580,6 +588,22 @@ export class LaunchService {
       `--sandbox ${JSON.stringify(codexPermissions.sandboxMode)}`,
       `--ask-for-approval ${JSON.stringify(codexPermissions.approvalPolicy)}`,
     ];
+  }
+
+  private buildCodexSubagentCliArgs(profile: Profile): string[] {
+    if (!profile.advancedModelMapping?.enabled) {
+      return [];
+    }
+    const subagentModel = profile.advancedModelMapping.codex?.subagentTarget?.trim() ?? "";
+    const subagentReasoningEffort = normalizeCodexReasoningEffort(
+      profile.advancedModelMapping.codex?.subagentReasoningEffort,
+    );
+    return [
+      subagentModel ? `-c agents.default_subagent_model=${subagentModel}` : "",
+      subagentReasoningEffort
+        ? `-c agents.default_subagent_reasoning_effort=${subagentReasoningEffort}`
+        : "",
+    ].filter(Boolean);
   }
 
   private buildClaudeSettingsWritePlan(profileKey: string, permissions: ProfilePermissions): ClaudeSettingsWritePlan | undefined {

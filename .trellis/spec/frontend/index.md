@@ -22,8 +22,9 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
 | [Codex Log Maintenance](./codex-log-maintenance.md) | SQLite backup, trigger, and WAL verification contract | Active |
 | [Management Authentication](./management-auth-contract.md) | Explicit backend-account auth and check-in nonce contract | Active |
-| [Session Discovery](./session-discovery-contract.md) | Codex sub-agent classification, request caching, and catalog pagination contract | Active |
-| [Persistent Agent Bridge](./agent-bridge-contract.md) | Parent-bound delegation, scoped capabilities, automatic return, and interrupt contract | Active |
+| [Provider Check-in](./checkin-provider-contract.md) | AnyRouter action proof, bounded manual recovery, and account-scoped failure feedback | Active |
+| [Session Discovery](./session-discovery-contract.md) | Codex 子代理分类、有限容量页缓存、索引与分页契约 | Active |
+| [Persistent Agent Bridge](./agent-bridge-contract.md) | 父会话绑定、能力边界、自动回传、中断及终端输出/资源回收契约 | Active |
 | [Profile Health Monitoring](./profile-health-contract.md) | Hidden real-CLI probes, bounded journey checkpoints, passive lifecycle signals, and saved-target gating | Active |
 | [Custom Balance and Check-in Compatibility](./custom-compatibility-contract.md) | Opt-in declarative rules, exact-origin credential forwarding, account partitions, page selectors, and CAPTCHA handoff | Active |
 

@@ -49,6 +49,7 @@ export interface ClaudeAdvancedModelMapping {
 export interface CodexAdvancedModelMapping {
   subagentTarget?: string;
   reasoningEffort?: CodexReasoningEffort | "";
+  subagentReasoningEffort?: CodexReasoningEffort | "";
 }
 
 export interface AdvancedModelMapping {
@@ -359,6 +360,7 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
   const aliasMode = resolveClaudeModelAliasMode(value);
   const claudeReasoningEffort = normalizeClaudeReasoningEffort(value.claude?.reasoningEffort);
   const codexReasoningEffort = normalizeCodexReasoningEffort(value.codex?.reasoningEffort);
+  const codexSubagentReasoningEffort = normalizeCodexReasoningEffort(value.codex?.subagentReasoningEffort);
   const claude = value.claude ? {
     aliasMode,
     ...(claudeReasoningEffort ? { reasoningEffort: claudeReasoningEffort } : {}),
@@ -374,6 +376,7 @@ function normalizeAdvancedModelMapping(value?: AdvancedModelMapping): AdvancedMo
       || legacyCodex?.commandLineModelOverride?.trim()
       || undefined,
     ...(codexReasoningEffort ? { reasoningEffort: codexReasoningEffort } : {}),
+    ...(codexSubagentReasoningEffort ? { subagentReasoningEffort: codexSubagentReasoningEffort } : {}),
   } : undefined;
 
   return {

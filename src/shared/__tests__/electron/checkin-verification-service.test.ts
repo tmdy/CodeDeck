@@ -98,6 +98,7 @@ class FakeWindow {
     this.visible = true;
   });
   readonly focus = vi.fn();
+  readonly setTitle = vi.fn();
   readonly loadURL = vi.fn(async (url: string) => {
     this.loadedUrl = url;
     this.onceHandlers.get("ready-to-show")?.();
@@ -222,6 +223,171 @@ describe("check-in verification helpers", () => {
 });
 
 describe("CheckinVerificationService", () => {
+  it("confirms AnyRouter only after an explicit retry using the same browser account", async () => {
+    const window = new FakeWindow();
+    const session = new FakeSession(async (input) => (
+      input.endsWith("/api/user/self")
+        ? jsonResponse({ success: true, data: { id: 42 } })
+        : input.endsWith("/api/user/sign_in")
+          ? jsonResponse({ success: true, message: "签到成功" })
+          : jsonErrorResponse({ success: false }, 404)
+    ));
+    let retry: (() => Promise<void>) | undefined;
+    const configureRecoveryAction = vi.fn((_window: BrowserWindow, action: () => Promise<void>) => { retry = action; });
+    const createSession = vi.fn(() => session.asElectronSession());
+    const service = new CheckinVerificationService({
+      createSession,
+      createWindow: () => window.asBrowserWindow(),
+      configureRecoveryAction,
+      timeoutMs: 2_000,
+      pollIntervalMs: 1,
+    });
+    const result = service.openVerification({
+      account: makeAccount({ base_url: "https://anyrouter.top", auth_kind: "browser_session", access_token: "" }),
+      browserSessionPartition: "persist:anyrouter-account",
+      managementRequestContext: {
+        fetch: session.fetch as typeof fetch,
+        headers: { "New-Api-User": "42" },
+        authMode: "browser_cookie",
+        userIdHeaderPolicy: "legacy_if_required",
+      },
+      trigger: "manual",
+      runId: "anyrouter-verify",
+    });
+    await vi.waitFor(() => expect(configureRecoveryAction).toHaveBeenCalledOnce());
+    expect(session.fetch).not.toHaveBeenCalled();
+    expect(window.executedScripts).toEqual([]);
+    expect(window.loadedUrl).toBe("https://anyrouter.top/console/topup");
+    await retry?.();
+    await expect(result).resolves.toMatchObject({ status: "success", endpoint: "https://anyrouter.top/api/user/sign_in" });
+    expect(createSession).toHaveBeenCalledWith("persist:anyrouter-account");
+    expect(session.fetch.mock.calls.map(([input]) => input)).toEqual([
+      "https://anyrouter.top/api/user/self", "https://anyrouter.top/api/user/sign_in",
+    ]);
+    expect(session.cookieWrites).toEqual([]);
+    expect(session.storageClears).toEqual([]);
+    expect(session.clearCache).not.toHaveBeenCalled();
+  });
+
+  it("keeps an AnyRouter challenge open and coalesces retry clicks without polling POST", async () => {
+    const window = new FakeWindow();
+    let finishAction!: (response: Response) => void;
+    const session = new FakeSession(async (input) => input.endsWith("/api/user/self")
+      ? jsonResponse({ success: true, data: { id: 42 } })
+      : new Promise<Response>((resolve) => { finishAction = resolve; }));
+    let retry!: () => Promise<void>;
+    const service = new CheckinVerificationService({
+      createSession: () => session.asElectronSession(),
+      createWindow: () => window.asBrowserWindow(),
+      configureRecoveryAction: (_window, action) => { retry = action; },
+      timeoutMs: 2_000,
+      pollIntervalMs: 1,
+    });
+    const result = service.openVerification({
+      account: makeAccount({ base_url: "https://anyrouter.top", auth_kind: "browser_session", access_token: "" }),
+      browserSessionPartition: "persist:anyrouter-account",
+      managementRequestContext: { fetch: session.fetch as typeof fetch, headers: { "New-Api-User": "42" }, authMode: "browser_cookie", userIdHeaderPolicy: "legacy_if_required" },
+      trigger: "manual", runId: "anyrouter-challenge",
+    });
+    await vi.waitFor(() => expect(retry).toBeTypeOf("function"));
+    const first = retry();
+    await retry();
+    await vi.waitFor(() => expect(finishAction).toBeTypeOf("function"));
+    expect(session.fetch).toHaveBeenCalledTimes(2);
+    finishAction(jsonResponse({ success: false, message: "Turnstile verification required" }));
+    await first;
+    expect(window.setTitle).toHaveBeenCalledWith(expect.stringContaining("仍需人工验证"));
+    expect(window.destroyed).toBe(false);
+    expect(session.fetch).toHaveBeenCalledTimes(2);
+    const second = retry();
+    await vi.waitFor(() => expect(session.fetch).toHaveBeenCalledTimes(4));
+    finishAction(jsonResponse({ success: false, message: "今日已签到" }));
+    await second;
+    await expect(result).resolves.toMatchObject({ status: "already_checked", success: true });
+  });
+
+  it.each(["html", "json"])("keeps an AnyRouter HTTP 403 %s challenge recoverable before identity confirmation", async (kind) => {
+    const window = new FakeWindow();
+    const session = new FakeSession(async () => kind === "html"
+      ? new Response("<html>Cloudflare challenge</html>", { status: 403, headers: { "Content-Type": "text/html" } })
+      : jsonErrorResponse({ success: false, message: "Turnstile verification required" }, 403));
+    let retry!: () => Promise<void>;
+    const service = new CheckinVerificationService({
+      createSession: () => session.asElectronSession(),
+      createWindow: () => window.asBrowserWindow(),
+      configureRecoveryAction: (_window, action) => { retry = action; },
+      timeoutMs: 2_000,
+    });
+    const result = service.openVerification({
+      account: makeAccount({ base_url: "https://anyrouter.top", auth_kind: "browser_session", access_token: "" }),
+      browserSessionPartition: "persist:anyrouter-account",
+      managementRequestContext: { fetch: session.fetch as typeof fetch, headers: { "New-Api-User": "42" }, authMode: "browser_cookie", userIdHeaderPolicy: "legacy_if_required" },
+      trigger: "manual", runId: "anyrouter-identity-challenge",
+    });
+    await vi.waitFor(() => expect(retry).toBeTypeOf("function"));
+    await retry();
+    const remainedOpen = !window.destroyed;
+    window.close();
+    const completed = await result;
+    expect(remainedOpen).toBe(true);
+    expect(window.setTitle).toHaveBeenCalledWith(expect.stringContaining("尚未确认账号"));
+    expect(session.fetch).toHaveBeenCalledTimes(1);
+    expect(completed).toMatchObject({ status: "canceled", success: false });
+  });
+
+  it.each([
+    [99, 200, "account_mismatch"],
+    [42, 401, "login_required"],
+  ])("refuses AnyRouter action for identity %s at HTTP %s", async (id, status, expected) => {
+    const window = new FakeWindow();
+    const session = new FakeSession(async () => jsonErrorResponse({ success: true, data: { id } }, status));
+    let retry!: () => Promise<void>;
+    const service = new CheckinVerificationService({
+      createSession: () => session.asElectronSession(),
+      createWindow: () => window.asBrowserWindow(),
+      configureRecoveryAction: (_window, action) => { retry = action; },
+      timeoutMs: 2_000,
+    });
+    const result = service.openVerification({
+      account: makeAccount({ base_url: "https://anyrouter.top", auth_kind: "browser_session", access_token: "" }),
+      browserSessionPartition: "persist:anyrouter-account",
+      managementRequestContext: { fetch: session.fetch as typeof fetch, headers: { "New-Api-User": "42" }, authMode: "browser_cookie", userIdHeaderPolicy: "legacy_if_required" },
+      trigger: "manual", runId: "anyrouter-identity",
+    });
+    await vi.waitFor(() => expect(retry).toBeTypeOf("function"));
+    await retry();
+    await expect(result).resolves.toMatchObject({ status: expected, success: false });
+    expect(session.fetch).toHaveBeenCalledTimes(1);
+    expect(session.fetch.mock.calls[0][0]).toBe("https://anyrouter.top/api/user/self");
+  });
+
+  it("does not submit AnyRouter check-in after the user closes a pending identity check", async () => {
+    const window = new FakeWindow();
+    let finishIdentity!: (response: Response) => void;
+    const session = new FakeSession(() => new Promise<Response>((resolve) => { finishIdentity = resolve; }));
+    let retry!: () => Promise<void>;
+    const service = new CheckinVerificationService({
+      createSession: () => session.asElectronSession(),
+      createWindow: () => window.asBrowserWindow(),
+      configureRecoveryAction: (_window, action) => { retry = action; },
+      timeoutMs: 2_000,
+    });
+    const result = service.openVerification({
+      account: makeAccount({ base_url: "https://anyrouter.top", auth_kind: "browser_session", access_token: "" }),
+      browserSessionPartition: "persist:anyrouter-account",
+      managementRequestContext: { fetch: session.fetch as typeof fetch, headers: { "New-Api-User": "42" }, authMode: "browser_cookie", userIdHeaderPolicy: "legacy_if_required" },
+      trigger: "manual", runId: "anyrouter-close",
+    });
+    await vi.waitFor(() => expect(retry).toBeTypeOf("function"));
+    const pending = retry();
+    window.close();
+    await expect(result).resolves.toMatchObject({ status: "canceled", success: false });
+    finishIdentity(jsonResponse({ success: true, data: { id: 42 } }));
+    await pending;
+    expect(session.fetch).toHaveBeenCalledTimes(1);
+    expect(session.storageClears).toEqual([]);
+  });
+
   it("uses an isolated memory partition, injects the matching cookie, and cleans up on success", async () => {
     const sessions: FakeSession[] = [];
     const windows: FakeWindow[] = [];

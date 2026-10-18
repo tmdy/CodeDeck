@@ -15,6 +15,7 @@ export interface CodexCommandOptions {
   wireApi?: string;
   trustedProjectPath?: string;
   disableHooks?: boolean;
+  monitored?: boolean;
 }
 
 function buildTrustedProjectOverride(projectPath: string): string {
@@ -60,6 +61,11 @@ export function buildCodexArgs(options: CodexCommandOptions): string[] {
   }
   if (options.trustedProjectPath) {
     parts.push("-c", buildTrustedProjectOverride(options.trustedProjectPath));
+  }
+  if (options.monitored) {
+    // TOML literal strings survive Windows cmd.exe / npm .cmd forwarding.
+    // Embedded double quotes are escaped again by that chain and become key text.
+    parts.push("-c", "tui.terminal_title=['thread-id']");
   }
   if (options.disableHooks === true) {
     parts.push("--disable", "hooks");

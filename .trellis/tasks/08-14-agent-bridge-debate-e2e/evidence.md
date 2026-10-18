@@ -106,3 +106,87 @@ Skill 覆盖完整桥接命令、模型与思考程度单次覆盖、A→B 单�
 | 最终终端输出 | `FOUND` |
 
 验证结果：Skill 源路径与 Junction 发现路径均通过 `quick_validate.py`；`npm run typecheck` 通过；Vitest 共 `93` 个文件、`910` 个测试通过。
+
+## 第三次实测：新构建包与 gpt-5.6-terra 基础 E2E
+
+测试时间：2026-09-02 20:14-20:19（Asia/Shanghai）
+
+本次按用户授权停止了原 `release/win-unpacked/CodeDeck.exe` 的全部进程，保留独立 Codex 进程。标准 `npm run dist:win:dir` 在清理旧 `release/win-unpacked` 时因目录锁返回 `EBUSY`；TypeScript、Vite、Electron 编译均已通过。为完成直接重建，使用同一源码将目录包输出到 `release/win-unpacked-new/win-unpacked`，随后从该新包启动 CodeDeck。未删除或覆盖被锁定的旧目录。
+
+| 字段 | 结果 |
+| --- | --- |
+| 新包 | `D:/CodeDeck/release/win-unpacked-new/win-unpacked/CodeDeck.exe` |
+| 新包主进程 | PID `73532`（子进程为 `7612`、`24472`、`41284`） |
+| CLI | `D:/CodeDeck/release/win-unpacked-new/win-unpacked/codedeck-agent.cmd` |
+| Profile | `codex::星辰·AI` |
+| 保存模型 | `gpt-5.6-sol`（未修改） |
+| 本次覆盖 | `gpt-5.6-terra` / `low` |
+| cwd | `D:/CodeDeck` |
+| Bridge | 本机 authenticated named pipe，`profiles` 返回 `ok=true`，容量 `0/4` |
+
+### P2/P3：最小调用与监控
+
+首轮 session：`cf357999-782c-4117-a6ce-baa72702f8b5`
+
+初始 `run` 使用 `--wait-ms 0` 返回 `status=running`、空 `assistant_text`，没有被误判为失败；约 3 秒后 `status=completed`。结构化结果为：
+
+```text
+assistant_text:
+BRIDGE_TERRA_CANARY_OK
+D:\CodeDeck
+error: null
+delivery_status: not_requested
+```
+
+终端尾部同时显示 `model: gpt-5.6-terra low`、`directory: D:\CodeDeck`，与请求模型、思考程度和工作目录一致。初始输入提示没有被当作当前轮完成。
+
+### P4：同一 session 续接
+
+对同一 session 执行 `continue`，返回仍为 `cf357999-782c-4117-a6ce-baa72702f8b5`，随后 `completed`，没有创建替代 session：
+
+```text
+assistant_text:
+BRIDGE_TERRA_CONTINUE_OK
+BRIDGE_TERRA_CANARY_OK
+error: null
+delivery_status: not_requested
+```
+
+第二轮引用第一轮标记，证明上下文保持；终端仍显示 `gpt-5.6-terra low · D:\CodeDeck`。
+
+### P6：空闲中断边界
+
+对已经 `completed` 的同一 session 执行 `interrupt`，返回：
+
+```json
+{
+  "code": "session_idle",
+  "message": "代理会话当前没有可中断的运行轮次。",
+  "retryable": false
+}
+```
+
+没有伪称中断成功，也没有销毁 session。
+
+### P8/P3：Provider 失败收敛与不自动重试
+
+失败测试 session：`3764c851-4962-4970-ba6b-884de326476b`
+
+使用不存在的模型 `gpt-5.6-luna-invalid-for-test` 仅验证失败状态，不把它作为模型可用性结论。初始 `run --wait-ms 0` 返回 `running`；约 85 秒后状态收敛为：
+
+```text
+status: failed
+error.code: provider_error
+error.retryable: true
+error.message: unexpected status 503 Service Unavailable: No available channel for model gpt-5.6-luna-invalid-for-test under group codex测试 (distributor), url: https://frapi.centos.hk/v1/responses
+assistant_text: ""
+delivery_status: not_requested
+```
+
+失败后等待 5 秒再次 `status`，仍是同一 session 的 `failed/provider_error`，没有自动重发、换模型或创建替代 session。`retryable=true` 只作为人工重试提示，未被当作授权。
+
+### 本次结论
+
+- Bridge 传输、Profile 调用、`gpt-5.6-terra/low` 覆盖、首轮完成、同 session 续接、空闲中断边界和 Provider 失败状态收敛：通过。
+- `gpt-5.6-luna` 本次未作为有效模型使用；用户已明确渠道没有 Luna，实际成功验证的是 `gpt-5.6-terra`。不能把 Terra 的成功写成 Luna 成功。
+- 本次只完成最小两轮会话验证，未重新执行 A→B 五阶段正式辩论，因此原 PRD 中五阶段和完整连续回传验收仍保持未完成。

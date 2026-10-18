@@ -4,6 +4,8 @@ import type {
   Session,
 } from "electron";
 import type { SiteBalanceSession } from "../balance/site-balance-sessions.js";
+import { ANYROUTER_CHECKIN_ENDPOINT, ANYROUTER_CHECKIN_PAGE_URL, isAnyRouterBaseUrl } from "../checkin/anyrouter.js";
+import { CheckinService } from "../services/checkin-service.js";
 import type {
   CustomCheckinRule,
   CustomDomElement,
@@ -56,6 +58,7 @@ export interface OpenCheckinVerificationOptions {
 export interface CheckinVerificationServiceDependencies {
   createSession: (partition: string) => Session;
   createWindow: (options: BrowserWindowConstructorOptions) => BrowserWindow;
+  configureRecoveryAction?: (window: BrowserWindow, retry: () => Promise<void>) => void;
   getParentWindow?: () => BrowserWindow | null;
   windowIcon?: string;
   timeoutMs?: number;
@@ -76,6 +79,7 @@ interface VerificationTask {
   timeoutTimer?: ReturnType<typeof setTimeout>;
   pollTimer?: ReturnType<typeof setTimeout>;
   identityVerified: boolean;
+  retryRunning?: boolean;
   cookieMode?: CheckinVerificationCookieMode;
   startupStage?: "session_setup" | "credential_probe" | "window_create" | "page_load";
   failureCategory?: string;
@@ -196,6 +200,17 @@ export class CheckinVerificationService {
   private async startTask(task: VerificationTask): Promise<void> {
     const { account } = task.options;
     try {
+      const anyRouter = usesAnyRouterAction(task.options);
+      if (anyRouter && (!task.options.browserSessionPartition || !task.options.managementRequestContext || account.auth_kind !== "browser_session")) {
+        await this.completeTask(task, {
+          status: "login_required",
+          success: false,
+          message: "AnyRouter 签到需要浏览器登录，请重新登录该后台账号",
+          endpoint: ANYROUTER_CHECKIN_ENDPOINT,
+          error_code: "auth_not_logged_in",
+        });
+        return;
+      }
       task.startupStage = "session_setup";
       const partition = task.options.browserSessionPartition
         ?? `checkin-verification-${this.randomId()}`;
@@ -276,12 +291,12 @@ export class CheckinVerificationService {
       await browserWindow.loadURL(
         customPageRule?.page_url
           ?? customApiRule?.page_url
-          ?? buildManualUrl(account.base_url),
+          ?? (anyRouter ? ANYROUTER_CHECKIN_PAGE_URL : buildManualUrl(account.base_url)),
       );
       if (task.finished) {
         return;
       }
-      if (!customApiRule) {
+      if (!customApiRule && !anyRouter) {
         await browserWindow.webContents.executeJavaScript(
           customPageRule
             ? buildConfiguredCheckinTriggerScript(customPageRule.action_selector ?? "")
@@ -301,7 +316,12 @@ export class CheckinVerificationService {
         task,
         selection.candidate.mode,
       );
-      void this.pollTask(task, selection.candidate.mode);
+      if (anyRouter) {
+        if (!this.dependencies.configureRecoveryAction) throw new Error("Missing check-in recovery action");
+        this.dependencies.configureRecoveryAction(browserWindow, () => this.retryAnyRouterTask(task));
+      } else {
+        void this.pollTask(task, selection.candidate.mode);
+      }
     } catch {
       const failureCategory = `${task.startupStage ?? "startup"}_failed`;
       task.failureCategory = failureCategory;
@@ -314,6 +334,65 @@ export class CheckinVerificationService {
           endpoint: verificationEndpoint(task.options),
         error_code: "access_token_invalid",
       });
+    }
+  }
+
+  private async retryAnyRouterTask(task: VerificationTask): Promise<void> {
+    const { account, managementRequestContext } = task.options;
+    if (task.finished || task.retryRunning || !task.session || !managementRequestContext) return;
+    task.retryRunning = true;
+    try {
+      const identity = await fetchJson(task.session, new URL("/api/user/self", account.base_url).href, undefined, managementRequestContext);
+      if (task.finished) return;
+      const userId = identity.status >= 200 && identity.status < 300
+        ? extractVerificationUserId(identity.payload)
+        : null;
+      if (!userId) {
+        if (isCredentialRejected(identity)) {
+          await this.completeTask(task, {
+            status: "login_required", success: false,
+            message: "AnyRouter 登录状态已失效，请重新登录该后台账号",
+            endpoint: ANYROUTER_CHECKIN_ENDPOINT, error_code: "auth_not_logged_in",
+          });
+        } else {
+          task.window?.setTitle("尚未确认账号，请完成页面验证后点击“验证完成并重试”");
+        }
+        return;
+      }
+      if (userId !== account.user_id) {
+        await this.completeTask(task, {
+          status: "account_mismatch", success: false,
+          message: "验证窗口登录的账号与目标后台账号不一致",
+          endpoint: ANYROUTER_CHECKIN_ENDPOINT, error_code: "user_id_mismatch",
+        });
+        return;
+      }
+      task.identityVerified = true;
+      this.emitDiagnostic("verification_identity_verified", task, "matched");
+      const result = await new CheckinService().checkin(account, 12_000, {
+        runId: task.options.runId,
+        trigger: task.options.trigger,
+        managementRequestContext,
+      });
+      if (task.finished) return;
+      if (result.status === "manual_required") {
+        task.window?.setTitle("仍需人工验证，请完成页面验证后点击“验证完成并重试”");
+        return;
+      }
+      await this.completeTask(task, {
+        ...result,
+        status: result.status === "unsupported" ? "failed" : result.status,
+      });
+    } catch {
+      if (!task.finished) {
+        await this.completeTask(task, {
+          status: "failed", success: false,
+          message: "未能确认签到结果，可重新打开验证窗口后重试",
+          endpoint: ANYROUTER_CHECKIN_ENDPOINT, error_code: "network_error",
+        });
+      }
+    } finally {
+      task.retryRunning = false;
     }
   }
 
@@ -1190,7 +1269,11 @@ function localDateKey(date: Date): string {
 function verificationEndpoint(options: OpenCheckinVerificationOptions): string {
   return options.customApiRule?.target_url
     ?? options.customPageRule?.target_url
-    ?? buildStatusEndpoint(options.account.base_url);
+    ?? (usesAnyRouterAction(options) ? ANYROUTER_CHECKIN_ENDPOINT : buildStatusEndpoint(options.account.base_url));
+}
+
+function usesAnyRouterAction(options: OpenCheckinVerificationOptions): boolean {
+  return !options.customApiRule && !options.customPageRule && isAnyRouterBaseUrl(options.account.base_url);
 }
 
 function canceledResult(endpoint: string): CheckinVerificationResult {

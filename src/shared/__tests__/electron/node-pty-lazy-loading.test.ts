@@ -40,6 +40,7 @@ describe("Electron main node-pty loading", () => {
     const launchAgentTaskBlock = source.slice(launchAgentTaskStart, launchAgentTaskEnd);
     expect(launchAgentTaskBlock).toContain("expectedPreview: options.initialPrompt");
     expect(launchAgentTaskBlock).toContain("disable_codex_hooks: true");
+    expect(launchAgentTaskBlock).toContain("codexAutoContinue: undefined");
 
     const monitoredLaunchStart = source.indexOf("async function launchMonitoredTerminalSession");
     const monitoredLaunchEnd = source.indexOf("async function prepareCapabilityOverlay", monitoredLaunchStart);

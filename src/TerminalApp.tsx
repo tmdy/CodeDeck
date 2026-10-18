@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -68,10 +68,52 @@ function describeStatus(snapshot: TerminalSessionSnapshot | null): string {
   return `${snapshot.commandExecutable} 运行中，PID ${snapshot.pid}；${activity}；${autoContinue}`;
 }
 
-function describeCodexActiveWriter(snapshot: TerminalSessionSnapshot | null): string | null {
+const CODEX_WRITER_CONFLICT = /already has an active writer|failed to open thread writer lock/i;
+
+function AutoContinueScheduleStatus({ snapshot }: { snapshot: TerminalSessionSnapshot | null }) {
+  const schedule = snapshot?.autoContinueSchedule;
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (schedule?.phase !== "waiting") {
+      return;
+    }
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [schedule?.queuedAtMs, schedule?.dueAtMs, schedule?.phase]);
+
+  let text = "未安排自动继续";
+  if (snapshot) {
+    if (schedule?.phase === "send_failed") {
+      text = `自动继续输入失败：${schedule.error || "写入终端失败"}；当前未安排重试`;
+    } else if (schedule?.phase === "waiting_for_renderer") {
+      text = `本次等待 ${formatIntervalSeconds(schedule.delayMs)} 秒 · 已到时间，等待终端连接后输入`;
+    } else if (schedule) {
+      const due = new Date(schedule.dueAtMs);
+      const time = due.toDateString() === new Date(now).toDateString()
+        ? due.toLocaleTimeString("zh-CN", { hour12: false })
+        : due.toLocaleString("zh-CN", { hour12: false });
+      const seconds = Math.max(0, Math.ceil((schedule.dueAtMs - now) / 1_000));
+      text = `本次等待 ${formatIntervalSeconds(schedule.delayMs)} 秒 · ${time} 输入 · ${seconds > 0 ? `还剩 ${seconds} 秒` : "已到时间，等待发送确认"}`;
+    } else if (snapshot.status !== "running") {
+      text += "（终端已停止）";
+    } else if (!snapshot.autoContinue.enabled) {
+      text += "（已关闭）";
+    } else if (snapshot.autoContinue.paused) {
+      text += "（已暂停）";
+    } else if (snapshot.autoContinue.remaining === 0) {
+      text += "（累计上限已用完）";
+    } else {
+      text += "；等待符合设置的可重试失败";
+    }
+  }
+  return <p className="terminal-schedule" title={text}>{text}</p>;
+}
+
+function describeCodexActiveWriter(snapshot: TerminalSessionSnapshot | null, detected: boolean): string | null {
   if (
     snapshot?.provider !== "codex"
-    || !/already has an active writer|failed to open thread writer lock/i.test(snapshot.output)
+    || !detected
   ) {
     return null;
   }
@@ -83,7 +125,9 @@ export default function TerminalApp() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const [snapshot, setSnapshot] = useState<TerminalSessionSnapshot | null>(null);
+  const [writerConflict, setWriterConflict] = useState(false);
   const [status, setStatus] = useState("正在连接终端...");
   const [error, setError] = useState<string | null>(null);
   const [controlError, setControlError] = useState<string | null>(null);
@@ -94,6 +138,21 @@ export default function TerminalApp() {
   const [draftIntervalMode, setDraftIntervalMode] = useState<TerminalAutoContinueIntervalMode>("fixed");
   const [draftIntervalSeconds, setDraftIntervalSeconds] = useState("0");
   const [draftIntervalStdDevSeconds, setDraftIntervalStdDevSeconds] = useState("1");
+
+  const resizeTerminal = useCallback(() => {
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!terminal || !fitAddon) {
+      return;
+    }
+    fitAddon.fit();
+    const { cols, rows } = terminal;
+    if (lastSizeRef.current?.cols === cols && lastSizeRef.current.rows === rows) {
+      return;
+    }
+    lastSizeRef.current = { cols, rows };
+    void window.terminalManager?.resizeSession(sessionId, cols, rows);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -123,6 +182,19 @@ export default function TerminalApp() {
     terminalRef.current = terminal;
     fitAddonRef.current = fitAddon;
     const terminalContainer = containerRef.current;
+    let disposed = false;
+    let outputTail = "";
+    const receiveSnapshot = (next: TerminalSessionSnapshot) => {
+      if (disposed || next.sessionId !== sessionId) {
+        return;
+      }
+      if (CODEX_WRITER_CONFLICT.test(next.output)) {
+        setWriterConflict(true);
+      }
+      // xterm owns visible history; React state only needs terminal metadata.
+      setSnapshot({ ...next, output: "" });
+      setStatus(describeStatus(next));
+    };
 
     const sendInput = (data: string) => {
       if (!data) {
@@ -171,24 +243,18 @@ export default function TerminalApp() {
       return true;
     });
 
-    const sendResize = () => {
-      fitAddon.fit();
-      void window.terminalManager?.resizeSession(sessionId, terminal.cols, terminal.rows);
-    };
-
     const unsubscribeOutput = window.terminalManager.onOutput((incomingSessionId, chunk) => {
-      if (incomingSessionId !== sessionId) {
+      if (disposed || incomingSessionId !== sessionId) {
         return;
       }
       terminal.write(chunk);
-    });
-    const unsubscribeStatus = window.terminalManager.onStatus((snapshot) => {
-      if (snapshot.sessionId !== sessionId) {
-        return;
+      const candidate = outputTail + chunk;
+      if (CODEX_WRITER_CONFLICT.test(candidate)) {
+        setWriterConflict(true);
       }
-      setSnapshot(snapshot);
-      setStatus(describeStatus(snapshot));
+      outputTail = candidate.slice(-128);
     });
+    const unsubscribeStatus = window.terminalManager.onStatus(receiveSnapshot);
     const disposeInput = terminal.onData((data) => {
       if (shouldHandleTerminalTextPasteData(data)) {
         void pasteClipboardText();
@@ -203,29 +269,35 @@ export default function TerminalApp() {
       pasteText(event.clipboardData?.getData("text/plain") ?? "");
     };
     terminalContainer.addEventListener("paste", handlePaste, true);
-    window.addEventListener("resize", sendResize);
+    window.addEventListener("resize", resizeTerminal);
 
     void window.terminalManager.attachSession(sessionId)
       .then((snapshot) => {
-        setSnapshot(snapshot);
-        setStatus(describeStatus(snapshot));
-        sendResize();
+        if (disposed) {
+          return;
+        }
+        receiveSnapshot(snapshot);
+        resizeTerminal();
       })
       .catch((attachError) => {
-        setError(attachError instanceof Error ? attachError.message : "终端连接失败");
+        if (!disposed) {
+          setError(attachError instanceof Error ? attachError.message : "终端连接失败");
+        }
       });
 
     return () => {
+      disposed = true;
       unsubscribeOutput();
       unsubscribeStatus();
       disposeInput.dispose();
       terminalContainer.removeEventListener("paste", handlePaste, true);
-      window.removeEventListener("resize", sendResize);
+      window.removeEventListener("resize", resizeTerminal);
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      lastSizeRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, resizeTerminal]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -278,27 +350,21 @@ export default function TerminalApp() {
   const headerTitle = snapshot
     ? buildTerminalHeaderTitle(snapshot.provider, snapshot.displayTitle)
     : "受监控终端";
-  const activeWriterMessage = describeCodexActiveWriter(snapshot);
+  const activeWriterMessage = describeCodexActiveWriter(snapshot, writerConflict);
   const controlsDisabled = !snapshot || snapshot.status !== "running";
   const pauseDisabled = controlsDisabled || !snapshot.autoContinue.enabled;
 
   useLayoutEffect(() => {
-    if (!sessionId || !snapshot || snapshot.status !== "running") {
+    if (!sessionId || snapshot?.status !== "running") {
       return;
     }
     const animationFrame = window.requestAnimationFrame(() => {
-      const terminal = terminalRef.current;
-      const fitAddon = fitAddonRef.current;
-      if (!terminal || !fitAddon) {
-        return;
-      }
-      fitAddon.fit();
-      void window.terminalManager?.resizeSession(sessionId, terminal.cols, terminal.rows);
+      resizeTerminal();
     });
     return () => {
       window.cancelAnimationFrame(animationFrame);
     };
-  }, [sessionId, snapshot, headerTitle, status, activeWriterMessage, controlError, error]);
+  }, [sessionId, snapshot?.status, headerTitle, status, activeWriterMessage, controlError, error, resizeTerminal]);
 
   return (
     <div className="terminal-shell">
@@ -306,6 +372,7 @@ export default function TerminalApp() {
         <div className="terminal-header-main">
           <h1>{headerTitle}</h1>
           <p className="terminal-status">{status}</p>
+          <AutoContinueScheduleStatus snapshot={snapshot} />
           {activeWriterMessage && <p className="terminal-error">{activeWriterMessage}</p>}
           {controlError && <p className="terminal-error">{controlError}</p>}
         </div>

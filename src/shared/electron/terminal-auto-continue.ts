@@ -296,6 +296,35 @@ export class TerminalAutoContinueController {
     return null;
   }
 
+  // Structured failure owns authorization for Codex. PTY prose is never sufficient.
+  processFailure(message: string): TerminalAutoContinueAction | null {
+    if (!this.enabled || this.paused || this.activeKeyword) {
+      return null;
+    }
+    const match = findKeywordMatch(message.toLowerCase(), this.keywords);
+    if (!match || (this.limit !== -1 && this.matchCount >= this.limit)) {
+      return null;
+    }
+    this.activeKeyword = match.keyword;
+    this.failureEpisodeId += 1;
+    this.matchCount += 1;
+    this.lastMatchedKeyword = match.keyword;
+    this.emitDiagnostic("matched", "keyword_match", match.keyword, message.slice(0, 240));
+    return {
+      input: `${this.prompt}\r`, keyword: match.keyword, matchCount: this.matchCount,
+      prompt: this.prompt, delayMs: this.sampleDelayMs(),
+    };
+  }
+
+  resetFailure(): void {
+    this.pendingTail = "";
+    this.pendingVisibleTail = "";
+    this.activeKeyword = null;
+    this.waitingForAutoRunProgress = false;
+    this.runProgressStartedAt = null;
+    this.lastFailureObservedAt = null;
+  }
+
   recordInput(
     input: string,
     options: { source?: TerminalAutoContinueInputSource } = {},

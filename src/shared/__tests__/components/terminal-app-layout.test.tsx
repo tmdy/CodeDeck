@@ -15,6 +15,7 @@ const loadAddonMock = vi.fn();
 const writeMock = vi.fn();
 const disposeMock = vi.fn();
 const onDataDisposeMock = vi.fn();
+const terminalSize = { cols: 120, rows: 36 };
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: vi.fn().mockImplementation(() => ({
@@ -24,8 +25,8 @@ vi.mock("@xterm/addon-fit", () => ({
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: vi.fn().mockImplementation(() => ({
-    cols: 120,
-    rows: 36,
+    get cols() { return terminalSize.cols; },
+    get rows() { return terminalSize.rows; },
     loadAddon: loadAddonMock,
     open: openMock,
     write: writeMock,
@@ -75,9 +76,68 @@ function createSnapshot(overrides: Partial<TerminalSessionSnapshot> = {}): Termi
 
 describe("TerminalApp layout", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
+    terminalSize.cols = 120;
+    terminalSize.rows = 36;
     delete window.terminalManager;
     window.history.replaceState(null, "", "/");
+  });
+
+  it("shows the actual queue and local countdown without refitting xterm or invoking IPC each second", async () => {
+    vi.useFakeTimers();
+    const now = Date.parse("2026-10-18T19:00:00+08:00");
+    vi.setSystemTime(now);
+    window.history.replaceState(null, "", "/?sessionId=session-1");
+    const base = createSnapshot();
+    const scheduled = createSnapshot({
+      autoContinue: { ...base.autoContinue, intervalMode: "normal", intervalMs: 10_000, intervalStdDevMs: 2_000 },
+      autoContinueSchedule: { queuedAtMs: now, dueAtMs: now + 7_645, delayMs: 7_645, phase: "waiting" },
+    });
+    let onStatus!: (snapshot: TerminalSessionSnapshot) => void;
+    const resizeSession = vi.fn().mockResolvedValue(undefined);
+    window.terminalManager = {
+      attachSession: vi.fn().mockResolvedValue(scheduled),
+      sendInput: vi.fn().mockResolvedValue(undefined), resizeSession,
+      updateAutoContinueConfig: vi.fn().mockResolvedValue(undefined), closeSession: vi.fn().mockResolvedValue(undefined),
+      readClipboardText: vi.fn().mockResolvedValue(""), writeClipboardText: vi.fn().mockResolvedValue(undefined),
+      onOutput: vi.fn(() => vi.fn()), onStatus: vi.fn((callback) => { onStatus = callback; return vi.fn(); }),
+    };
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => { callback(0); return 1; });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const { default: TerminalApp } = await import("../../../TerminalApp.js");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(<TerminalApp />); });
+    const text = () => container.querySelector(".terminal-schedule")?.textContent;
+    expect(text()).toContain("本次等待 7.645 秒");
+    expect(text()).toContain("还剩 8 秒");
+    expect(text()).toContain(new Date(now + 7_645).toLocaleTimeString("zh-CN", { hour12: false }));
+    const fits = fitMock.mock.calls.length;
+    const resizes = resizeSession.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(text()).toContain("还剩 7 秒");
+    expect(fitMock).toHaveBeenCalledTimes(fits);
+    expect(resizeSession).toHaveBeenCalledTimes(resizes);
+    expect(window.terminalManager.sendInput).not.toHaveBeenCalled();
+
+    await act(async () => onStatus({ ...scheduled, autoContinueSchedule: { ...scheduled.autoContinueSchedule!, phase: "waiting_for_renderer" } }));
+    expect(text()).toContain("等待终端连接后输入");
+    expect(text()).not.toContain("还剩");
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => onStatus({ ...base, autoContinue: { ...base.autoContinue, paused: true } }));
+    expect(text()).toBe("未安排自动继续（已暂停）");
+    await act(async () => onStatus(base));
+    expect(text()).toContain("未安排自动继续");
+    expect(text()).not.toContain("输入 ·");
+    await act(async () => onStatus({ ...scheduled, autoContinueSchedule: { ...scheduled.autoContinueSchedule!, phase: "send_failed", error: "pipe closed" } }));
+    expect(text()).toContain("输入失败：pipe closed");
+    await act(async () => onStatus(scheduled));
+    expect(vi.getTimerCount()).toBe(1);
+    await act(async () => root.unmount());
+    expect(vi.getTimerCount()).toBe(0);
+    container.remove();
   });
 
   it("applies runtime keywords and truncated-normal interval settings", async () => {
@@ -216,6 +276,7 @@ describe("TerminalApp layout", () => {
   it("refits the terminal after the resolved title changes header height", async () => {
     window.history.replaceState(null, "", "/?sessionId=session-1");
 
+    let onStatus!: (snapshot: TerminalSessionSnapshot) => void;
     const resizeSession = vi.fn().mockResolvedValue(undefined);
     window.terminalManager = {
       attachSession: vi.fn().mockResolvedValue(createSnapshot()),
@@ -226,7 +287,7 @@ describe("TerminalApp layout", () => {
       readClipboardText: vi.fn().mockResolvedValue(""),
       writeClipboardText: vi.fn().mockResolvedValue(undefined),
       onOutput: vi.fn(() => vi.fn()),
-      onStatus: vi.fn(() => vi.fn()),
+      onStatus: vi.fn((callback) => { onStatus = callback; return vi.fn(); }),
     };
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callback(0);
@@ -247,11 +308,58 @@ describe("TerminalApp layout", () => {
     });
 
     expect(fitMock.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(resizeSession.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(resizeSession).toHaveBeenCalledTimes(1);
+    const fitsBefore = fitMock.mock.calls.length;
+    await act(async () => onStatus(createSnapshot({ output: "更多输出" })));
+    expect(fitMock).toHaveBeenCalledTimes(fitsBefore);
+    expect(resizeSession).toHaveBeenCalledTimes(1);
+
+    terminalSize.rows = 35;
+    await act(async () => onStatus(createSnapshot({ displayTitle: "更新后的标题" })));
+    expect(fitMock).toHaveBeenCalledTimes(fitsBefore + 1);
+    expect(resizeSession).toHaveBeenLastCalledWith("session-1", 120, 35);
 
     await act(async () => {
       root.unmount();
     });
+    container.remove();
+  });
+
+  it("detects a split writer conflict from output without needing a status event", async () => {
+    window.history.replaceState(null, "", "/?sessionId=session-1");
+    let onOutput!: (sessionId: string, chunk: string) => void;
+    const unsubscribeOutput = vi.fn();
+    const unsubscribeStatus = vi.fn();
+    window.terminalManager = {
+      attachSession: vi.fn().mockResolvedValue(createSnapshot()),
+      sendInput: vi.fn().mockResolvedValue(undefined),
+      resizeSession: vi.fn().mockResolvedValue(undefined),
+      updateAutoContinueConfig: vi.fn().mockResolvedValue(undefined),
+      closeSession: vi.fn().mockResolvedValue(undefined),
+      readClipboardText: vi.fn().mockResolvedValue(""),
+      writeClipboardText: vi.fn().mockResolvedValue(undefined),
+      onOutput: vi.fn((callback) => { onOutput = callback; return unsubscribeOutput; }),
+      onStatus: vi.fn(() => unsubscribeStatus),
+    };
+    const { default: TerminalApp } = await import("../../../TerminalApp.js");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(<TerminalApp />); });
+    await act(async () => onOutput("another-session", "already has an active writer"));
+    expect(container.textContent).not.toContain("当前由另一个客户端持有写锁");
+    await act(async () => {
+      onOutput("session-1", "Error: already has an");
+      onOutput("session-1", " active writer");
+    });
+    expect(container.textContent).toContain("当前由另一个客户端持有写锁");
+    expect(writeMock).toHaveBeenCalledWith("Error: already has an");
+    expect(writeMock).toHaveBeenCalledWith(" active writer");
+    await act(async () => root.unmount());
+    expect(unsubscribeOutput).toHaveBeenCalledOnce();
+    expect(unsubscribeStatus).toHaveBeenCalledOnce();
+    expect(onDataDisposeMock).toHaveBeenCalledOnce();
+    expect(disposeMock).toHaveBeenCalledOnce();
     container.remove();
   });
 });

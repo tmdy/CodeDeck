@@ -1,0 +1,6171 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-10T18:20:56.414Z",
+  "notes": [
+    "No forced GC. Logical retained characters and OS memory are separate metrics.",
+    "Electron memory fields are KiB. CIM and V8 fields are bytes. Working set sums may duplicate shared pages.",
+    "CIM transfer counters include pipe/network I/O; they are not disk-only measurements. One-second sampling can miss short-lived helpers.",
+    "Browser=Main, Tab=Renderer, GPU/Utility=application auxiliary processes. External fixture CLIs and ConPTY support stay separate.",
+    "Node active-resource counts include the benchmark's own timer and stdio. They do not count Chromium timers or all JS listeners.",
+    "Intermediate after-electron runs precede the final native-worker cleanup correction. Use after-final-electron runs for acceptance."
+  ],
+  "pairedActiveStream": {
+    "before": {
+      "elapsedMs": {
+        "count": 3,
+        "min": 18926.411,
+        "p50": 18955.5802,
+        "p95": 18985.160099999997,
+        "max": 18985.160099999997
+      },
+      "cpuMs": {
+        "count": 3,
+        "min": 17657,
+        "p50": 18219,
+        "p95": 18453,
+        "max": 18453
+      },
+      "identicalOutput": true
+    },
+    "after": {
+      "elapsedMs": {
+        "count": 3,
+        "min": 18355.0118,
+        "p50": 18426.2805,
+        "p95": 18451.7306,
+        "max": 18451.7306
+      },
+      "cpuMs": {
+        "count": 3,
+        "min": 17702,
+        "p50": 17859,
+        "p95": 17985,
+        "max": 17985
+      },
+      "identicalOutput": true
+    }
+  },
+  "existingReadOnly": {
+    "measuredAt": "2026-10-10T17:40:33.060Z",
+    "indexBytes": 163171,
+    "sessionList": {
+      "requested": 50,
+      "returned": 50,
+      "detail": "summary",
+      "hideSubagents": true,
+      "timesMs": [
+        160.59980000000002,
+        137.7117,
+        134.71610000000004,
+        130.48329999999999,
+        133.02249999999992,
+        128.93309999999997,
+        126.76700000000005,
+        129.84410000000003,
+        124.35290000000009,
+        126.01930000000016,
+        133.36840000000007,
+        130.30790000000002,
+        131.85820000000012,
+        130.69690000000014,
+        128.31809999999996,
+        128.47029999999995,
+        128.0002999999997,
+        125.73030000000017,
+        126.28719999999976,
+        125.95460000000003
+      ],
+      "coldMs": 160.59980000000002,
+      "warm": {
+        "count": 19,
+        "p50Ms": 128.93309999999997,
+        "p95Ms": 137.7117,
+        "maxMs": 137.7117
+      }
+    },
+    "historicalLogs": {
+      "bytes": 28114468,
+      "records": 71793,
+      "firstTime": "2026-10-09T05:44:19.006Z",
+      "lastTime": "2026-10-10T17:31:51.915Z",
+      "autoContinueSkipped": 46917,
+      "timings": {
+        "session:list": {
+          "count": 94,
+          "p50Ms": 345,
+          "p95Ms": 5672,
+          "maxMs": 13402
+        },
+        "profile:bind-site-balance-session": {
+          "count": 5,
+          "p50Ms": 147,
+          "p95Ms": 171,
+          "maxMs": 171
+        }
+      }
+    }
+  },
+  "runs": {
+    "after-final-core.json": {
+      "measuredAt": "2026-10-10T18:16:45.277Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.ts": "912ec4ebf5f43262fd2bd7079062270a75b14ca6085b93e22d4dfc32ac89f7aa",
+        "src/shared/electron/terminal-output-buffer.ts": "8b92ade0caed7e133a684a68dad5eea5eeab35412bf1cb17718bfbf677fd12ef",
+        "src/shared/electron/session-list-cache.ts": "79b9d90e61ca13b4bf921864a4b3492a76e8fa7c27610089c58f2154f3fe2038",
+        "src/shared/services/session-service.ts": "cc72334d7ff05c09fa17dec0ea10332d10b2af69bbc9ca3a048faca7ecdf20c2",
+        "src/TerminalApp.tsx": "828f9420ae369122661374e03cdbcaf90411f67c1de5479fca5b1857006c3e2c"
+      },
+      "compiledBuild": null,
+      "forcedGc": false,
+      "trials": 3,
+      "stream": {
+        "settled": false,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 1,
+        "statusChars": 386,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 3,
+          "min": 18238.1974,
+          "p50": 18830.0204,
+          "p95": 18893.5684,
+          "max": 18893.5684
+        },
+        "cpuMs": {
+          "count": 3,
+          "min": 17968,
+          "p50": 18642,
+          "p95": 19314,
+          "max": 19314
+        },
+        "sampledRssBytes": {
+          "count": 3,
+          "min": 112771072,
+          "p50": 134975488,
+          "p95": 135933952,
+          "max": 135933952
+        },
+        "sampledHeapUsedBytes": {
+          "count": 3,
+          "min": 20046960,
+          "p50": 31391608,
+          "p95": 38483080,
+          "max": 38483080
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 995.8441000000021,
+          "sampledHeapUsedBytes": 20021672,
+          "sampledRssBytes": 141152256
+        },
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 946.5793000000012,
+          "sampledHeapUsedBytes": 22355648,
+          "sampledRssBytes": 99794944
+        },
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 1017.6114000000016,
+          "sampledHeapUsedBytes": 46122512,
+          "sampledRssBytes": 151216128
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        },
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        },
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 66.4461999999985,
+          "sampledHeapUsedBytes": 29837456
+        },
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 61.644899999999325,
+          "sampledHeapUsedBytes": 32614560
+        },
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 71.51770000000033,
+          "sampledHeapUsedBytes": 33048304
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 179.84010000000126,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            19.87840000000142,
+            15.313099999999395,
+            15.32890000000043,
+            15.607599999999366,
+            15.107899999999063,
+            14.152799999999843,
+            17.92829999999958,
+            14.624599999999191,
+            22.512800000000425,
+            15.525700000001962,
+            31.10239999999976,
+            19.08350000000064,
+            13.993500000000495,
+            14.725000000002183,
+            16.954499999999825,
+            17.256199999999808,
+            16.072000000000116,
+            14.913800000002084,
+            14.477100000000064,
+            14.530000000002474
+          ]
+        },
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 166.4458999999988,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            18.760200000000623,
+            14.605300000002899,
+            14.179099999997561,
+            15.353299999998853,
+            14.738799999999173,
+            14.590000000000146,
+            14.61960000000181,
+            15.008600000001024,
+            14.658500000001368,
+            16.151600000001054,
+            14.74500000000262,
+            14.030600000001868,
+            14.24040000000241,
+            14.797099999999773,
+            14.16309999999794,
+            14.212799999997515,
+            14.596000000001368,
+            14.103699999999662,
+            15.141600000002654,
+            14.25879999999961
+          ]
+        },
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 167.61629999999786,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            15.668900000000576,
+            15.305299999999988,
+            14.205599999997503,
+            14.07209999999759,
+            13.938500000000204,
+            14.381499999999505,
+            14.033199999998033,
+            14.266199999998207,
+            14.09179999999833,
+            14.064199999997072,
+            14.23189999999886,
+            15.03900000000067,
+            14.085899999998219,
+            14.292700000001787,
+            15.092699999997421,
+            16.367200000000594,
+            14.290600000000268,
+            14.427299999999377,
+            14.371800000000803,
+            14.221600000000763
+          ]
+        }
+      ]
+    },
+    "after-final-electron.json": {
+      "measuredAt": "2026-10-10T18:14:31.798Z",
+      "electron": "39.8.10",
+      "node": "22.22.1",
+      "logicalCpus": 20,
+      "build": {
+        "builtAt": "2026-10-10T18:12:26.587Z",
+        "sourceHashes": {
+          "electron/main.ts": "fa0a86467206afb8146fd1de607044f6d6b79f905044a94ba59b8c3db1dfe338",
+          "src/TerminalApp.tsx": "828f9420ae369122661374e03cdbcaf90411f67c1de5479fca5b1857006c3e2c",
+          "src/shared/electron/terminal-session-manager.ts": "912ec4ebf5f43262fd2bd7079062270a75b14ca6085b93e22d4dfc32ac89f7aa",
+          "src/shared/electron/terminal-activity.ts": "90999f9673fd958614e34524efdf568002904ea60bd6d637e3e1d421fe30bc10",
+          "src/shared/electron/session-list-cache.ts": "79b9d90e61ca13b4bf921864a4b3492a76e8fa7c27610089c58f2154f3fe2038"
+        }
+      },
+      "idleMs": 60000,
+      "forcedGc": false,
+      "blockedNetworkRequests": 0,
+      "diagnostics": {
+        "stderrBytes": 21696,
+        "attachConsoleFailures": 24
+      },
+      "operations": {
+        "startupMainLoadMs": 410.6311,
+        "openTerminalMs": {
+          "count": 24,
+          "min": 389.66359999999986,
+          "p50": 405.63864999999714,
+          "p95": 444.43650000000343,
+          "max": 453.5767999999989
+        },
+        "terminalChurn": {
+          "name": "terminalChurn",
+          "count": 20,
+          "elapsedMs": 9257.912499999999
+        }
+      },
+      "stages": [
+        {
+          "name": "startup_no_sessions",
+          "elapsedMs": 4007.0410999999995,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 119212,
+            "private": 81504,
+            "shared": 1812
+          },
+          "mainHeapBytes": {
+            "rss": 122343424,
+            "heapTotal": 14041088,
+            "heapUsed": 9308084,
+            "external": 2668773,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14041088,
+            "total_heap_size_executable": 786432,
+            "total_physical_size": 14041088,
+            "total_available_size": 4288012784,
+            "used_heap_size": 9310988,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 38768,
+            "external_memory": 2668813
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 119144,
+              "privateCommitKiB": 81496
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 120880,
+              "privateCommitKiB": 223960
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47460,
+              "privateCommitKiB": 13268
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 117848,
+              "privateCommitKiB": 52144
+            }
+          },
+          "applicationWorkingSetKiB": 405332,
+          "applicationPrivateCommitKiB": 370868,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 2,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "visible",
+              "heapUsedBytes": 13017930,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 414633984,
+                "p50": 414871552,
+                "p95": 415043584,
+                "max": 415043584
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 379592704,
+                "p50": 383885312,
+                "p95": 388018176,
+                "max": 388018176
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 2240,
+              "writeTransferBytes": 2279
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "main_open_idle",
+          "elapsedMs": 4011.7779,
+          "mainCpuMs": 15,
+          "mainCpuOneCorePercent": 0.3738990635548394,
+          "mainMemoryKiB": {
+            "residentSet": 119508,
+            "private": 81692,
+            "shared": 1812
+          },
+          "mainHeapBytes": {
+            "rss": 122384384,
+            "heapTotal": 14041088,
+            "heapUsed": 9346896,
+            "external": 2673457,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14041088,
+            "total_heap_size_executable": 786432,
+            "total_physical_size": 14041088,
+            "total_available_size": 4287976724,
+            "used_heap_size": 9347048,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 38848,
+            "external_memory": 2673457
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 119504,
+              "privateCommitKiB": 81688
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 116896,
+              "privateCommitKiB": 204328
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47480,
+              "privateCommitKiB": 13276
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 117896,
+              "privateCommitKiB": 52152
+            }
+          },
+          "applicationWorkingSetKiB": 401776,
+          "applicationPrivateCommitKiB": 351444,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 2,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "visible",
+              "heapUsedBytes": 13024080,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 411389952,
+                "p50": 411457536,
+                "p95": 415059968,
+                "max": 415059968
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 359870464,
+                "p50": 359938048,
+                "p95": 379768832,
+                "max": 379768832
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 560,
+              "writeTransferBytes": 4838
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "main_minimized",
+          "elapsedMs": 4000.8266000000003,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 119744,
+            "private": 81696,
+            "shared": 1812
+          },
+          "mainHeapBytes": {
+            "rss": 122621952,
+            "heapTotal": 14041088,
+            "heapUsed": 9388840,
+            "external": 2682193,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14041088,
+            "total_heap_size_executable": 786432,
+            "total_physical_size": 14041088,
+            "total_available_size": 4287934780,
+            "used_heap_size": 9388992,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 39072,
+            "external_memory": 2682193
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 119676,
+              "privateCommitKiB": 81692
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 116896,
+              "privateCommitKiB": 204264
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47484,
+              "privateCommitKiB": 13280
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 117948,
+              "privateCommitKiB": 52164
+            }
+          },
+          "applicationWorkingSetKiB": 402004,
+          "applicationPrivateCommitKiB": 351400,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 2,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": false,
+              "minimized": true,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13041522,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 411418624,
+                "p50": 411650048,
+                "p95": 411652096,
+                "max": 411652096
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 359878656,
+                "p50": 359897088,
+                "p95": 359899136,
+                "max": 359899136
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 4368,
+              "writeTransferBytes": 13324
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "main_hidden",
+          "elapsedMs": 4002.791300000001,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 119768,
+            "private": 81724,
+            "shared": 724
+          },
+          "mainHeapBytes": {
+            "rss": 122695680,
+            "heapTotal": 14041088,
+            "heapUsed": 9420552,
+            "external": 2695010,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14041088,
+            "total_heap_size_executable": 786432,
+            "total_physical_size": 14041088,
+            "total_available_size": 4287903068,
+            "used_heap_size": 9420704,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 39168,
+            "external_memory": 2695010
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 119768,
+              "privateCommitKiB": 81724
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 116488,
+              "privateCommitKiB": 203864
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47484,
+              "privateCommitKiB": 13280
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 116628,
+              "privateCommitKiB": 50528
+            }
+          },
+          "applicationWorkingSetKiB": 400368,
+          "applicationPrivateCommitKiB": 349396,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 2,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": false,
+              "minimized": true,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13045112,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 409972736,
+                "p50": 410382336,
+                "p95": 411652096,
+                "max": 411652096
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 357777408,
+                "p50": 358182912,
+                "p95": 359833600,
+                "max": 359833600
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 1680,
+              "writeTransferBytes": 14128
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "one_monitored_session",
+          "elapsedMs": 4005.2635999999984,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 130540,
+            "private": 97072,
+            "shared": 856
+          },
+          "mainHeapBytes": {
+            "rss": 133816320,
+            "heapTotal": 15613952,
+            "heapUsed": 10574944,
+            "external": 2815439,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 15613952,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 15613952,
+            "total_available_size": 4285962164,
+            "used_heap_size": 10575096,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 42096,
+            "external_memory": 2815439
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 130532,
+              "privateCommitKiB": 97072
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 119780,
+              "privateCommitKiB": 230796
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47516,
+              "privateCommitKiB": 13312
+            },
+            "Tab": {
+              "count": 2,
+              "workingSetKiB": 220496,
+              "privateCommitKiB": 85356
+            }
+          },
+          "applicationWorkingSetKiB": 518324,
+          "applicationPrivateCommitKiB": 426536,
+          "resources": {
+            "sessions": 1,
+            "bufferedChars": 281,
+            "subscribers": 1,
+            "windows": 1,
+            "attachments": 1,
+            "titleTimers": 1,
+            "lifecycleWatchers": 1,
+            "identityBindings": 1,
+            "identitySources": 1
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 5,
+            "MessagePort": 1,
+            "Timeout": 3
+          },
+          "ipc": {
+            "statusEvents": 1,
+            "statusChars": 972,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9533656,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13049238,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 5,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 530726912,
+                "p50": 531638272,
+                "p95": 532553728,
+                "max": 532553728
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 436236288,
+                "p50": 439320576,
+                "p95": 440311808,
+                "max": 440311808
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 135993399,
+              "writeTransferBytes": 219368
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 1,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 44134400,
+                "p50": 44134400,
+                "p95": 44134400,
+                "max": 44134400
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 15024128,
+                "p50": 15024128,
+                "p95": 15024128,
+                "max": 15024128
+              },
+              "cpuOneCorePercent": {
+                "count": 3,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 1,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 9613312,
+                "p50": 9613312,
+                "p95": 9613312,
+                "max": 9613312
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 1556480,
+                "p50": 1556480,
+                "p95": 1556480,
+                "max": 1556480
+              },
+              "cpuOneCorePercent": {
+                "count": 3,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "four_monitored_sessions",
+          "elapsedMs": 4010.394400000001,
+          "mainCpuMs": 31,
+          "mainCpuOneCorePercent": 0.7729913047953586,
+          "mainMemoryKiB": {
+            "residentSet": 156436,
+            "private": 138380,
+            "shared": 1252
+          },
+          "mainHeapBytes": {
+            "rss": 160235520,
+            "heapTotal": 11681792,
+            "heapUsed": 9222092,
+            "external": 2719959,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 11681792,
+            "total_heap_size_executable": 1310720,
+            "total_physical_size": 11681792,
+            "total_available_size": 4288101476,
+            "used_heap_size": 9222244,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 53752,
+            "used_global_handles_size": 42912,
+            "external_memory": 2719959
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 156432,
+              "privateCommitKiB": 138376
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 119852,
+              "privateCommitKiB": 230552
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47652,
+              "privateCommitKiB": 13452
+            },
+            "Tab": {
+              "count": 5,
+              "workingSetKiB": 542188,
+              "privateCommitKiB": 196856
+            }
+          },
+          "applicationWorkingSetKiB": 866124,
+          "applicationPrivateCommitKiB": 579236,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 1124,
+            "subscribers": 4,
+            "windows": 4,
+            "attachments": 4,
+            "titleTimers": 4,
+            "lifecycleWatchers": 4,
+            "identityBindings": 4,
+            "identitySources": 16
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 11,
+            "MessagePort": 4,
+            "Timeout": 9
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9500004,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9498352,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9498110,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9561118,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13052924,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 8,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 886538240,
+                "p50": 886910976,
+                "p95": 886927360,
+                "max": 886927360
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 593137664,
+                "p50": 594235392,
+                "p95": 595468288,
+                "max": 595468288
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 203669416,
+              "writeTransferBytes": 321377
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 176070656,
+                "p50": 176435200,
+                "p95": 176435200,
+                "max": 176435200
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 59691008,
+                "p50": 59691008,
+                "p95": 59723776,
+                "max": 59723776
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 1687,
+              "writeTransferBytes": 421
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38473728,
+                "p50": 38473728,
+                "p95": 38473728,
+                "max": 38473728
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6209536,
+                "p50": 6209536,
+                "p95": 6209536,
+                "max": 6209536
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 9,
+              "writeTransferBytes": 277
+            }
+          }
+        },
+        {
+          "name": "continuous_output",
+          "elapsedMs": 6361.010399999999,
+          "mainCpuMs": 4906,
+          "mainCpuOneCorePercent": 77.12611191454742,
+          "mainMemoryKiB": {
+            "residentSet": 223804,
+            "private": 203488,
+            "shared": 1252
+          },
+          "mainHeapBytes": {
+            "rss": 229355520,
+            "heapTotal": 74629120,
+            "heapUsed": 10614900,
+            "external": 2707132,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 74629120,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 74629120,
+            "total_available_size": 4288423536,
+            "used_heap_size": 10615052,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 6499788,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 58352,
+            "used_global_handles_size": 37440,
+            "external_memory": 2707132
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 223800,
+              "privateCommitKiB": 203488
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 118796,
+              "privateCommitKiB": 216608
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47580,
+              "privateCommitKiB": 13344
+            },
+            "Tab": {
+              "count": 5,
+              "workingSetKiB": 556940,
+              "privateCommitKiB": 205320
+            }
+          },
+          "applicationWorkingSetKiB": 947116,
+          "applicationPrivateCommitKiB": 638760,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 256000,
+            "subscribers": 4,
+            "windows": 4,
+            "attachments": 4,
+            "titleTimers": 4,
+            "lifecycleWatchers": 4,
+            "identityBindings": 4,
+            "identitySources": 16
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 11,
+            "MessagePort": 4,
+            "Timeout": 9
+          },
+          "ipc": {
+            "statusEvents": 4,
+            "statusChars": 3888,
+            "outputEvents": 1555,
+            "outputChars": 926556,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11247182,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11364106,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11447894,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11470000,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7751930,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 6,
+              "maxProcesses": 8,
+              "workingSetBytes": {
+                "count": 6,
+                "min": 895254528,
+                "p50": 935854080,
+                "p95": 983961600,
+                "max": 983961600
+              },
+              "privateCommitBytes": {
+                "count": 6,
+                "min": 602218496,
+                "p50": 630614016,
+                "p95": 675958784,
+                "max": 675958784
+              },
+              "cpuOneCorePercent": {
+                "count": 6,
+                "min": 0,
+                "p50": 97.85454872339345,
+                "p95": 104.29570000301435,
+                "max": 104.29570000301435
+              },
+              "readTransferBytes": 1939726,
+              "writeTransferBytes": 1160167
+            },
+            "external": {
+              "sampledFrames": 6,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 6,
+                "min": 176697344,
+                "p50": 177829888,
+                "p95": 180322304,
+                "max": 180322304
+              },
+              "privateCommitBytes": {
+                "count": 6,
+                "min": 59723776,
+                "p50": 62003200,
+                "p95": 63000576,
+                "max": 63000576
+              },
+              "cpuOneCorePercent": {
+                "count": 6,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 492
+            },
+            "pty_support": {
+              "sampledFrames": 6,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 6,
+                "min": 38522880,
+                "p50": 38522880,
+                "p95": 38522880,
+                "max": 38522880
+              },
+              "privateCommitBytes": {
+                "count": 6,
+                "min": 6225920,
+                "p50": 6225920,
+                "p95": 6225920,
+                "max": 6225920
+              },
+              "cpuOneCorePercent": {
+                "count": 6,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 24,
+              "writeTransferBytes": 810672
+            }
+          }
+        },
+        {
+          "name": "switch_sessions",
+          "elapsedMs": 4003.9346000000005,
+          "mainCpuMs": 141,
+          "mainCpuOneCorePercent": 3.5215360410731975,
+          "mainMemoryKiB": {
+            "residentSet": 224592,
+            "private": 204292,
+            "shared": 1252
+          },
+          "mainHeapBytes": {
+            "rss": 229986304,
+            "heapTotal": 74629120,
+            "heapUsed": 11868964,
+            "external": 2751212,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 74629120,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 74629120,
+            "total_available_size": 4287169472,
+            "used_heap_size": 11869116,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 6499788,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 58352,
+            "used_global_handles_size": 39888,
+            "external_memory": 2751212
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 224592,
+              "privateCommitKiB": 204292
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 118584,
+              "privateCommitKiB": 175612
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47580,
+              "privateCommitKiB": 13344
+            },
+            "Tab": {
+              "count": 5,
+              "workingSetKiB": 557932,
+              "privateCommitKiB": 205932
+            }
+          },
+          "applicationWorkingSetKiB": 948688,
+          "applicationPrivateCommitKiB": 599180,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 256000,
+            "subscribers": 4,
+            "windows": 4,
+            "attachments": 4,
+            "titleTimers": 4,
+            "lifecycleWatchers": 4,
+            "identityBindings": 4,
+            "identitySources": 16
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 11,
+            "MessagePort": 4,
+            "Timeout": 9
+          },
+          "ipc": {
+            "statusEvents": 4,
+            "statusChars": 258764,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11424759,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 10677067,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 10818655,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 10898033,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7756768,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 8,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 970436608,
+                "p50": 971517952,
+                "p95": 971735040,
+                "max": 971735040
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 645165056,
+                "p50": 658169856,
+                "p95": 658550784,
+                "max": 658550784
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 99.29239276297483,
+                "max": 99.29239276297483
+              },
+              "readTransferBytes": 367250,
+              "writeTransferBytes": 276587
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 177741824,
+                "p50": 177741824,
+                "p95": 177741824,
+                "max": 177741824
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 61190144,
+                "p50": 61190144,
+                "p95": 61190144,
+                "max": 61190144
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 496
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38522880,
+                "p50": 38522880,
+                "p95": 38522880,
+                "max": 38522880
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6225920,
+                "p50": 6225920,
+                "p95": 6225920,
+                "max": 6225920
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 125508
+            }
+          }
+        },
+        {
+          "name": "exited_history_windows",
+          "elapsedMs": 4014.5486999999994,
+          "mainCpuMs": 63,
+          "mainCpuOneCorePercent": 1.5692922096075212,
+          "mainMemoryKiB": {
+            "residentSet": 158548,
+            "private": 136652,
+            "shared": 1252
+          },
+          "mainHeapBytes": {
+            "rss": 162353152,
+            "heapTotal": 10108928,
+            "heapUsed": 8533844,
+            "external": 2703512,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 10108928,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 10108928,
+            "total_available_size": 4287028068,
+            "used_heap_size": 8534116,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 6499788,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 58352,
+            "used_global_handles_size": 36672,
+            "external_memory": 2703512
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 158484,
+              "privateCommitKiB": 136588
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 115672,
+              "privateCommitKiB": 144852
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47580,
+              "privateCommitKiB": 13344
+            },
+            "Tab": {
+              "count": 5,
+              "workingSetKiB": 558292,
+              "privateCommitKiB": 206840
+            }
+          },
+          "applicationWorkingSetKiB": 880028,
+          "applicationPrivateCommitKiB": 501624,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 256000,
+            "subscribers": 4,
+            "windows": 4,
+            "attachments": 4,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 7,
+            "MessagePort": 4,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 10896829,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11131933,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11394669,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11409791,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7760386,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 8,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 902520832,
+                "p50": 969953280,
+                "p95": 972079104,
+                "max": 972079104
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 514977792,
+                "p50": 603074560,
+                "p95": 613425152,
+                "max": 613425152
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 8232,
+              "writeTransferBytes": 9354
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38522880,
+                "p50": 38522880,
+                "p95": 38522880,
+                "max": 38522880
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6225920,
+                "p50": 6225920,
+                "p95": 6225920,
+                "max": 6225920
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "closed_history_windows",
+          "elapsedMs": 3999.6132999999973,
+          "mainCpuMs": 202,
+          "mainCpuOneCorePercent": 5.050488255952148,
+          "mainMemoryKiB": {
+            "residentSet": 147964,
+            "private": 107356,
+            "shared": 724
+          },
+          "mainHeapBytes": {
+            "rss": 151564288,
+            "heapTotal": 11157504,
+            "heapUsed": 8897812,
+            "external": 2710744,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 11157504,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 11157504,
+            "total_available_size": 4288676452,
+            "used_heap_size": 8897904,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 6499788,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 58352,
+            "used_global_handles_size": 34752,
+            "external_memory": 2710744
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 147964,
+              "privateCommitKiB": 107356
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 115820,
+              "privateCommitKiB": 156724
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47584,
+              "privateCommitKiB": 13348
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 112344,
+              "privateCommitKiB": 44060
+            }
+          },
+          "applicationWorkingSetKiB": 423712,
+          "applicationPrivateCommitKiB": 321488,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 7,
+            "Timeout": 5
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7765004,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 434102272,
+                "p50": 438013952,
+                "p95": 445624320,
+                "max": 445624320
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 329519104,
+                "p50": 338513920,
+                "p95": 354209792,
+                "max": 354209792
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 268455769,
+              "writeTransferBytes": 85355
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 5,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 509140992,
+                "max": 509140992
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 155201536,
+                "max": 155201536
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 1824,
+              "writeTransferBytes": 1344
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38522880,
+                "p50": 38522880,
+                "p95": 38522880,
+                "max": 38522880
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6225920,
+                "p50": 6225920,
+                "p95": 6225920,
+                "max": 6225920
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "after_terminal_churn",
+          "elapsedMs": 4012.8148,
+          "mainCpuMs": 47,
+          "mainCpuOneCorePercent": 1.1712476738273592,
+          "mainMemoryKiB": {
+            "residentSet": 151596,
+            "private": 109568,
+            "shared": 724
+          },
+          "mainHeapBytes": {
+            "rss": 155308032,
+            "heapTotal": 13254656,
+            "heapUsed": 10371552,
+            "external": 2738720,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 13254656,
+            "total_heap_size_executable": 1572864,
+            "total_physical_size": 13254656,
+            "total_available_size": 4286411944,
+            "used_heap_size": 10371832,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 6499788,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 67552,
+            "used_global_handles_size": 53008,
+            "external_memory": 2738720
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 151596,
+              "privateCommitKiB": 109568
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 115020,
+              "privateCommitKiB": 149488
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47480,
+              "privateCommitKiB": 13240
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 112348,
+              "privateCommitKiB": 44060
+            }
+          },
+          "applicationWorkingSetKiB": 426444,
+          "applicationPrivateCommitKiB": 316356,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 27,
+            "Timeout": 4
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7769662,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 437485568,
+                "p50": 441169920,
+                "p95": 448139264,
+                "max": 448139264
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 324775936,
+                "p50": 331083776,
+                "p95": 350253056,
+                "max": 350253056
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 99.43582103859157,
+                "max": 99.43582103859157
+              },
+              "readTransferBytes": 473180966,
+              "writeTransferBytes": 351808
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 3,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 232194048,
+                "max": 232194048
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 63582208,
+                "max": 63582208
+              },
+              "cpuOneCorePercent": {
+                "count": 3,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 5,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38522880,
+                "p50": 38522880,
+                "p95": 48148480,
+                "max": 48148480
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6225920,
+                "p50": 6225920,
+                "p95": 7786496,
+                "max": 7786496
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "idle_recovery",
+          "elapsedMs": 4004.7950999999885,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 131828,
+            "private": 89732,
+            "shared": 724
+          },
+          "mainHeapBytes": {
+            "rss": 135135232,
+            "heapTotal": 13254656,
+            "heapUsed": 10540876,
+            "external": 2802217,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 13254656,
+            "total_heap_size_executable": 1572864,
+            "total_physical_size": 13254656,
+            "total_available_size": 4286242740,
+            "used_heap_size": 10541036,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 6499788,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 67552,
+            "used_global_handles_size": 53216,
+            "external_memory": 2802217
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 131828,
+              "privateCommitKiB": 89732
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 121032,
+              "privateCommitKiB": 230108
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47384,
+              "privateCommitKiB": 13080
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 110208,
+              "privateCommitKiB": 41648
+            }
+          },
+          "applicationWorkingSetKiB": 410452,
+          "applicationPrivateCommitKiB": 374568,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 27,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7773388,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 5,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 5,
+                "min": 415260672,
+                "p50": 420831232,
+                "p95": 421150720,
+                "max": 421150720
+              },
+              "privateCommitBytes": {
+                "count": 5,
+                "min": 302297088,
+                "p50": 384434176,
+                "p95": 384913408,
+                "max": 384913408
+              },
+              "cpuOneCorePercent": {
+                "count": 5,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 67158048,
+              "writeTransferBytes": 48805
+            },
+            "external": {
+              "sampledFrames": 5,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 5,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 5,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 5,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 5,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 5,
+                "min": 38375424,
+                "p50": 38375424,
+                "p95": 38375424,
+                "max": 38375424
+              },
+              "privateCommitBytes": {
+                "count": 5,
+                "min": 5914624,
+                "p50": 5914624,
+                "p95": 5914624,
+                "max": 5914624
+              },
+              "cpuOneCorePercent": {
+                "count": 5,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        }
+      ]
+    },
+    "after-settled.json": {
+      "measuredAt": "2026-10-10T18:12:23.107Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.ts": "912ec4ebf5f43262fd2bd7079062270a75b14ca6085b93e22d4dfc32ac89f7aa",
+        "src/shared/electron/terminal-output-buffer.ts": "8b92ade0caed7e133a684a68dad5eea5eeab35412bf1cb17718bfbf677fd12ef",
+        "src/shared/electron/session-list-cache.ts": "79b9d90e61ca13b4bf921864a4b3492a76e8fa7c27610089c58f2154f3fe2038",
+        "src/shared/services/session-service.ts": "cc72334d7ff05c09fa17dec0ea10332d10b2af69bbc9ca3a048faca7ecdf20c2",
+        "src/TerminalApp.tsx": "828f9420ae369122661374e03cdbcaf90411f67c1de5479fca5b1857006c3e2c"
+      },
+      "compiledBuild": null,
+      "forcedGc": false,
+      "trials": 3,
+      "stream": {
+        "settled": true,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 1,
+        "statusChars": 386,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 3,
+          "min": 7.0504999999999995,
+          "p50": 7.5312999999999874,
+          "p95": 7.807699999999997,
+          "max": 7.807699999999997
+        },
+        "cpuMs": {
+          "count": 3,
+          "min": 0,
+          "p50": 16,
+          "p95": 16,
+          "max": 16
+        },
+        "sampledRssBytes": {
+          "count": 3,
+          "min": 58347520,
+          "p50": 58380288,
+          "p95": 58413056,
+          "max": 58413056
+        },
+        "sampledHeapUsedBytes": {
+          "count": 3,
+          "min": 12447952,
+          "p50": 12513104,
+          "p95": 12678680,
+          "max": 12678680
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 577.9147,
+          "sampledHeapUsedBytes": 29295008,
+          "sampledRssBytes": 131305472
+        },
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 574.4363999999999,
+          "sampledHeapUsedBytes": 39889984,
+          "sampledRssBytes": 137732096
+        },
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 585.2189000000001,
+          "sampledHeapUsedBytes": 29315824,
+          "sampledRssBytes": 131170304
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        },
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        },
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 30.46580000000006,
+          "sampledHeapUsedBytes": 29280824
+        },
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 37.580999999999904,
+          "sampledHeapUsedBytes": 48745288
+        },
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 30.86099999999999,
+          "sampledHeapUsedBytes": 29347976
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 76.9443,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            10.115099999999984,
+            8.826099999999997,
+            9.37889999999993,
+            8.997700000000009,
+            9.099299999999971,
+            8.718499999999949,
+            9.275700000000029,
+            8.978399999999965,
+            8.772800000000075,
+            9.053899999999999,
+            8.827199999999948,
+            8.911000000000058,
+            8.870900000000006,
+            8.715599999999995,
+            8.748299999999972,
+            8.922500000000014,
+            8.720500000000015,
+            8.71709999999996,
+            8.825699999999983,
+            8.5933
+          ]
+        },
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 80.42049999999995,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            9.512399999999957,
+            9.644400000000019,
+            9.056699999999978,
+            8.83140000000003,
+            8.822900000000004,
+            9.02539999999999,
+            8.855699999999956,
+            8.849100000000021,
+            9.061000000000035,
+            8.759800000000041,
+            8.751300000000015,
+            9.046299999999974,
+            8.862100000000055,
+            8.944500000000062,
+            8.981400000000008,
+            8.758000000000038,
+            8.956500000000005,
+            9.040099999999939,
+            9.139499999999998,
+            8.8048
+          ]
+        },
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 77.97709999999995,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            9.703399999999988,
+            9.112999999999943,
+            8.769699999999943,
+            9.133199999999988,
+            9.22869999999989,
+            8.810499999999934,
+            8.980099999999993,
+            8.711099999999988,
+            9.099700000000098,
+            9.070600000000013,
+            9.096599999999967,
+            8.858900000000062,
+            9.22300000000007,
+            8.823100000000068,
+            8.894000000000005,
+            9.512500000000045,
+            8.859100000000012,
+            9.20150000000001,
+            8.921600000000012,
+            9.005999999999972
+          ]
+        }
+      ]
+    },
+    "before-core.json": {
+      "measuredAt": "2026-10-10T17:27:04.270Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.ts": "6c67dedae4395ac56ccd2a4f1f4939cf3ca78a51f10859e10d339dc52cec7741",
+        "src/shared/electron/terminal-output-buffer.ts": null,
+        "src/shared/electron/session-list-cache.ts": "c265a967ef903872934c164593b18a5a0335ab98e53af8e42888a56b658f013d",
+        "src/shared/services/session-service.ts": "cc72334d7ff05c09fa17dec0ea10332d10b2af69bbc9ca3a048faca7ecdf20c2",
+        "src/TerminalApp.tsx": "03a82ce7c8b8741f6faa4642b4400926cf06280e40970f52f09847110def0759"
+      },
+      "compiledBuild": null,
+      "forcedGc": false,
+      "trials": 3,
+      "stream": {
+        "chunks": 8000,
+        "outputChars": 4024000,
+        "statusEvents": 8001,
+        "statusChars": 523199869,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 3,
+          "min": 92326.7409,
+          "p50": 92599.7971,
+          "p95": 92612.20999999999,
+          "max": 92612.20999999999
+        },
+        "cpuMs": {
+          "count": 3,
+          "min": 88782,
+          "p50": 89296,
+          "p95": 89937,
+          "max": 89937
+        },
+        "sampledRssBytes": {
+          "count": 3,
+          "min": 103895040,
+          "p50": 136622080,
+          "p95": 140431360,
+          "max": 140431360
+        },
+        "sampledHeapUsedBytes": {
+          "count": 3,
+          "min": 28521952,
+          "p50": 67270752,
+          "p95": 69745224,
+          "max": 69745224
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 975.7946999999986,
+          "sampledHeapUsedBytes": 43811128,
+          "sampledRssBytes": 145330176
+        },
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 926.6108999999997,
+          "sampledHeapUsedBytes": 53386048,
+          "sampledRssBytes": 134389760
+        },
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 957.5834999999934,
+          "sampledHeapUsedBytes": 60646912,
+          "sampledRssBytes": 160063488
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        },
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        },
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 57.38890000000538,
+          "sampledHeapUsedBytes": 71641248
+        },
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 64.83869999999297,
+          "sampledHeapUsedBytes": 45737648
+        },
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 70.38319999999658,
+          "sampledHeapUsedBytes": 73002408
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 183.00260000000708,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            15.538999999989755,
+            17.081700000009732,
+            21.15789999999106,
+            14.357700000007753,
+            14.816300000005867,
+            15.401799999992363,
+            14.302599999995437,
+            14.465100000001257,
+            15.899300000004587,
+            15.517900000006193,
+            14.720400000005611,
+            15.03890000001411,
+            15.358200000002398,
+            15.281600000002072,
+            14.548699999999371,
+            15.232499999998254,
+            14.63859999999113,
+            15.066800000000512,
+            14.90120000000752,
+            14.358299999992596
+          ]
+        },
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 174.0619000000006,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            17.3125,
+            14.721900000004098,
+            15.001799999998184,
+            14.925400000007357,
+            15.168900000004214,
+            16.107499999998254,
+            14.750499999994645,
+            15.198000000003958,
+            15.2045999999973,
+            17.31449999999313,
+            16.23609999999462,
+            15.180099999997765,
+            14.64560000000347,
+            14.938300000008894,
+            14.668499999999767,
+            17.001399999993737,
+            15.211699999999837,
+            15.408899999994901,
+            14.824500000002445,
+            15.44430000000284
+          ]
+        },
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 168.26200000000244,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            18.33060000000114,
+            14.326500000010128,
+            14.35439999999653,
+            14.302800000004936,
+            14.653200000000652,
+            14.065700000006473,
+            14.069099999993341,
+            14.649199999999837,
+            14.367899999997462,
+            14.04330000000482,
+            14.405299999998533,
+            14.026199999992969,
+            14.188800000003539,
+            14.303200000009383,
+            13.85920000000624,
+            14.068199999994249,
+            14.244300000005751,
+            13.9430999999895,
+            14.195099999997183,
+            14.440500000011525
+          ]
+        }
+      ]
+    },
+    "before-electron-idle60.json": {
+      "measuredAt": "2026-10-10T18:06:34.032Z",
+      "electron": "39.8.10",
+      "node": "22.22.1",
+      "logicalCpus": 20,
+      "build": {
+        "builtAt": "2026-10-10T17:29:32.445Z",
+        "sourceHashes": {
+          "electron/main.ts": "fa0a86467206afb8146fd1de607044f6d6b79f905044a94ba59b8c3db1dfe338",
+          "src/TerminalApp.tsx": "03a82ce7c8b8741f6faa4642b4400926cf06280e40970f52f09847110def0759",
+          "src/shared/electron/terminal-session-manager.ts": "6c67dedae4395ac56ccd2a4f1f4939cf3ca78a51f10859e10d339dc52cec7741",
+          "src/shared/electron/terminal-activity.ts": "90999f9673fd958614e34524efdf568002904ea60bd6d637e3e1d421fe30bc10",
+          "src/shared/electron/session-list-cache.ts": "c265a967ef903872934c164593b18a5a0335ab98e53af8e42888a56b658f013d"
+        }
+      },
+      "idleMs": 60000,
+      "forcedGc": false,
+      "blockedNetworkRequests": 0,
+      "diagnostics": {
+        "stderrBytes": 21696,
+        "attachConsoleFailures": 24
+      },
+      "operations": {
+        "startupMainLoadMs": 433.79179999999997,
+        "openTerminalMs": {
+          "count": 24,
+          "min": 381.8483999999953,
+          "p50": 408.95880000000216,
+          "p95": 435.8854999999967,
+          "max": 464.32480000000214
+        },
+        "terminalChurn": {
+          "name": "terminalChurn",
+          "count": 20,
+          "elapsedMs": 9291.131399999998
+        }
+      },
+      "stages": [
+        {
+          "name": "startup_no_sessions",
+          "elapsedMs": 4006.0267999999996,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 121784,
+            "private": 85004,
+            "shared": 1812
+          },
+          "mainHeapBytes": {
+            "rss": 124231680,
+            "heapTotal": 13778944,
+            "heapUsed": 9207928,
+            "external": 2669573,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 13778944,
+            "total_heap_size_executable": 786432,
+            "total_physical_size": 13778944,
+            "total_available_size": 4288375068,
+            "used_heap_size": 9210832,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 38832,
+            "external_memory": 2669613
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 121652,
+              "privateCommitKiB": 84996
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 116556,
+              "privateCommitKiB": 220980
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47216,
+              "privateCommitKiB": 13152
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 118180,
+              "privateCommitKiB": 52332
+            }
+          },
+          "applicationWorkingSetKiB": 403604,
+          "applicationPrivateCommitKiB": 371460,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 2,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "visible",
+              "heapUsedBytes": 13026663,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 412962816,
+                "p50": 413134848,
+                "p95": 413282304,
+                "max": 413282304
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 380137472,
+                "p50": 384430080,
+                "p95": 388497408,
+                "max": 388497408
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 2016,
+              "writeTransferBytes": 2055
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "main_open_idle",
+          "elapsedMs": 4014.0605000000005,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 121356,
+            "private": 84680,
+            "shared": 1812
+          },
+          "mainHeapBytes": {
+            "rss": 124276736,
+            "heapTotal": 14041088,
+            "heapUsed": 9246744,
+            "external": 2674263,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14041088,
+            "total_heap_size_executable": 786432,
+            "total_physical_size": 14041088,
+            "total_available_size": 4288076860,
+            "used_heap_size": 9246896,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 38912,
+            "external_memory": 2674263
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 121352,
+              "privateCommitKiB": 84680
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 114768,
+              "privateCommitKiB": 212680
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47228,
+              "privateCommitKiB": 13152
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 118220,
+              "privateCommitKiB": 52332
+            }
+          },
+          "applicationWorkingSetKiB": 401568,
+          "applicationPrivateCommitKiB": 362844,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 2,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "visible",
+              "heapUsedBytes": 13032813,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 411287552,
+                "p50": 411396096,
+                "p95": 413290496,
+                "max": 413290496
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 371785728,
+                "p50": 371894272,
+                "p95": 380375040,
+                "max": 380375040
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 560,
+              "writeTransferBytes": 4844
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "main_minimized",
+          "elapsedMs": 4010.715699999999,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 121500,
+            "private": 84688,
+            "shared": 1812
+          },
+          "mainHeapBytes": {
+            "rss": 124420096,
+            "heapTotal": 14041088,
+            "heapUsed": 9288680,
+            "external": 2682996,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14041088,
+            "total_heap_size_executable": 786432,
+            "total_physical_size": 14041088,
+            "total_available_size": 4288034924,
+            "used_heap_size": 9288832,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 39136,
+            "external_memory": 2682996
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 121492,
+              "privateCommitKiB": 84684
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 114768,
+              "privateCommitKiB": 212488
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47232,
+              "privateCommitKiB": 13156
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 118276,
+              "privateCommitKiB": 52340
+            }
+          },
+          "applicationWorkingSetKiB": 401768,
+          "applicationPrivateCommitKiB": 362668,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 2,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": false,
+              "minimized": true,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13050179,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 411205632,
+                "p50": 411408384,
+                "p95": 411410432,
+                "max": 411410432
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 371552256,
+                "p50": 371566592,
+                "p95": 371568640,
+                "max": 371568640
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 4368,
+              "writeTransferBytes": 13321
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "main_hidden",
+          "elapsedMs": 4011.997599999999,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 121612,
+            "private": 84712,
+            "shared": 724
+          },
+          "mainHeapBytes": {
+            "rss": 124583936,
+            "heapTotal": 14041088,
+            "heapUsed": 9320380,
+            "external": 2695809,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14041088,
+            "total_heap_size_executable": 786432,
+            "total_physical_size": 14041088,
+            "total_available_size": 4288003224,
+            "used_heap_size": 9320532,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 39232,
+            "external_memory": 2695809
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 121612,
+              "privateCommitKiB": 84712
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 114560,
+              "privateCommitKiB": 201920
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47232,
+              "privateCommitKiB": 13156
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 118276,
+              "privateCommitKiB": 52340
+            }
+          },
+          "applicationWorkingSetKiB": 401680,
+          "applicationPrivateCommitKiB": 352128,
+          "resources": {
+            "sessions": 0,
+            "bufferedChars": 0,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 2,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": false,
+              "minimized": true,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13053769,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 411324416,
+                "p50": 411463680,
+                "p95": 411516928,
+                "max": 411516928
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 371204096,
+                "p50": 371382272,
+                "p95": 371396608,
+                "max": 371396608
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 1680,
+              "writeTransferBytes": 14124
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "one_monitored_session",
+          "elapsedMs": 4015.128700000001,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 133088,
+            "private": 100740,
+            "shared": 856
+          },
+          "mainHeapBytes": {
+            "rss": 136413184,
+            "heapTotal": 15089664,
+            "heapUsed": 10465668,
+            "external": 2808038,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 15089664,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 15089664,
+            "total_available_size": 4286333584,
+            "used_heap_size": 10465820,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 45560,
+            "used_global_handles_size": 42160,
+            "external_memory": 2808038
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 133024,
+              "privateCommitKiB": 100740
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 118132,
+              "privateCommitKiB": 226512
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47268,
+              "privateCommitKiB": 13192
+            },
+            "Tab": {
+              "count": 2,
+              "workingSetKiB": 221192,
+              "privateCommitKiB": 85044
+            }
+          },
+          "applicationWorkingSetKiB": 519616,
+          "applicationPrivateCommitKiB": 425488,
+          "resources": {
+            "sessions": 1,
+            "bufferedChars": 281,
+            "subscribers": 1,
+            "windows": 1,
+            "attachments": 1,
+            "titleTimers": 1,
+            "lifecycleWatchers": 1,
+            "identityBindings": 1,
+            "identitySources": 1
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 5,
+            "MessagePort": 1,
+            "Timeout": 3
+          },
+          "ipc": {
+            "statusEvents": 1,
+            "statusChars": 972,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9530031,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13057895,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 5,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 532074496,
+                "p50": 532834304,
+                "p95": 533463040,
+                "max": 533463040
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 435699712,
+                "p50": 441913344,
+                "p95": 442556416,
+                "max": 442556416
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 135993196,
+              "writeTransferBytes": 219624
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 1,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 44163072,
+                "p50": 44163072,
+                "p95": 44163072,
+                "max": 44163072
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 15069184,
+                "p50": 15069184,
+                "p95": 15069184,
+                "max": 15069184
+              },
+              "cpuOneCorePercent": {
+                "count": 3,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 1,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 9621504,
+                "p50": 9621504,
+                "p95": 9621504,
+                "max": 9621504
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 1564672,
+                "p50": 1564672,
+                "p95": 1564672,
+                "max": 1564672
+              },
+              "cpuOneCorePercent": {
+                "count": 3,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "four_monitored_sessions",
+          "elapsedMs": 4011.561999999998,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 155916,
+            "private": 138868,
+            "shared": 1252
+          },
+          "mainHeapBytes": {
+            "rss": 159821824,
+            "heapTotal": 11681792,
+            "heapUsed": 9122092,
+            "external": 2716911,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 11681792,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 11681792,
+            "total_available_size": 4288201484,
+            "used_heap_size": 9122244,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 256096,
+            "peak_malloced_memory": 1188832,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 53752,
+            "used_global_handles_size": 42656,
+            "external_memory": 2716911
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 155916,
+              "privateCommitKiB": 138868
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 118500,
+              "privateCommitKiB": 229480
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47404,
+              "privateCommitKiB": 13332
+            },
+            "Tab": {
+              "count": 5,
+              "workingSetKiB": 540156,
+              "privateCommitKiB": 195700
+            }
+          },
+          "applicationWorkingSetKiB": 861976,
+          "applicationPrivateCommitKiB": 577380,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 1124,
+            "subscribers": 4,
+            "windows": 4,
+            "attachments": 4,
+            "titleTimers": 4,
+            "lifecycleWatchers": 4,
+            "identityBindings": 4,
+            "identitySources": 16
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 11,
+            "MessagePort": 4,
+            "Timeout": 9
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9496651,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9496393,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9496699,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 9557493,
+              "bufferLines": 28,
+              "fitCalls": 1,
+              "outputComplete": false
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13061581,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 8,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 882401280,
+                "p50": 882663424,
+                "p95": 882700288,
+                "max": 882700288
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 591237120,
+                "p50": 595867648,
+                "p95": 595996672,
+                "max": 595996672
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 270813218,
+              "writeTransferBytes": 321177
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 176087040,
+                "p50": 176418816,
+                "p95": 176418816,
+                "max": 176418816
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 59510784,
+                "p50": 59510784,
+                "p95": 59543552,
+                "max": 59543552
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38465536,
+                "p50": 38465536,
+                "p95": 38465536,
+                "max": 38465536
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6242304,
+                "p50": 6242304,
+                "p95": 6242304,
+                "max": 6242304
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 9,
+              "writeTransferBytes": 293
+            }
+          }
+        },
+        {
+          "name": "continuous_output",
+          "elapsedMs": 6357.581099999999,
+          "mainCpuMs": 6687,
+          "mainCpuOneCorePercent": 105.18151313869988,
+          "mainMemoryKiB": {
+            "residentSet": 252836,
+            "private": 243636,
+            "shared": 1252
+          },
+          "mainHeapBytes": {
+            "rss": 259084288,
+            "heapTotal": 102313984,
+            "heapUsed": 37165176,
+            "external": 2704121,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 102313984,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 102313984,
+            "total_available_size": 4257468972,
+            "used_heap_size": 37165328,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 7333496,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 58352,
+            "used_global_handles_size": 40192,
+            "external_memory": 2704121
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 252820,
+              "privateCommitKiB": 243636
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 117004,
+              "privateCommitKiB": 216904
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47336,
+              "privateCommitKiB": 13228
+            },
+            "Tab": {
+              "count": 5,
+              "workingSetKiB": 566844,
+              "privateCommitKiB": 217560
+            }
+          },
+          "applicationWorkingSetKiB": 984004,
+          "applicationPrivateCommitKiB": 691328,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 256000,
+            "subscribers": 4,
+            "windows": 4,
+            "attachments": 4,
+            "titleTimers": 4,
+            "lifecycleWatchers": 4,
+            "identityBindings": 4,
+            "identitySources": 16
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 11,
+            "MessagePort": 4,
+            "Timeout": 9
+          },
+          "ipc": {
+            "statusEvents": 1529,
+            "statusChars": 81674355,
+            "outputEvents": 1525,
+            "outputChars": 926572,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11374768,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 12937186,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 15698374,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13338782,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7751678,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 6,
+              "maxProcesses": 8,
+              "workingSetBytes": {
+                "count": 6,
+                "min": 893190144,
+                "p50": 980226048,
+                "p95": 1006915584,
+                "max": 1006915584
+              },
+              "privateCommitBytes": {
+                "count": 6,
+                "min": 600977408,
+                "p50": 682412032,
+                "p95": 709300224,
+                "max": 709300224
+              },
+              "cpuOneCorePercent": {
+                "count": 6,
+                "min": 0,
+                "p50": 96.38070934335829,
+                "p95": 104.04315876694677,
+                "max": 104.04315876694677
+              },
+              "readTransferBytes": 11325890,
+              "writeTransferBytes": 10549800
+            },
+            "external": {
+              "sampledFrames": 6,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 6,
+                "min": 176689152,
+                "p50": 178370560,
+                "p95": 180514816,
+                "max": 180514816
+              },
+              "privateCommitBytes": {
+                "count": 6,
+                "min": 59543552,
+                "p50": 62107648,
+                "p95": 62816256,
+                "max": 62816256
+              },
+              "cpuOneCorePercent": {
+                "count": 6,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 492
+            },
+            "pty_support": {
+              "sampledFrames": 6,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 6,
+                "min": 38510592,
+                "p50": 38510592,
+                "p95": 38510592,
+                "max": 38510592
+              },
+              "privateCommitBytes": {
+                "count": 6,
+                "min": 6254592,
+                "p50": 6254592,
+                "p95": 6254592,
+                "max": 6254592
+              },
+              "cpuOneCorePercent": {
+                "count": 6,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 24,
+              "writeTransferBytes": 807172
+            }
+          }
+        },
+        {
+          "name": "switch_sessions",
+          "elapsedMs": 4010.957699999999,
+          "mainCpuMs": 79,
+          "mainCpuOneCorePercent": 1.969604416421545,
+          "mainMemoryKiB": {
+            "residentSet": 253164,
+            "private": 244004,
+            "shared": 1252
+          },
+          "mainHeapBytes": {
+            "rss": 259248128,
+            "heapTotal": 102313984,
+            "heapUsed": 37772764,
+            "external": 2751810,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 102313984,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 102313984,
+            "total_available_size": 4256861368,
+            "used_heap_size": 37772916,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 7333496,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 58352,
+            "used_global_handles_size": 42640,
+            "external_memory": 2751810
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 253164,
+              "privateCommitKiB": 244004
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 116660,
+              "privateCommitKiB": 174368
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47336,
+              "privateCommitKiB": 13228
+            },
+            "Tab": {
+              "count": 5,
+              "workingSetKiB": 567848,
+              "privateCommitKiB": 219112
+            }
+          },
+          "applicationWorkingSetKiB": 985008,
+          "applicationPrivateCommitKiB": 650712,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 256000,
+            "subscribers": 4,
+            "windows": 4,
+            "attachments": 4,
+            "titleTimers": 4,
+            "lifecycleWatchers": 4,
+            "identityBindings": 4,
+            "identitySources": 16
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 11,
+            "MessagePort": 4,
+            "Timeout": 9
+          },
+          "ipc": {
+            "statusEvents": 4,
+            "statusChars": 258762,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11610538,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13173076,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 15934248,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 12651276,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7756516,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 8,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 1008181248,
+                "p50": 1008939008,
+                "p95": 1009135616,
+                "max": 1009135616
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 711876608,
+                "p50": 712800256,
+                "p95": 713031680,
+                "max": 713031680
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 116.0799252073831,
+                "max": 116.0799252073831
+              },
+              "readTransferBytes": 400286,
+              "writeTransferBytes": 306100
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 178425856,
+                "p50": 178425856,
+                "p95": 178425856,
+                "max": 178425856
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 61272064,
+                "p50": 61272064,
+                "p95": 61272064,
+                "max": 61272064
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 496
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38510592,
+                "p50": 38510592,
+                "p95": 38510592,
+                "max": 38510592
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6254592,
+                "p50": 6254592,
+                "p95": 6254592,
+                "max": 6254592
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 129024
+            }
+          }
+        },
+        {
+          "name": "exited_history_windows",
+          "elapsedMs": 4014.6020999999964,
+          "mainCpuMs": 0,
+          "mainCpuOneCorePercent": 0,
+          "mainMemoryKiB": {
+            "residentSet": 160148,
+            "private": 140344,
+            "shared": 1252
+          },
+          "mainHeapBytes": {
+            "rss": 164171776,
+            "heapTotal": 10895360,
+            "heapUsed": 8763308,
+            "external": 2703512,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 10895360,
+            "total_heap_size_executable": 1048576,
+            "total_physical_size": 10895360,
+            "total_available_size": 4286637928,
+            "used_heap_size": 8763580,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 7333496,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 58352,
+            "used_global_handles_size": 36608,
+            "external_memory": 2703512
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 160084,
+              "privateCommitKiB": 140280
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 113052,
+              "privateCommitKiB": 136448
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47336,
+              "privateCommitKiB": 13228
+            },
+            "Tab": {
+              "count": 5,
+              "workingSetKiB": 560980,
+              "privateCommitKiB": 212720
+            }
+          },
+          "applicationWorkingSetKiB": 881452,
+          "applicationPrivateCommitKiB": 502676,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 256000,
+            "subscribers": 4,
+            "windows": 4,
+            "attachments": 4,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 7,
+            "MessagePort": 4,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11949080,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11144466,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 11027757,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 13653178,
+              "bufferLines": 1028,
+              "fitCalls": 1,
+              "outputComplete": true
+            },
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7760134,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 8,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 902606848,
+                "p50": 904294400,
+                "p95": 913899520,
+                "max": 913899520
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 514740224,
+                "p50": 529006592,
+                "p95": 560697344,
+                "max": 560697344
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 8272,
+              "writeTransferBytes": 9394
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38514688,
+                "p50": 38514688,
+                "p95": 38514688,
+                "max": 38514688
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6258688,
+                "p50": 6258688,
+                "p95": 6258688,
+                "max": 6258688
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "closed_history_windows",
+          "elapsedMs": 4006.6554999999935,
+          "mainCpuMs": 266,
+          "mainCpuOneCorePercent": 6.638953611060408,
+          "mainMemoryKiB": {
+            "residentSet": 149044,
+            "private": 110460,
+            "shared": 724
+          },
+          "mainHeapBytes": {
+            "rss": 152694784,
+            "heapTotal": 10371072,
+            "heapUsed": 9115540,
+            "external": 2718936,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 10371072,
+            "total_heap_size_executable": 1310720,
+            "total_physical_size": 10371072,
+            "total_available_size": 4287414988,
+            "used_heap_size": 9115632,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 7333496,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 58352,
+            "used_global_handles_size": 34688,
+            "external_memory": 2718936
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 149044,
+              "privateCommitKiB": 110460
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 113252,
+              "privateCommitKiB": 151600
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47340,
+              "privateCommitKiB": 13232
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 112256,
+              "privateCommitKiB": 43628
+            }
+          },
+          "applicationWorkingSetKiB": 421892,
+          "applicationPrivateCommitKiB": 318920,
+          "resources": {
+            "sessions": 4,
+            "bufferedChars": 256000,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 7,
+            "Timeout": 5
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7764752,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 432017408,
+                "p50": 437790720,
+                "p95": 443895808,
+                "max": 443895808
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 326574080,
+                "p50": 334288896,
+                "p95": 357548032,
+                "max": 357548032
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 268455553,
+              "writeTransferBytes": 85088
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 5,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 533803008,
+                "max": 533803008
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 182415360,
+                "max": 182415360
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 2048,
+              "writeTransferBytes": 1792
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38514688,
+                "p50": 38514688,
+                "p95": 38514688,
+                "max": 38514688
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6258688,
+                "p50": 6258688,
+                "p95": 6258688,
+                "max": 6258688
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "after_terminal_churn",
+          "elapsedMs": 4001.6350999999995,
+          "mainCpuMs": 16,
+          "mainCpuOneCorePercent": 0.3998365568114894,
+          "mainMemoryKiB": {
+            "residentSet": 150912,
+            "private": 110996,
+            "shared": 724
+          },
+          "mainHeapBytes": {
+            "rss": 154607616,
+            "heapTotal": 14565376,
+            "heapUsed": 10372524,
+            "external": 2735076,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14565376,
+            "total_heap_size_executable": 1572864,
+            "total_physical_size": 14565376,
+            "total_available_size": 4285630196,
+            "used_heap_size": 10372804,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 7333496,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 67552,
+            "used_global_handles_size": 52464,
+            "external_memory": 2735076
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 150912,
+              "privateCommitKiB": 110996
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 113544,
+              "privateCommitKiB": 142892
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47200,
+              "privateCommitKiB": 13084
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 112260,
+              "privateCommitKiB": 43628
+            }
+          },
+          "applicationWorkingSetKiB": 423916,
+          "applicationPrivateCommitKiB": 310600,
+          "resources": {
+            "sessions": 24,
+            "bufferedChars": 261250,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 27,
+            "Timeout": 4
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7769410,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 435556352,
+                "p50": 439173120,
+                "p95": 446488576,
+                "max": 446488576
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 319647744,
+                "p50": 325888000,
+                "p95": 345317376,
+                "max": 345317376
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 93.14233937789861,
+                "max": 93.14233937789861
+              },
+              "readTransferBytes": 473789095,
+              "writeTransferBytes": 362446
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 2,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 151597056,
+                "max": 151597056
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 51949568,
+                "max": 51949568
+              },
+              "cpuOneCorePercent": {
+                "count": 3,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 5,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38514688,
+                "p50": 38514688,
+                "p95": 48136192,
+                "max": 48136192
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 6258688,
+                "p50": 6258688,
+                "p95": 7798784,
+                "max": 7798784
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        },
+        {
+          "name": "idle_recovery",
+          "elapsedMs": 4002.964200000002,
+          "mainCpuMs": 15,
+          "mainCpuOneCorePercent": 0.37472231203066947,
+          "mainMemoryKiB": {
+            "residentSet": 132048,
+            "private": 92492,
+            "shared": 724
+          },
+          "mainHeapBytes": {
+            "rss": 135360512,
+            "heapTotal": 14565376,
+            "heapUsed": 10561840,
+            "external": 2798602,
+            "arrayBuffers": 0
+          },
+          "mainHeapStatistics": {
+            "total_heap_size": 14565376,
+            "total_heap_size_executable": 1572864,
+            "total_physical_size": 14565376,
+            "total_available_size": 4285441000,
+            "used_heap_size": 10562000,
+            "heap_size_limit": 4294705152,
+            "malloced_memory": 149540,
+            "peak_malloced_memory": 7333496,
+            "does_zap_garbage": 0,
+            "number_of_native_contexts": 2,
+            "number_of_detached_contexts": 0,
+            "total_global_handles_size": 67552,
+            "used_global_handles_size": 52672,
+            "external_memory": 2798602
+          },
+          "roles": {
+            "Browser": {
+              "count": 1,
+              "workingSetKiB": 132048,
+              "privateCommitKiB": 92492
+            },
+            "GPU": {
+              "count": 1,
+              "workingSetKiB": 119884,
+              "privateCommitKiB": 224184
+            },
+            "Utility": {
+              "count": 1,
+              "workingSetKiB": 47112,
+              "privateCommitKiB": 12932
+            },
+            "Tab": {
+              "count": 1,
+              "workingSetKiB": 108212,
+              "privateCommitKiB": 39592
+            }
+          },
+          "applicationWorkingSetKiB": 407256,
+          "applicationPrivateCommitKiB": 369200,
+          "resources": {
+            "sessions": 24,
+            "bufferedChars": 261250,
+            "subscribers": 0,
+            "windows": 0,
+            "attachments": 0,
+            "titleTimers": 0,
+            "lifecycleWatchers": 0,
+            "identityBindings": 0,
+            "identitySources": 0
+          },
+          "nodeResourceCounts": {
+            "PipeWrap": 27,
+            "Timeout": 1
+          },
+          "ipc": {
+            "statusEvents": 0,
+            "statusChars": 0,
+            "outputEvents": 0,
+            "outputChars": 0,
+            "resizeCalls": 0
+          },
+          "renderers": [
+            {
+              "visible": true,
+              "minimized": false,
+              "visibilityState": "hidden",
+              "heapUsedBytes": 7385855,
+              "bufferLines": null,
+              "fitCalls": null,
+              "outputComplete": null
+            }
+          ],
+          "processGroups": {
+            "codedeck": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 417030144,
+                "p50": 417718272,
+                "p95": 417878016,
+                "max": 417878016
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 378060800,
+                "p50": 379185152,
+                "p95": 379412480,
+                "max": 379412480
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 40592,
+              "writeTransferBytes": 40625
+            },
+            "external": {
+              "sampledFrames": 4,
+              "maxProcesses": 0,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            },
+            "pty_support": {
+              "sampledFrames": 4,
+              "maxProcesses": 4,
+              "workingSetBytes": {
+                "count": 4,
+                "min": 38350848,
+                "p50": 38350848,
+                "p95": 38350848,
+                "max": 38350848
+              },
+              "privateCommitBytes": {
+                "count": 4,
+                "min": 5947392,
+                "p50": 5947392,
+                "p95": 5947392,
+                "max": 5947392
+              },
+              "cpuOneCorePercent": {
+                "count": 4,
+                "min": 0,
+                "p50": 0,
+                "p95": 0,
+                "max": 0
+              },
+              "readTransferBytes": 0,
+              "writeTransferBytes": 0
+            }
+          }
+        }
+      ]
+    },
+    "before-settled.json": {
+      "measuredAt": "2026-10-10T17:38:54.563Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.ts": "6c67dedae4395ac56ccd2a4f1f4939cf3ca78a51f10859e10d339dc52cec7741",
+        "src/shared/electron/terminal-output-buffer.ts": null,
+        "src/shared/electron/session-list-cache.ts": "c265a967ef903872934c164593b18a5a0335ab98e53af8e42888a56b658f013d",
+        "src/shared/services/session-service.ts": "cc72334d7ff05c09fa17dec0ea10332d10b2af69bbc9ca3a048faca7ecdf20c2",
+        "src/TerminalApp.tsx": "03a82ce7c8b8741f6faa4642b4400926cf06280e40970f52f09847110def0759"
+      },
+      "compiledBuild": null,
+      "forcedGc": false,
+      "trials": 3,
+      "stream": {
+        "settled": true,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 2001,
+        "statusChars": 127697869,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 3,
+          "min": 18751.819600000003,
+          "p50": 18820.7179,
+          "p95": 18922.939000000002,
+          "max": 18922.939000000002
+        },
+        "cpuMs": {
+          "count": 3,
+          "min": 17985,
+          "p50": 18375,
+          "p95": 18594,
+          "max": 18594
+        },
+        "sampledRssBytes": {
+          "count": 3,
+          "min": 106024960,
+          "p50": 123555840,
+          "p95": 129515520,
+          "max": 129515520
+        },
+        "sampledHeapUsedBytes": {
+          "count": 3,
+          "min": 30810824,
+          "p50": 48656040,
+          "p95": 55828616,
+          "max": 55828616
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 948.9818000000014,
+          "sampledHeapUsedBytes": 64216672,
+          "sampledRssBytes": 148520960
+        },
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 962.8307000000023,
+          "sampledHeapUsedBytes": 64727968,
+          "sampledRssBytes": 135806976
+        },
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 953.2356,
+          "sampledHeapUsedBytes": 63858936,
+          "sampledRssBytes": 163315712
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        },
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        },
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 64.71039999999994,
+          "sampledHeapUsedBytes": 71497728
+        },
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 66.88489999999729,
+          "sampledHeapUsedBytes": 71747616
+        },
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 61.127700000000914,
+          "sampledHeapUsedBytes": 70878248
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 158.5655000000006,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            15.20629999999801,
+            18.150900000000547,
+            15.124100000000908,
+            14.369999999998981,
+            14.70890000000145,
+            14.15179999999964,
+            14.328999999997905,
+            14.459300000002258,
+            14.469300000000658,
+            14.343500000002678,
+            14.757599999997183,
+            13.906599999998434,
+            14.502599999999802,
+            14.833200000000943,
+            14.023699999997916,
+            15.531999999999243,
+            14.761499999996886,
+            14.462200000001758,
+            14.097399999998743,
+            14.402500000000146
+          ]
+        },
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 161.63550000000032,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            15.09820000000036,
+            14.223500000000058,
+            14.044099999999162,
+            14.770100000001548,
+            13.881199999999808,
+            14.796800000000076,
+            16.03399999999965,
+            14.445700000000215,
+            15.267899999998917,
+            15.124199999998382,
+            14.099400000002788,
+            14.384299999997893,
+            14.512199999997392,
+            15.238799999999173,
+            14.091899999999441,
+            14.710300000002462,
+            14.274399999998423,
+            14.192200000001321,
+            15.097600000000966,
+            14.457099999999627
+          ]
+        },
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 191.7584999999999,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            17.508300000001327,
+            14.476200000000972,
+            14.052600000002712,
+            13.957500000000437,
+            14.500599999999395,
+            14.173200000001088,
+            17.251799999998184,
+            14.4958000000006,
+            14.072400000000926,
+            14.128999999997177,
+            14.63799999999901,
+            14.144599999999627,
+            15.274300000000949,
+            14.536299999999756,
+            14.258200000000215,
+            14.09190000000308,
+            14.449099999997998,
+            14.034299999999348,
+            14.325600000000122,
+            14.793400000002293
+          ]
+        }
+      ]
+    },
+    "paired-1-before.json": {
+      "measuredAt": "2026-10-10T18:02:21.491Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.js": "507cc030773f14fbee8bcc4e054e5741d46ca0a725c69231f5d765bedc5f34f5",
+        "src/shared/electron/terminal-output-buffer.js": null,
+        "src/shared/electron/session-list-cache.js": "c80c7e39405ecdb4710fe98f55067569b595196dee08a6f0cf4915624cc220c2",
+        "src/shared/services/session-service.js": "41440a65deec456408814dcb17c7c2cb88f2046f1d7be9a6c8d7c98fb6043184",
+        "src/TerminalApp.js": null
+      },
+      "compiledBuild": "before",
+      "forcedGc": false,
+      "trials": 1,
+      "stream": {
+        "settled": false,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 2001,
+        "statusChars": 127697869,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 1,
+          "min": 18985.160099999997,
+          "p50": 18985.160099999997,
+          "p95": 18985.160099999997,
+          "max": 18985.160099999997
+        },
+        "cpuMs": {
+          "count": 1,
+          "min": 18219,
+          "p50": 18219,
+          "p95": 18219,
+          "max": 18219
+        },
+        "sampledRssBytes": {
+          "count": 1,
+          "min": 138297344,
+          "p50": 138297344,
+          "p95": 138297344,
+          "max": 138297344
+        },
+        "sampledHeapUsedBytes": {
+          "count": 1,
+          "min": 66404472,
+          "p50": 66404472,
+          "p95": 66404472,
+          "max": 66404472
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 917.0256000000008,
+          "sampledHeapUsedBytes": 42146248,
+          "sampledRssBytes": 122949632
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 64.51209999999992,
+          "sampledHeapUsedBytes": 69718520
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 166.17609999999695,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            16.425600000002305,
+            16.325800000002346,
+            14.019100000001345,
+            14.171999999998661,
+            15.270599999999831,
+            14.417300000000978,
+            14.332300000001851,
+            14.654699999999139,
+            14.181300000000192,
+            14.773000000001048,
+            14.644500000002154,
+            14.422699999999168,
+            14.483799999998155,
+            14.675999999999476,
+            14.386199999997189,
+            14.484999999996944,
+            14.242099999999482,
+            14.375800000001618,
+            14.087399999996705,
+            14.616099999999278
+          ]
+        }
+      ]
+    },
+    "paired-2-after.json": {
+      "measuredAt": "2026-10-10T18:02:41.687Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.js": "fd6d6526196cb51afb1e9b27834bdc719d6115b232ec12cc4eae802c6d23a5cb",
+        "src/shared/electron/terminal-output-buffer.js": "9553a63e7cf9056fda9d4734fa2dbd755c30dce7e9cccda1e54fbee05472973a",
+        "src/shared/electron/session-list-cache.js": "6adc9f2da0d5f22c5b80c08dd50446b8f81dcc5cd2ae643294d8b64b2b2e59ed",
+        "src/shared/services/session-service.js": "41440a65deec456408814dcb17c7c2cb88f2046f1d7be9a6c8d7c98fb6043184",
+        "src/TerminalApp.js": null
+      },
+      "compiledBuild": "after",
+      "forcedGc": false,
+      "trials": 1,
+      "stream": {
+        "settled": false,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 1,
+        "statusChars": 386,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 1,
+          "min": 18355.0118,
+          "p50": 18355.0118,
+          "p95": 18355.0118,
+          "max": 18355.0118
+        },
+        "cpuMs": {
+          "count": 1,
+          "min": 17859,
+          "p50": 17859,
+          "p95": 17859,
+          "max": 17859
+        },
+        "sampledRssBytes": {
+          "count": 1,
+          "min": 95182848,
+          "p50": 95182848,
+          "p95": 95182848,
+          "max": 95182848
+        },
+        "sampledHeapUsedBytes": {
+          "count": 1,
+          "min": 22343208,
+          "p50": 22343208,
+          "p95": 22343208,
+          "max": 22343208
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 921.714899999999,
+          "sampledHeapUsedBytes": 15747464,
+          "sampledRssBytes": 109244416
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 66.68829999999798,
+          "sampledHeapUsedBytes": 25954048
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 162.1941999999981,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            15.857799999997951,
+            14.34610000000248,
+            13.975600000001577,
+            15.162199999998847,
+            14.550499999997555,
+            14.370900000001711,
+            14.729200000001583,
+            14.094900000000052,
+            14.36620000000039,
+            14.309199999999691,
+            13.784099999997125,
+            14.442500000001019,
+            14.48569999999745,
+            14.044299999997747,
+            14.47019999999975,
+            14.75460000000021,
+            14.32050000000163,
+            14.043900000000576,
+            14.380400000001828,
+            14.615999999998166
+          ]
+        }
+      ]
+    },
+    "paired-3-after.json": {
+      "measuredAt": "2026-10-10T18:03:01.988Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.js": "fd6d6526196cb51afb1e9b27834bdc719d6115b232ec12cc4eae802c6d23a5cb",
+        "src/shared/electron/terminal-output-buffer.js": "9553a63e7cf9056fda9d4734fa2dbd755c30dce7e9cccda1e54fbee05472973a",
+        "src/shared/electron/session-list-cache.js": "6adc9f2da0d5f22c5b80c08dd50446b8f81dcc5cd2ae643294d8b64b2b2e59ed",
+        "src/shared/services/session-service.js": "41440a65deec456408814dcb17c7c2cb88f2046f1d7be9a6c8d7c98fb6043184",
+        "src/TerminalApp.js": null
+      },
+      "compiledBuild": "after",
+      "forcedGc": false,
+      "trials": 1,
+      "stream": {
+        "settled": false,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 1,
+        "statusChars": 386,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 1,
+          "min": 18426.2805,
+          "p50": 18426.2805,
+          "p95": 18426.2805,
+          "max": 18426.2805
+        },
+        "cpuMs": {
+          "count": 1,
+          "min": 17985,
+          "p50": 17985,
+          "p95": 17985,
+          "max": 17985
+        },
+        "sampledRssBytes": {
+          "count": 1,
+          "min": 93270016,
+          "p50": 93270016,
+          "p95": 93270016,
+          "max": 93270016
+        },
+        "sampledHeapUsedBytes": {
+          "count": 1,
+          "min": 13552456,
+          "p50": 13552456,
+          "p95": 13552456,
+          "max": 13552456
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 934.9622000000018,
+          "sampledHeapUsedBytes": 41782944,
+          "sampledRssBytes": 110321664
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 67.22239999999874,
+          "sampledHeapUsedBytes": 21246368
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 163.880799999999,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            15.635099999999511,
+            15.020000000000437,
+            14.185199999999895,
+            14.376899999999296,
+            14.493600000001607,
+            14.384699999998702,
+            14.150499999999738,
+            14.812200000000303,
+            14.628300000000309,
+            26.615399999998772,
+            14.424399999999878,
+            14.228600000002189,
+            14.241699999998673,
+            14.504799999998795,
+            14.501499999998487,
+            13.99409999999989,
+            14.354699999999866,
+            14.288800000002084,
+            13.897000000000844,
+            14.611399999997957
+          ]
+        }
+      ]
+    },
+    "paired-4-before.json": {
+      "measuredAt": "2026-10-10T18:03:22.759Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.js": "507cc030773f14fbee8bcc4e054e5741d46ca0a725c69231f5d765bedc5f34f5",
+        "src/shared/electron/terminal-output-buffer.js": null,
+        "src/shared/electron/session-list-cache.js": "c80c7e39405ecdb4710fe98f55067569b595196dee08a6f0cf4915624cc220c2",
+        "src/shared/services/session-service.js": "41440a65deec456408814dcb17c7c2cb88f2046f1d7be9a6c8d7c98fb6043184",
+        "src/TerminalApp.js": null
+      },
+      "compiledBuild": "before",
+      "forcedGc": false,
+      "trials": 1,
+      "stream": {
+        "settled": false,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 2001,
+        "statusChars": 127697869,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 1,
+          "min": 18955.5802,
+          "p50": 18955.5802,
+          "p95": 18955.5802,
+          "max": 18955.5802
+        },
+        "cpuMs": {
+          "count": 1,
+          "min": 18453,
+          "p50": 18453,
+          "p95": 18453,
+          "max": 18453
+        },
+        "sampledRssBytes": {
+          "count": 1,
+          "min": 128081920,
+          "p50": 128081920,
+          "p95": 128081920,
+          "max": 128081920
+        },
+        "sampledHeapUsedBytes": {
+          "count": 1,
+          "min": 55912352,
+          "p50": 55912352,
+          "p95": 55912352,
+          "max": 55912352
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 896.5105000000003,
+          "sampledHeapUsedBytes": 42145984,
+          "sampledRssBytes": 122552320
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 58.40149999999994,
+          "sampledHeapUsedBytes": 69753960
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 158.03039999999964,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            18.23189999999886,
+            14.372599999998783,
+            14.262900000001537,
+            14.177100000000792,
+            14.75369999999748,
+            14.095100000002276,
+            14.069200000001729,
+            14.437300000001414,
+            14.741799999999785,
+            14.38839999999982,
+            16.07839999999851,
+            14.118399999999383,
+            14.359400000001187,
+            16.38170000000173,
+            13.974600000001374,
+            13.935499999999593,
+            14.45509999999922,
+            13.826399999998102,
+            14.04870000000301,
+            14.458199999997305
+          ]
+        }
+      ]
+    },
+    "paired-5-before.json": {
+      "measuredAt": "2026-10-10T18:03:43.527Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.js": "507cc030773f14fbee8bcc4e054e5741d46ca0a725c69231f5d765bedc5f34f5",
+        "src/shared/electron/terminal-output-buffer.js": null,
+        "src/shared/electron/session-list-cache.js": "c80c7e39405ecdb4710fe98f55067569b595196dee08a6f0cf4915624cc220c2",
+        "src/shared/services/session-service.js": "41440a65deec456408814dcb17c7c2cb88f2046f1d7be9a6c8d7c98fb6043184",
+        "src/TerminalApp.js": null
+      },
+      "compiledBuild": "before",
+      "forcedGc": false,
+      "trials": 1,
+      "stream": {
+        "settled": false,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 2001,
+        "statusChars": 127697869,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 1,
+          "min": 18926.411,
+          "p50": 18926.411,
+          "p95": 18926.411,
+          "max": 18926.411
+        },
+        "cpuMs": {
+          "count": 1,
+          "min": 17657,
+          "p50": 17657,
+          "p95": 17657,
+          "max": 17657
+        },
+        "sampledRssBytes": {
+          "count": 1,
+          "min": 91832320,
+          "p50": 91832320,
+          "p95": 91832320,
+          "max": 91832320
+        },
+        "sampledHeapUsedBytes": {
+          "count": 1,
+          "min": 20939088,
+          "p50": 20939088,
+          "p95": 20939088,
+          "max": 20939088
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 200,
+          "retainedOutputChars": 12800000,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 941.8372999999992,
+          "sampledHeapUsedBytes": 44223008,
+          "sampledRssBytes": 141934592
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 2
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": false,
+          "elapsedMs": 64.0747999999985,
+          "sampledHeapUsedBytes": 71964176
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 177.40309999999954,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            16.661700000000565,
+            14.173500000000786,
+            14.483899999999267,
+            13.844699999997829,
+            14.499400000000605,
+            15.11200000000099,
+            13.843699999997625,
+            13.805899999999383,
+            14.237700000001496,
+            13.737400000001799,
+            14.184499999999389,
+            14.368500000000495,
+            13.780800000000454,
+            12.848700000002282,
+            13.070400000000518,
+            14.757200000000012,
+            14.541999999997643,
+            14.349200000000565,
+            14.218899999999849,
+            14.282100000000355
+          ]
+        }
+      ]
+    },
+    "paired-6-after.json": {
+      "measuredAt": "2026-10-10T18:04:03.914Z",
+      "node": "v22.23.1",
+      "hashes": {
+        "src/shared/electron/terminal-session-manager.js": "fd6d6526196cb51afb1e9b27834bdc719d6115b232ec12cc4eae802c6d23a5cb",
+        "src/shared/electron/terminal-output-buffer.js": "9553a63e7cf9056fda9d4734fa2dbd755c30dce7e9cccda1e54fbee05472973a",
+        "src/shared/electron/session-list-cache.js": "6adc9f2da0d5f22c5b80c08dd50446b8f81dcc5cd2ae643294d8b64b2b2e59ed",
+        "src/shared/services/session-service.js": "41440a65deec456408814dcb17c7c2cb88f2046f1d7be9a6c8d7c98fb6043184",
+        "src/TerminalApp.js": null
+      },
+      "compiledBuild": "after",
+      "forcedGc": false,
+      "trials": 1,
+      "stream": {
+        "settled": false,
+        "chunks": 2000,
+        "outputChars": 1006000,
+        "statusEvents": 1,
+        "statusChars": 386,
+        "bufferedChars": 64000,
+        "identicalOutput": true,
+        "elapsedMs": {
+          "count": 1,
+          "min": 18451.7306,
+          "p50": 18451.7306,
+          "p95": 18451.7306,
+          "max": 18451.7306
+        },
+        "cpuMs": {
+          "count": 1,
+          "min": 17702,
+          "p50": 17702,
+          "p95": 17702,
+          "max": 17702
+        },
+        "sampledRssBytes": {
+          "count": 1,
+          "min": 100360192,
+          "p50": 100360192,
+          "p95": 100360192,
+          "max": 100360192
+        },
+        "sampledHeapUsedBytes": {
+          "count": 1,
+          "min": 32041832,
+          "p50": 32041832,
+          "p95": 32041832,
+          "max": 32041832
+        }
+      },
+      "churn": [
+        {
+          "createdAndClosed": 200,
+          "retainedSessions": 0,
+          "retainedOutputChars": 0,
+          "activePtyListeners": 0,
+          "retainedDisposers": 200,
+          "elapsedMs": 985.2067999999999,
+          "sampledHeapUsedBytes": 33530904,
+          "sampledRssBytes": 114118656
+        }
+      ],
+      "exitedHistory": [
+        {
+          "status": "exited",
+          "historyPreserved": true,
+          "listenersAfterExit": 0
+        }
+      ],
+      "cache": [
+        {
+          "requests": 4000,
+          "hotCacheHit": true,
+          "oldestEntryReloaded": true,
+          "elapsedMs": 63.91279999999824,
+          "sampledHeapUsedBytes": 21175032
+        }
+      ],
+      "index": [
+        {
+          "indexEntries": 20000,
+          "titleLookups": 500,
+          "warmTitleLookupMs": 166.6752000000015,
+          "pageSessions": 50,
+          "pageTimesMs": [
+            16.217000000000553,
+            14.927499999997963,
+            14.539100000001781,
+            16.404999999998836,
+            18.942399999999907,
+            15.052700000000186,
+            16.28479999999763,
+            14.112900000000081,
+            15.319299999999203,
+            15.907499999997526,
+            16.641100000000733,
+            15.232099999997445,
+            18.103900000001886,
+            21.21089999999822,
+            15.184100000002218,
+            14.84649999999965,
+            16.549299999998766,
+            16.082000000002154,
+            15.996699999999691,
+            16.9390999999996
+          ]
+        }
+      ]
+    }
+  }
+}

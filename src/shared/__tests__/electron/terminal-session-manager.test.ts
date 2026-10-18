@@ -65,6 +65,279 @@ describe("TerminalSessionManager", () => {
     vi.useRealTimers();
   });
 
+  async function codexSession(intervalMs = 0, limit = -1) {
+    const onActivityChange = vi.fn();
+    const manager = new TerminalSessionManager({ createPtyProcess: () => fakePty, onActivityChange });
+    const snapshot = await manager.createSession({
+      provider: "codex", cwd: "C:/test", commandExecutable: "codex", commandArgs: [], env: {},
+      autoContinue: { enabled: true, limit, prompt: "继续", keywords: ["high demand", "503"], intervalMs },
+    });
+    return { manager, id: snapshot.sessionId, onActivityChange };
+  }
+
+  it("preserves the real 65-second retry deadline through focus events at 48 seconds", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { manager, id } = await codexSession(65_608);
+    const onStatus = vi.fn();
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus });
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    const scheduled = manager.getSnapshot(id)?.autoContinueSchedule;
+    const statuses = onStatus.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(48_791);
+    manager.sendInput(id, "\x1b[I");
+    manager.sendInput(id, "\x1b[O");
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toEqual(scheduled);
+    expect(onStatus).toHaveBeenCalledTimes(statuses);
+    await vi.advanceTimersByTimeAsync(16_817);
+    expect(fakePty.writes).toEqual(["\x1b[I", "\x1b[O", "继续\r"]);
+    expect(manager.getSnapshot(id)?.autoContinue.matchCount).toBe(1);
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeUndefined();
+  });
+
+  it("forwards mouse and device replies without changing queue or polluting the next blank Enter", async () => {
+    vi.useFakeTimers();
+    const { manager, id } = await codexSession(5_000);
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus: vi.fn() });
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    const packets = ["\x1b[<0;12;34M", "\x1b[?1;2c", "\x1b[0n", "\x1b]11;rgb:0000/0000/0000\x1b\\"];
+    for (const packet of packets) manager.sendInput(id, packet);
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeDefined();
+    manager.sendInput(id, "\r");
+    expect(manager.getSnapshot(id)?.activity).toBe("idle");
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fakePty.writes).toEqual([...packets, "\r"]);
+  });
+
+  it.each(["\x1b[Ityped", "\x1b[A", "\x1b", "\x03", "\x1b[200~\x1b[I\x1b[201~", "\x1b[1;2R"])("keeps actual/ambiguous input %j cancelling and forwarded", async (data) => {
+    vi.useFakeTimers();
+    const { manager, id } = await codexSession(5_000);
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus: vi.fn() });
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    manager.sendInput(id, data);
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fakePty.writes).toEqual([data]);
+  });
+
+  it("recognizes query-correlated and fragmented replies without polluting submitted input", async () => {
+    const { manager, id } = await codexSession();
+    fakePty.emitData("\x1b[6n");
+    manager.sendInput(id, "\x1b[1;2R");
+    manager.sendInput(id, "\x1b[");
+    manager.sendInput(id, "I");
+    manager.sendInput(id, "\r");
+    expect(manager.getSnapshot(id)?.activity).toBe("idle");
+    expect(fakePty.writes).toEqual(["\x1b[1;2R", "\x1b[", "I", "\r"]);
+  });
+
+  it("does not let an old turn's cursor query exempt a new Shift+F3 key from cancellation", async () => {
+    vi.useFakeTimers();
+    const { manager, id } = await codexSession(5_000);
+    fakePty.emitData("\x1b[6n");
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    manager.sendInput(id, "\x1b[1;2R");
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeUndefined();
+    expect(fakePty.writes).toEqual(["\x1b[1;2R"]);
+  });
+
+  it("publishes the actual sampled queue, not its mean, and clones schedule metadata", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const { manager, id } = await codexSession(10_000);
+    manager.updateAutoContinueConfig(id, { intervalMode: "normal", intervalStdDevMs: 2_000 });
+    const onStatus = vi.fn();
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus });
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    const schedule = manager.getSnapshot(id)?.autoContinueSchedule;
+    expect(schedule?.phase).toBe("waiting");
+    expect(schedule?.delayMs).toBe(7_645);
+    expect(schedule?.dueAtMs).toBe(8_645);
+    expect(schedule?.queuedAtMs).toBe(1_000);
+    expect(onStatus.mock.calls.at(-1)?.[0].autoContinueSchedule).toEqual(schedule);
+    schedule!.dueAtMs = 999;
+    expect(manager.getSnapshot(id)?.autoContinueSchedule?.dueAtMs).toBe(8_645);
+    await vi.advanceTimersByTimeAsync(7_645);
+    expect(fakePty.writes).toEqual(["继续\r"]);
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeUndefined();
+    expect(onStatus.mock.calls.at(-1)?.[0].autoContinueSchedule).toBeUndefined();
+    random.mockRestore();
+  });
+
+  it("publishes renderer-wait state when delay expires and clears it on successful send", async () => {
+    vi.useFakeTimers();
+    const { manager, id } = await codexSession(1_000);
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(manager.getSnapshot(id)?.autoContinueSchedule?.phase).toBe("waiting_for_renderer");
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus: vi.fn() });
+    expect(fakePty.writes).toEqual(["继续\r"]);
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeUndefined();
+  });
+
+  it.each(["success", "pause", "disable", "input", "switch", "exit", "close"])("publishes cancellation on %s without sending", async (reason) => {
+    vi.useFakeTimers();
+    const { manager, id } = await codexSession(1_000);
+    const onStatus = vi.fn();
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus });
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeDefined();
+    if (reason === "success") manager.reportTurnLifecycle(id, "completed");
+    else if (reason === "pause") manager.updateAutoContinueConfig(id, { paused: true });
+    else if (reason === "disable") manager.updateAutoContinueConfig(id, { enabled: false });
+    else if (reason === "input") manager.sendInput(id, "x");
+    else if (reason === "switch") manager.resetProviderSession(id);
+    else if (reason === "exit") fakePty.emitExit({ exitCode: 0 });
+    else await manager.closeSession(id);
+    expect(onStatus.mock.calls.at(-1)?.[0].autoContinueSchedule).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fakePty.writes).toEqual(reason === "input" ? ["x"] : []);
+  });
+
+  it("publishes a write failure instead of claiming the queued input was sent", async () => {
+    const { manager, id } = await codexSession();
+    const events = vi.fn();
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus: events });
+    vi.spyOn(fakePty, "write").mockImplementation(() => { throw new Error("test pipe closed"); });
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toMatchObject({ phase: "send_failed", error: "test pipe closed" });
+    expect(manager.getSnapshot(id)?.activity).toBe("idle");
+    expect(events.mock.calls.at(-1)?.[0].autoContinueSchedule.phase).toBe("send_failed");
+  });
+
+  it("preserves a failed send through renderer reattachment until new input cancels it", async () => {
+    const { manager, id } = await codexSession();
+    const detach = manager.attachSession(id, { onOutput: vi.fn(), onStatus: vi.fn() });
+    const write = vi.spyOn(fakePty, "write").mockImplementation(() => { throw new Error("test pipe closed"); });
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand", retryable: true });
+    detach();
+    const onStatus = vi.fn();
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus });
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toMatchObject({ phase: "send_failed", error: "test pipe closed" });
+    expect(onStatus.mock.calls.at(-1)?.[0].autoContinueSchedule?.phase).toBe("send_failed");
+    expect(write).toHaveBeenCalledTimes(1);
+    write.mockRestore();
+    manager.sendInput(id, "new request\r");
+    expect(manager.getSnapshot(id)?.autoContinueSchedule).toBeUndefined();
+  });
+
+  it.each(["completed", "failed"] as const)("keeps an authoritative %s turn idle through old Working redraws", async (phase) => {
+    const { manager, id } = await codexSession();
+    manager.sendInput(id, "test\r");
+    fakePty.emitData("Working (1s • esc to interrupt)");
+    manager.reportTurnLifecycle(id, phase);
+    fakePty.emitData("\r\nWorking (1s • esc to interrupt)");
+    expect(manager.getSnapshot(id)?.activity).toBe("idle");
+    manager.sendInput(id, "next\r");
+    expect(manager.getSnapshot(id)?.activity).toBe("busy");
+  });
+
+  it("emits authoritative completion once after a stable prompt fallback", async () => {
+    vi.useFakeTimers();
+    const { manager, id, onActivityChange } = await codexSession();
+    manager.sendInput(id, "test\r");
+    fakePty.emitData("answer\r\n› ");
+    await vi.advanceTimersByTimeAsync(250);
+    manager.reportTurnLifecycle(id, "completed", undefined, { turnId: undefined });
+    manager.reportTurnLifecycle(id, "completed");
+    expect(onActivityChange.mock.calls.filter(([event]) => event.reason === "turn_completed")).toHaveLength(1);
+    expect(manager.getSnapshot(id)?.activity).toBe("idle");
+  });
+
+  it("settles the screenshot completion without an identity/lifecycle watcher and keeps a new submission busy", async () => {
+    vi.useFakeTimers();
+    const { manager, id, onActivityChange } = await codexSession();
+    manager.sendInput(id, "inspect repository\r");
+    fakePty.emitData("› inspect repository\r\nWorking (83m • esc to interrupt)\r\n");
+    fakePty.emitData([
+      "• completed result", "  Worked for 1h 23m 3s • 02:34",
+      "› Ask Codex to do anything", "  GPT-6-Astra xhigh · D:\\CodeDeck",
+    ].join("\r\n"));
+    await vi.advanceTimersByTimeAsync(249);
+    expect(manager.getSnapshot(id)?.activity).toBe("busy");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(manager.getSnapshot(id)?.activity).toBe("idle");
+    expect(onActivityChange.mock.calls.filter(([event]) => event.reason === "idle_prompt")).toHaveLength(1);
+    fakePty.emitData("\r\nWorking (83m • esc to interrupt)");
+    expect(manager.getSnapshot(id)?.activity).toBe("idle");
+    manager.sendInput(id, "new task\r");
+    fakePty.emitData("› new task\r\nWorking (1s • esc to interrupt)\r\n› Ask Codex to do anything");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(manager.getSnapshot(id)?.activity).toBe("busy");
+    expect(manager.getSnapshot(id)?.autoContinue.matchCount).toBe(0);
+  });
+
+  it("ignores old completed events after a new submission and accepts the new turn", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const { manager, id } = await codexSession();
+    manager.sendInput(id, "first\r");
+    manager.reportTurnLifecycle(id, "started", undefined, { turnId: "first", timestampMs: 1_001 });
+    manager.reportTurnLifecycle(id, "completed", undefined, { turnId: "first", timestampMs: 1_002 });
+    vi.setSystemTime(2_000);
+    manager.sendInput(id, "second\r");
+    manager.reportTurnLifecycle(id, "completed", undefined, { turnId: "first", timestampMs: 1_002 });
+    expect(manager.getSnapshot(id)?.activity).toBe("busy");
+    manager.reportTurnLifecycle(id, "started", undefined, { turnId: "second", timestampMs: 2_001 });
+    manager.reportTurnLifecycle(id, "completed", undefined, { turnId: "first", timestampMs: 2_002 });
+    expect(manager.getSnapshot(id)?.activity).toBe("busy");
+    manager.reportTurnLifecycle(id, "completed", undefined, { turnId: "second", timestampMs: 2_003 });
+    expect(manager.getSnapshot(id)?.activity).toBe("idle");
+  });
+
+  it("never authorizes Codex retries from prose, user echo or split reconnect text", async () => {
+    const { manager, id } = await codexSession();
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus: vi.fn() });
+    manager.sendInput(id, "explain high demand\r");
+    fakePty.emitData("high demand 503 is a temporary server error\nReconnecting... 1/5");
+    fakePty.emitData(" high demand");
+    manager.reportTurnLifecycle(id, "completed");
+    fakePty.emitData("■ high demand 503\n");
+    expect(fakePty.writes).toEqual(["explain high demand\r"]);
+    expect(manager.getSnapshot(id)?.autoContinue.matchCount).toBe(0);
+  });
+
+  it.each(["completed", "submitted", "started", "switched"])("cancels a pending retry on %s", async (change) => {
+    vi.useFakeTimers();
+    const { manager, id } = await codexSession(2_000);
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus: vi.fn() });
+    manager.reportTurnLifecycle(id, "failed", { code: "provider_error", message: "high demand 503", retryable: true });
+    expect(manager.getSnapshot(id)?.autoContinue.matchCount).toBe(1);
+    if (change === "submitted") manager.sendInput(id, "next\r");
+    else if (change === "switched") manager.resetProviderSession(id);
+    else manager.reportTurnLifecycle(id, change === "started" ? "started" : "completed");
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fakePty.writes).toEqual(change === "submitted" ? ["next\r"] : []);
+  });
+
+  it("cancels renderer-deferred retry on success and preserves the cumulative budget", async () => {
+    const { manager, id } = await codexSession(0, 1);
+    const error = { code: "provider_error", message: "high demand 503", retryable: true };
+    manager.reportTurnLifecycle(id, "failed", error);
+    manager.reportTurnLifecycle(id, "completed");
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus: vi.fn() });
+    expect(fakePty.writes).toEqual([]);
+    manager.reportTurnLifecycle(id, "started");
+    manager.reportTurnLifecycle(id, "failed", error);
+    expect(fakePty.writes).toEqual([]);
+    expect(manager.getSnapshot(id)?.autoContinue.matchCount).toBe(1);
+  });
+
+  it("sends one structured retryable failure and ignores auth failure and interrupted turns", async () => {
+    const { manager, id } = await codexSession();
+    manager.attachSession(id, { onOutput: vi.fn(), onStatus: vi.fn() });
+    const error = { code: "provider_error", message: "high demand 503", retryable: true };
+    manager.reportTurnLifecycle(id, "started", undefined, { turnId: "retry" });
+    manager.reportTurnLifecycle(id, "failed", error, { turnId: "retry" });
+    manager.reportTurnLifecycle(id, "failed", error, { turnId: "retry" });
+    expect(fakePty.writes).toEqual(["继续\r"]);
+    manager.reportTurnLifecycle(id, "started", undefined, { turnId: "auth" });
+    manager.reportTurnLifecycle(id, "failed", { ...error, retryable: false }, { turnId: "auth" });
+    expect(fakePty.writes).toEqual(["继续\r"]);
+  });
+
   it("replays buffered output when a renderer attaches later", async () => {
     const manager = new TerminalSessionManager({
       createPtyProcess: vi.fn(() => fakePty),
@@ -135,6 +408,46 @@ describe("TerminalSessionManager", () => {
       "idle->busy:submitted_input",
       "busy->idle:turn_completed",
     ]);
+  });
+
+  it("propagates provider failure lifecycle events even when activity is already idle", async () => {
+    const events: Array<{
+      reason: string;
+      activity: string;
+      error?: { code: string; message: string; retryable: boolean };
+    }> = [];
+    const manager = new TerminalSessionManager({
+      createPtyProcess: vi.fn(() => fakePty),
+      onActivityChange: (event) => events.push(event),
+    });
+    const session = await manager.createSession({
+      provider: "codex",
+      cwd: "C:/workspace/current-project",
+      commandExecutable: "codex",
+      commandArgs: [],
+      env: {},
+      autoContinue: {
+        enabled: false,
+        limit: 1,
+        prompt: "继续",
+        keywords: [],
+      },
+    });
+    const error = {
+      code: "provider_error",
+      message: "unexpected status 503 Service Unavailable",
+      retryable: true,
+    };
+
+    manager.reportTurnLifecycle(session.sessionId, "failed", error);
+
+    expect(manager.getSnapshot(session.sessionId)?.activity).toBe("idle");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      reason: "turn_failed",
+      activity: "idle",
+      error,
+    });
   });
 
   it("does not mark a multiline bracketed paste busy until Enter is sent", async () => {
@@ -367,7 +680,7 @@ describe("TerminalSessionManager", () => {
     });
 
     const session = await manager.createSession({
-      provider: "codex",
+      provider: "claude",
       cwd: "C:/workspace/current-project",
       commandExecutable: "codex",
       commandArgs: ["--profile", "site-test"],
@@ -398,7 +711,7 @@ describe("TerminalSessionManager", () => {
       createPtyProcess: vi.fn(() => fakePty),
     });
     const session = await manager.createSession({
-      provider: "codex",
+      provider: "claude",
       cwd: "C:/workspace/current-project",
       commandExecutable: "codex",
       commandArgs: [],
@@ -433,7 +746,7 @@ describe("TerminalSessionManager", () => {
         createPtyProcess: vi.fn(() => fakePty),
       });
       const session = await manager.createSession({
-        provider: "codex",
+        provider: "claude",
         cwd: "C:/workspace/current-project",
         commandExecutable: "codex",
         commandArgs: [],
@@ -469,7 +782,7 @@ describe("TerminalSessionManager", () => {
       createPtyProcess: vi.fn(() => fakePty),
     });
     const session = await manager.createSession({
-      provider: "codex",
+      provider: "claude",
       cwd: "C:/workspace/current-project",
       commandExecutable: "codex",
       commandArgs: [],
@@ -502,7 +815,7 @@ describe("TerminalSessionManager", () => {
         createPtyProcess: vi.fn(() => fakePty),
       });
       const session = await manager.createSession({
-        provider: "codex",
+        provider: "claude",
         cwd: "C:/workspace/current-project",
         commandExecutable: "codex",
         commandArgs: [],
@@ -542,7 +855,7 @@ describe("TerminalSessionManager", () => {
     });
 
     const session = await manager.createSession({
-      provider: "codex",
+      provider: "claude",
       cwd: "C:/workspace/current-project",
       commandExecutable: "codex",
       commandArgs: ["--profile", "site-test"],
@@ -577,7 +890,7 @@ describe("TerminalSessionManager", () => {
     });
 
     const session = await manager.createSession({
-      provider: "codex",
+      provider: "claude",
       cwd: "C:/workspace/current-project",
       commandExecutable: "codex",
       commandArgs: ["--profile", "site-test"],
@@ -623,7 +936,7 @@ describe("TerminalSessionManager", () => {
     });
 
     const session = await manager.createSession({
-      provider: "codex",
+      provider: "claude",
       cwd: "C:/workspace/current-project",
       commandExecutable: "codex",
       commandArgs: ["--profile", "site-test"],
@@ -656,7 +969,7 @@ describe("TerminalSessionManager", () => {
     });
 
     const session = await manager.createSession({
-      provider: "codex",
+      provider: "claude",
       cwd: "C:/workspace/current-project",
       commandExecutable: "codex",
       commandArgs: ["--profile", "site-test"],
@@ -797,7 +1110,7 @@ describe("TerminalSessionManager", () => {
 
     expect(fakePty.resizes).toEqual([{ cols: 120, rows: 40 }]);
     expect(fakePty.kills).toBe(1);
-    expect(manager.getSnapshot(session.sessionId)?.status).toBe("closed");
+    expect(manager.getSnapshot(session.sessionId)).toBeUndefined();
   });
 
   it("marks the session exited when the PTY exits naturally", async () => {
@@ -891,6 +1204,9 @@ describe("TerminalSessionManager", () => {
     });
 
     fakePty.emitData("service is in high demand");
+    manager.reportTurnLifecycle(session.sessionId, "failed", {
+      code: "provider_error", message: "service is in high demand", retryable: true,
+    });
     expect(fakePty.writes).toEqual(["继续\r"]);
     expect(manager.getSnapshot(session.sessionId)?.autoContinue.remaining).toBe(0);
 

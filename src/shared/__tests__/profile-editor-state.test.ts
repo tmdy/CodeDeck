@@ -43,6 +43,7 @@ function makeDraft(overrides: Partial<ProfileEditorDraft> = {}): ProfileEditorDr
       },
       codex: {
         subagentTarget: "",
+        subagentReasoningEffort: "",
       },
     },
     balanceSessionSelection: "sess-a",
@@ -111,6 +112,7 @@ describe("profile-editor-state", () => {
         codex: {
           subagentTarget: "",
           reasoningEffort: "",
+          subagentReasoningEffort: "",
         },
       },
       permissions: null,
@@ -149,6 +151,7 @@ describe("profile-editor-state", () => {
 
     expect(claudeDraft.advancedModelMapping.claude?.reasoningEffort).toBe("");
     expect(codexDraft.advancedModelMapping.codex?.reasoningEffort).toBe("");
+    expect(codexDraft.advancedModelMapping.codex?.subagentReasoningEffort).toBe("");
   });
 
   it("should drop legacy DeepSeek reasoning effort from selected profile drafts", () => {
@@ -225,6 +228,7 @@ describe("profile-editor-state", () => {
         },
         codex: {
           subagentTarget: "",
+          subagentReasoningEffort: "",
         },
       },
     });
@@ -279,6 +283,60 @@ describe("profile-editor-state", () => {
       }),
       baseline,
     )).toBe(true);
+    expect(hasProfileDraftChanges(
+      makeDraft({
+        advancedModelMapping: {
+          ...baseline.advancedModelMapping,
+          codex: {
+            ...baseline.advancedModelMapping.codex,
+            subagentReasoningEffort: "high",
+          },
+        },
+      }),
+      baseline,
+    )).toBe(true);
+  });
+
+  it("should normalize and preserve Codex subagent reasoning effort independently", () => {
+    const normalized = normalizeProfile({
+      provider: "codex",
+      name: "Codex",
+      url: "https://api.openai.com/v1",
+      key: "sk",
+      advancedModelMapping: {
+        enabled: true,
+        codex: {
+          reasoningEffort: "minimal",
+          subagentTarget: "  gpt-5.6-sol  ",
+          subagentReasoningEffort: " HIGH ",
+        },
+      },
+    } as unknown as Profile);
+
+    expect(normalized.advancedModelMapping?.codex).toEqual({
+      subagentTarget: "gpt-5.6-sol",
+      reasoningEffort: "minimal",
+      subagentReasoningEffort: "high",
+    });
+
+    const draft = buildSelectedProfileDraft(normalized, undefined, "codex");
+    expect(draft.advancedModelMapping.codex).toMatchObject({
+      subagentTarget: "gpt-5.6-sol",
+      reasoningEffort: "minimal",
+      subagentReasoningEffort: "high",
+    });
+
+    const invalid = normalizeProfile({
+      ...normalized,
+      advancedModelMapping: {
+        enabled: true,
+        codex: {
+          ...normalized.advancedModelMapping?.codex,
+          subagentReasoningEffort: "unsupported",
+        },
+      },
+    } as unknown as Profile);
+    expect(invalid.advancedModelMapping?.codex).not.toHaveProperty("subagentReasoningEffort");
   });
 
   it("should migrate the legacy Codex command-line override to a subagent target", () => {
@@ -431,6 +489,20 @@ describe("profile-editor-state", () => {
             claude: {
               ...baseline.advancedModelMapping.claude,
               reasoningEffort: "max",
+            },
+          },
+        }),
+        baseline,
+      ),
+    ).toBe(true);
+    expect(
+      hasOnlyProfileDraftReasoningEffortChange(
+        makeDraft({
+          advancedModelMapping: {
+            ...baseline.advancedModelMapping,
+            codex: {
+              ...baseline.advancedModelMapping.codex,
+              subagentReasoningEffort: "high",
             },
           },
         }),

@@ -158,7 +158,7 @@ export function ParameterSettingsPanel({
         </label>
         <div className="auto-continue-settings-row">
           <label className="auto-continue-compact-field">
-            自动继续次数
+            自动继续累计上限
             <input
               type="number"
               min={-1}

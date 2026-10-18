@@ -30,6 +30,7 @@ import {
   type CheckinResult,
   type CheckinVerificationResult,
 } from "./shared/checkin/types.js";
+import { buildProfileCheckinEntries } from "./shared/checkin/presentation.js";
 import type { ParameterSettings, SavedExtraArg } from "./shared/parameter/types.js";
 import type {
   ListSessionsRequest,
@@ -3555,6 +3556,11 @@ function App() {
     return result;
   }, [state?.balance_checks_by_profile]);
 
+  const checkinEntries = useMemo(
+    () => buildProfileCheckinEntries(profiles, siteBalanceSessionsByBaseUrl, state?.checkin_states_by_account ?? {}),
+    [profiles, siteBalanceSessionsByBaseUrl, state?.checkin_states_by_account],
+  );
+
   const selectedProvider = (state?.selected_provider ?? PROVIDER_CLAUDE) as "claude" | "codex";
   const workingDirectoryFavorites = state?.working_directory_favorites ?? [];
   const profileDraft = useMemo(() => ({
@@ -4273,6 +4279,7 @@ function App() {
               organization: profileOrganization,
               balanceEntries,
               healthEntries: profileHealthEntries,
+              checkinEntries,
               onSelect: stableHandleSelectProfile,
               onReorder: stableHandleReorder,
               onOrganizationChange: stableHandleProfileOrganizationChange,
@@ -4315,6 +4322,7 @@ function App() {
               onRunEnabledCheckins: stableRunEnabledCheckinsAction,
               onToggleAutoCheckin: stableToggleAutoCheckinAction,
               onOpenManualCheckin: stableOpenManualCheckinAction,
+              onBrowserLogin: stableHandleBrowserBalanceSessionLogin,
             }}
             profileEditProps={{
               draft: profileDraft,

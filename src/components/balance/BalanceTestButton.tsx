@@ -4,7 +4,15 @@ import {
   localDateKey,
   type CheckinAccountState,
 } from "../../shared/checkin/types.js";
-import { formatCheckinReward } from "../../shared/checkin/presentation.js";
+import {
+  buildCheckinTitle,
+  checkinStateVariant,
+  formatCheckinDateTime,
+  formatCheckinDiagnosticId,
+  formatCheckinReward,
+  isFailedCheckinState,
+  summarizeCheckinState,
+} from "../../shared/checkin/presentation.js";
 import {
   balanceStateVariant,
   summarizeBalanceState,
@@ -27,6 +35,7 @@ interface BalanceTestButtonProps {
   onRunEnabledCheckins?: () => void;
   onToggleAutoCheckin?: (enabled: boolean) => void;
   onOpenManualCheckin?: () => void;
+  onBrowserLogin?: () => void;
 }
 
 export const BalanceTestButton = memo(function BalanceTestButton({
@@ -44,6 +53,7 @@ export const BalanceTestButton = memo(function BalanceTestButton({
   onRunEnabledCheckins,
   onToggleAutoCheckin,
   onOpenManualCheckin,
+  onBrowserLogin,
 }: BalanceTestButtonProps) {
   const summary = useMemo(() => summarizeBalanceState(state), [state]);
   const canClearFailure = !!(
@@ -80,6 +90,7 @@ export const BalanceTestButton = memo(function BalanceTestButton({
               || checkedInToday
               || actionBusy
               || batchRunning
+              || checkinState?.status === "login_required"
             }
           >
             {verificationRunning
@@ -88,7 +99,7 @@ export const BalanceTestButton = memo(function BalanceTestButton({
                 ? "签到中..."
                 : checkedInToday
                   ? "今日已签到"
-                  : "立即签到"}
+                  : checkinState?.status === "failed" ? "重新签到" : "立即签到"}
           </button>
         )}
         {onRunEnabledCheckins && (
@@ -128,14 +139,28 @@ export const BalanceTestButton = memo(function BalanceTestButton({
         )}
       </div>
       {showCheckinFailure && (
-        <div className="checkin-result">
+        <div className={`checkin-result ${checkinStateVariant(checkinState)}`} role="status" aria-live="polite">
+          <strong><span aria-hidden="true">⚠ </span>{checkinState.trigger === "automatic" ? "自动签到 · " : ""}{checkinSummary}</strong>
           <span>{checkinState.message}</span>
+          {checkinState.last_attempt_at && (
+            <span className="checkin-result-meta">最近尝试：<time dateTime={checkinState.last_attempt_at}>{formatCheckinDateTime(checkinState.last_attempt_at)}</time></span>
+          )}
           {checkinState.diagnostic_run_id && (
             <span>诊断编号：{formatCheckinDiagnosticId(checkinState.diagnostic_run_id)}</span>
           )}
           {checkinState.status === "manual_required" && onOpenManualCheckin && (
-            <button type="button" className="secondary-button small" onClick={onOpenManualCheckin}>
+            <button type="button" className="secondary-button small" onClick={onOpenManualCheckin} disabled={disabled || actionBusy || batchRunning}>
               重新打开验证窗口
+            </button>
+          )}
+          {checkinState.status === "login_required" && onBrowserLogin && (
+            <button type="button" className="secondary-button small" onClick={onBrowserLogin} disabled={disabled || actionBusy || batchRunning}>
+              重新登录
+            </button>
+          )}
+          {checkinState.status === "unsupported" && autoCheckinEnabled && onToggleAutoCheckin && (
+            <button type="button" className="secondary-button small" onClick={() => onToggleAutoCheckin(false)} disabled={disabled || actionBusy || batchRunning}>
+              关闭自动签到
             </button>
           )}
         </div>
@@ -165,18 +190,6 @@ export const BalanceTestButton = memo(function BalanceTestButton({
   );
 });
 
-function summarizeCheckinState(state: CheckinAccountState | null | undefined): string {
-  if (!state) return "";
-  if (state.status === "running") return "签到中";
-  if (state.status === "verifying") return "等待人工验证";
-  if (state.status === "scheduled") return "已安排";
-  if (state.status === "success") return "签到成功";
-  if (state.status === "already_checked") return "今日已签到";
-  if (state.status === "manual_required") return "需要人工验证";
-  if (state.status === "unsupported") return "不支持签到";
-  return "签到失败";
-}
-
 function buildCheckinBadgeLabel(
   state: CheckinAccountState | null | undefined,
   summary: string,
@@ -188,43 +201,4 @@ function buildCheckinBadgeLabel(
     summary,
     state.reward ? formatCheckinReward(state.reward) : "",
   ].filter(Boolean).join(" · ");
-}
-
-function buildCheckinTitle(state: CheckinAccountState | null | undefined): string {
-  if (!state) return "";
-  return [
-    state.message,
-    state.reward ? `奖励：${formatCheckinReward(state.reward)}` : "",
-    state.last_attempt_at ? `最近签到：${formatDateTime(state.last_attempt_at)}` : "",
-    state.diagnostic_run_id ? `诊断编号：${formatCheckinDiagnosticId(state.diagnostic_run_id)}` : "",
-  ].filter(Boolean).join(" · ");
-}
-
-function checkinStateVariant(
-  state: CheckinAccountState | null | undefined,
-): "success" | "danger" | "warning" | "info" | "muted" {
-  if (!state) return "muted";
-  if (state.status === "success" || state.status === "already_checked") return "success";
-  if (state.status === "manual_required") return "warning";
-  if (state.status === "running" || state.status === "verifying" || state.status === "scheduled") {
-    return "info";
-  }
-  if (state.status === "unsupported") return "muted";
-  return "danger";
-}
-
-function isFailedCheckinState(state: CheckinAccountState): boolean {
-  return state.status === "failed"
-    || state.status === "login_required"
-    || state.status === "unsupported"
-    || state.status === "manual_required";
-}
-
-function formatCheckinDiagnosticId(value: string): string {
-  return value.length <= 12 ? value : value.slice(0, 8);
-}
-
-function formatDateTime(value: string): string {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : value;
 }

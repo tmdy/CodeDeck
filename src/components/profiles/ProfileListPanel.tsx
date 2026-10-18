@@ -6,6 +6,7 @@ import {
   type FormEvent,
 } from "react";
 import type { BalanceListEntry } from "../../shared/balance/presentation.js";
+import type { CheckinAttentionEntry } from "../../shared/checkin/presentation.js";
 import type { ProfileHealthListEntry } from "../../shared/profile-health/presentation.js";
 import { itemKey } from "../../shared/profile/keys-internal.js";
 import {
@@ -32,6 +33,7 @@ interface ProfileListPanelProps {
   organization?: ProfileOrganization;
   balanceEntries: Record<ProfileKey, BalanceListEntry>;
   healthEntries?: Record<ProfileKey, ProfileHealthListEntry>;
+  checkinEntries?: Record<ProfileKey, CheckinAttentionEntry>;
   onSelect: (key: ProfileKey) => void;
   onReorder: (orderedKeys: ProfileKey[]) => void;
   onOrganizationChange?: (organization: ProfileOrganization) => void | Promise<void>;
@@ -64,6 +66,7 @@ export const ProfileListPanel = memo(function ProfileListPanel({
   organization,
   balanceEntries,
   healthEntries = {},
+  checkinEntries = {},
   onSelect,
   onReorder,
   onOrganizationChange,
@@ -312,6 +315,7 @@ export const ProfileListPanel = memo(function ProfileListPanel({
           healthLabel={healthEntries[item.key]?.label ?? ""}
           healthStatus={healthEntries[item.key]?.status ?? ""}
           healthTitle={healthEntries[item.key]?.title ?? ""}
+          checkinEntry={checkinEntries[item.key]}
           onSelect={() => onSelect(item.key)}
         />
       </div>

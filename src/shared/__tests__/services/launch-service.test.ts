@@ -84,6 +84,13 @@ describe("LaunchService", () => {
       name: "Local Codex",
       url: "",
       key: "",
+      advancedModelMapping: {
+        enabled: false,
+        codex: {
+          subagentTarget: "ignored-worker",
+          subagentReasoningEffort: "high",
+        },
+      },
     };
     const service = new ProfileService([profile], new MemoryStateAccessor());
     const launchService = new LaunchService(service, {
@@ -108,7 +115,7 @@ describe("LaunchService", () => {
 
     expect(plan.valid).toBe(true);
     expect(plan.command).toBe(
-      `codex resume "session-global" --enable hooks -c model_provider="openai_http" -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `codex resume "session-global" --enable hooks -c model_provider="openai_http" -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} -c tui.terminal_title=['thread-id']`,
     );
     expect(plan.commandArgs).toEqual([
       "resume",
@@ -119,7 +126,12 @@ describe("LaunchService", () => {
       'model_provider="openai_http"',
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
     ]);
+    expect(plan.command).not.toContain("agents.default_subagent_");
+    expect(plan.commandArgs).not.toContain("agents.default_subagent_model=ignored-worker");
+    expect(plan.commandArgs).not.toContain("agents.default_subagent_reasoning_effort=high");
     expect(plan.env.CODEX_HOME).toBe("C:/Users/test/.codex");
     expect(plan.requiredEnvKeys).toEqual(["CODEX_HOME"]);
     expect(plan.codexConfig).toBeUndefined();
@@ -171,6 +183,8 @@ describe("LaunchService", () => {
       "hooks",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
     ]);
     expect(build(nativeProfile, "native", "resume_selected", true).commandArgs).toEqual([
       "resume",
@@ -181,6 +195,8 @@ describe("LaunchService", () => {
       'model_provider="openai"',
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
       "--disable",
       "hooks",
     ]);
@@ -191,6 +207,8 @@ describe("LaunchService", () => {
       "site-a632b8ac583c81de",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
     ]);
     expect(build(managedProfile, "managed", "resume_selected", true).commandArgs).toEqual([
       "resume",
@@ -201,6 +219,8 @@ describe("LaunchService", () => {
       "site-a632b8ac583c81de",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
       "--disable",
       "hooks",
     ]);
@@ -235,10 +255,12 @@ describe("LaunchService", () => {
     expect(plan.commandArgs).toEqual([
       "-c",
       trustedProjectOverride,
+      "-c",
+      "tui.terminal_title=['thread-id']",
     ]);
     expect(plan.commandArgs[1]).not.toContain('"');
     expect(plan.command).toBe(
-      `codex -c "${trustedProjectOverride}"`,
+      `codex -c "${trustedProjectOverride}" -c tui.terminal_title=['thread-id']`,
     );
     expect(runtime).toEqual(originalRuntime);
   });
@@ -823,7 +845,7 @@ describe("LaunchService", () => {
 
     expect(preview.valid).toBe(true);
     expect(preview.command).toBe(
-      `cc --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `cc --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} -c tui.terminal_title=['thread-id']`,
     );
     expect(preview.cwd).toBe("C:/workspace/current-project");
     expect(preview.command).not.toContain("--model");
@@ -838,6 +860,8 @@ describe("LaunchService", () => {
       "site-a632b8ac583c81de",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
     ]);
     expect(plan.codexConfig?.content).toContain('model = "glm-4.6"');
     expect(plan.codexConfig?.content).toContain('base_url = "https://open.bigmodel.cn/api/paas/v4"');
@@ -960,9 +984,11 @@ describe("LaunchService", () => {
       "never",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
     ]);
     expect(plan.command).toBe(
-      `codex --profile site-0fa7d5b4930bc063 --sandbox danger-full-access --ask-for-approval never -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `codex --profile site-0fa7d5b4930bc063 --sandbox danger-full-access --ask-for-approval never -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} -c tui.terminal_title=['thread-id']`,
     );
   });
 
@@ -1011,7 +1037,7 @@ describe("LaunchService", () => {
     expect(plan.env).not.toHaveProperty(apiKeyEnv);
   });
 
-  it("should not generate a global Codex worker mapping from a site model", () => {
+  it("should apply Codex subagent model and reasoning mapping to the managed process only", () => {
     const profile: Profile = {
       provider: "codex",
       name: "Kimi",
@@ -1022,6 +1048,7 @@ describe("LaunchService", () => {
         enabled: true,
         codex: {
           subagentTarget: "gpt-5.5",
+          subagentReasoningEffort: "high",
         },
       },
     };
@@ -1040,10 +1067,69 @@ describe("LaunchService", () => {
     expect(plan.valid).toBe(true);
     expect(plan.codexConfig?.content).toContain('model = "kimi-k2-0711-preview"');
     expect(plan.command).toBe(
-      `codex --profile site-39b645351a70122a -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `codex --profile site-39b645351a70122a -c agents.default_subagent_model=gpt-5.5 -c agents.default_subagent_reasoning_effort=high -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} -c tui.terminal_title=['thread-id']`,
     );
+    expect(plan.commandArgs).toEqual([
+      "--profile",
+      "site-39b645351a70122a",
+      "-c",
+      "agents.default_subagent_model=gpt-5.5",
+      "-c",
+      "agents.default_subagent_reasoning_effort=high",
+      "-c",
+      DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
+    ]);
     expect(plan.commandArgs).not.toContain("--model");
     expect(plan.codexConfig).not.toHaveProperty("workerAgentContent");
+
+    const preview = launchService.buildPreview(profile, makeRuntime({ command_base: "codex" }));
+    expect(preview.command).toContain("-c agents.default_subagent_model=gpt-5.5");
+    expect(preview.command).toContain("-c agents.default_subagent_reasoning_effort=high");
+  });
+
+  it("should apply Codex subagent mapping to native launches without writing global configuration", () => {
+    const profile: Profile = {
+      provider: "codex",
+      name: "Native Codex",
+      url: "",
+      key: "",
+      advancedModelMapping: {
+        enabled: true,
+        codex: {
+          subagentTarget: "native-worker",
+          subagentReasoningEffort: "medium",
+        },
+      },
+    };
+    const service = new ProfileService([profile], new MemoryStateAccessor());
+    const launchService = new LaunchService(service, {
+      getModelMappingsState: () => makeMappings(),
+      codexProfilesRoot: path.join("C:/workspace", "app-data", "codex-profiles"),
+      codexHome: "C:/Users/test/.codex",
+    });
+
+    const plan = launchService.buildExecutionPlan({
+      profile_key: itemKey(profile),
+      provider: "codex",
+      runtime_settings: makeRuntime({ command_base: "codex", startup_mode: "native" }),
+    });
+
+    expect(plan.valid).toBe(true);
+    expect(plan.commandArgs).toEqual([
+      "-c",
+      "agents.default_subagent_model=native-worker",
+      "-c",
+      "agents.default_subagent_reasoning_effort=medium",
+      "-c",
+      DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
+    ]);
+    expect(plan.command).toContain("-c agents.default_subagent_model=native-worker");
+    expect(plan.command).toContain("-c agents.default_subagent_reasoning_effort=medium");
+    expect(plan.codexConfig).toBeUndefined();
   });
 
   it("should pass structured Codex reasoning effort as a config override", () => {
@@ -1057,6 +1143,8 @@ describe("LaunchService", () => {
         enabled: false,
         codex: {
           reasoningEffort: "ultra",
+          subagentTarget: "ignored-worker",
+          subagentReasoningEffort: "high",
         },
       },
     };
@@ -1074,8 +1162,9 @@ describe("LaunchService", () => {
 
     expect(plan.valid).toBe(true);
     expect(plan.command).toBe(
-      `codex --profile site-a5f93b45c3f2dd18 -c model_reasoning_effort=ultra -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `codex --profile site-a5f93b45c3f2dd18 -c model_reasoning_effort=ultra -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} -c tui.terminal_title=['thread-id']`,
     );
+    expect(plan.command).not.toContain("agents.default_subagent_");
     expect(plan.commandArgs).toEqual([
       "--profile",
       "site-a5f93b45c3f2dd18",
@@ -1083,6 +1172,8 @@ describe("LaunchService", () => {
       "model_reasoning_effort=ultra",
       "-c",
       DEFAULT_TRUSTED_PROJECT_OVERRIDE,
+      "-c",
+      "tui.terminal_title=['thread-id']",
     ]);
   });
 
@@ -1113,10 +1204,10 @@ describe("LaunchService", () => {
     });
 
     expect(continuePlan.command).toBe(
-      `codex resume --last --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `codex resume --last --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} -c tui.terminal_title=['thread-id']`,
     );
     expect(selectedPlan.command).toBe(
-      `codex resume "019df0ff-0001" --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `codex resume "019df0ff-0001" --profile site-a632b8ac583c81de -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} -c tui.terminal_title=['thread-id']`,
     );
   });
 
@@ -1410,7 +1501,7 @@ describe("LaunchService", () => {
 
     expect(plan.valid).toBe(true);
     expect(plan.command).toBe(
-      `codex --profile site-2badb974b243c949 -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE}`,
+      `codex --profile site-2badb974b243c949 -c ${DEFAULT_TRUSTED_PROJECT_OVERRIDE} -c tui.terminal_title=['thread-id']`,
     );
     expect(plan.commandArgs).not.toContain("--model");
     expect(plan.codexConfig?.content).toContain('base_url = "https://api.openai.com/v1"');

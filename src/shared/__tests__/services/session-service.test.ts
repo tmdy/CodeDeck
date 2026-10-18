@@ -6,6 +6,7 @@ import {
   assertCanonicalCodexSessionSource,
   encodeClaudeProjectPath,
   findMonitoredTerminalSessionTitle,
+  readCodexSessionTitle,
   getCodexSessionDetail,
   copyCodexSessionBetweenHomes,
   invalidateCodexSessionCache,
@@ -36,6 +37,23 @@ async function setFileTime(filePath: string, isoTime: string): Promise<void> {
 
 describe("session-service", () => {
   const tempDirs: string[] = [];
+
+  it("keeps the last valid appended title through duplicate UUIDs, bad lines and partial writes", async () => {
+    const home = await createTempDir("codex-title-regression-");
+    tempDirs.push(home);
+    const id = "01234567-89ab-cdef-0123-456789abcdef";
+    const index = path.join(home, "session_index.jsonl");
+    const entry = (title: string) => ({ id, thread_name: title, cwd: "C:/test", updated_at: "2026-10-10T00:00:00Z" });
+    await writeJsonl(index, [entry("old")]);
+    expect(await readCodexSessionTitle(home, id)).toBe("old");
+    await appendFile(index, JSON.stringify(entry("renamed")) + "\n{bad}\n{\"id\":");
+    expect(await readCodexSessionTitle(home, id)).toBe("renamed");
+    expect((await listCodexSessions({ provider: "codex", scope: "global_recent" }, home)).map((s) => s.preview)).toEqual(["renamed"]);
+    await appendFile(index, JSON.stringify(id) + ',"thread_name":"latest"}\n');
+    expect(await readCodexSessionTitle(home, id)).toBe("latest");
+    await appendFile(index, JSON.stringify(entry("")) + "\n");
+    expect(await readCodexSessionTitle(home, id)).toBe("latest");
+  });
 
   it("routes Codex session transfers into the App Runtime home", () => {
     expect(resolveCodexSessionTransferHomes({

@@ -47,6 +47,7 @@ release-*/
 *.blockmap
 
 # Local browser/test artifacts
+.codedeck-bridge-test/
 .playwright-mcp/
 playwright-report/
 test-results/

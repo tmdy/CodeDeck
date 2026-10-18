@@ -16,6 +16,8 @@ interface SessionListInflightEntry {
   promise: Promise<SessionSummary[]>;
 }
 
+const MAX_CACHED_SESSION_PAGES = 64;
+
 export interface SessionListCache {
   run(options: {
     request: ListSessionsRequest;
@@ -97,15 +99,20 @@ export function createSessionListCache(options: {
     codexHomes: CodexSessionHome[];
     load: () => Promise<SessionSummary[]>;
   }): Promise<SessionSummary[]> {
+    const now = nowMs();
+    for (const [entryKey, entry] of cache) {
+      if (entry.expiresAt <= now) {
+        cache.delete(entryKey);
+      }
+    }
     const key = buildSessionListCacheKey(options.request, options.codexHomes);
     const provider = normalizeProvider(options.request.provider);
     const cached = cache.get(key);
 
-    if (cached && cached.expiresAt > nowMs()) {
-      return cached.sessions;
-    }
     if (cached) {
       cache.delete(key);
+      cache.set(key, cached);
+      return cached.sessions;
     }
 
     const running = inflight.get(key);
@@ -122,6 +129,9 @@ export function createSessionListCache(options: {
             expiresAt: nowMs() + ttlMs,
             sessions,
           });
+          while (cache.size > MAX_CACHED_SESSION_PAGES) {
+            cache.delete(cache.keys().next().value!);
+          }
         }
         return sessions;
       })

@@ -45,6 +45,10 @@ function toCmdToken(value: string): string {
 
 function buildPowerShellSessionScript(plan: LaunchExecutionPlan): string {
   const envLines = Object.entries(plan.env).map(([name, value]) => `$env:${name} = ${toPowerShellLiteral(value)}`);
+  if (plan.provider.trim().toLowerCase() === "codex") {
+    // Codex warns about and may pause on TERM=dumb inherited from the launcher.
+    envLines.push("$env:TERM = $null");
+  }
   const commandArgsJson = JSON.stringify(plan.commandArgs);
   // Codex must keep a real terminal attached; redirected stdio makes it exit with "stdin is not a terminal".
   const invokeLines = shouldUseCodexAutoContinue(plan)

@@ -12,6 +12,14 @@ import {
   type TerminalActivityObservation,
   type TerminalActivityReason,
 } from "./terminal-activity.js";
+import type {
+  TerminalTurnLifecycleError,
+  TerminalTurnLifecyclePhase,
+  TerminalTurnLifecycleEvent,
+} from "./terminal-turn-lifecycle.js";
+import { TerminalIdentityHintParser } from "./terminal-session-identity.js";
+import { TerminalInputClassifier } from "./terminal-input.js";
+import { TerminalOutputBuffer } from "./terminal-output-buffer.js";
 
 export interface PtyProcessExitEvent {
   exitCode: number;
@@ -50,6 +58,14 @@ export interface CreateTerminalSessionOptions {
   rows?: number;
 }
 
+export interface TerminalAutoContinueSchedule {
+  delayMs: number;
+  queuedAtMs: number;
+  dueAtMs: number;
+  phase: "waiting" | "waiting_for_renderer" | "send_failed";
+  error?: string;
+}
+
 export interface TerminalSessionSnapshot {
   sessionId: string;
   provider: string;
@@ -64,6 +80,7 @@ export interface TerminalSessionSnapshot {
   exitCode?: number;
   closeReason?: string;
   autoContinue: TerminalAutoContinueSnapshot;
+  autoContinueSchedule?: TerminalAutoContinueSchedule;
 }
 
 export interface TerminalSessionSubscriber {
@@ -78,7 +95,8 @@ export interface TerminalSessionAutoContinueEvent {
     | TerminalAutoContinueDiagnostic["reason"]
     | "not_running"
     | "pending_input"
-    | "waiting_for_renderer";
+    | "waiting_for_renderer"
+    | "send_failed";
   keyword?: string;
   matchCount?: number;
   remaining?: number;
@@ -94,6 +112,7 @@ export interface TerminalSessionManagerDependencies {
   createPtyProcess: (options: CreatePtyProcessOptions) => PtyProcess;
   onAutoContinueEvent?: (event: TerminalSessionAutoContinueEvent) => void;
   onActivityChange?: (event: TerminalSessionActivityEvent) => void;
+  onProviderIdentityHint?: (sessionId: string, hint: string) => void;
 }
 
 export interface TerminalSessionActivityEvent {
@@ -102,6 +121,7 @@ export interface TerminalSessionActivityEvent {
   previousActivity: TerminalActivity;
   activity: TerminalActivity;
   reason: TerminalActivityReason;
+  error?: TerminalTurnLifecycleError;
 }
 
 interface ManagedSession {
@@ -109,7 +129,18 @@ interface ManagedSession {
   pty: PtyProcess;
   controller: TerminalAutoContinueController;
   activityDetector: TerminalActivityDetector;
-  outputChunks: string[];
+  identityParser: TerminalIdentityHintParser;
+  inputClassifier: TerminalInputClassifier;
+  settled: boolean;
+  turnGeneration: number;
+  submittedAtMs?: number;
+  turnId?: string;
+  lifecycleStartedAtMs?: number;
+  notifiedTerminalEvents: Set<string>;
+  pendingAutoContinueGeneration?: number;
+  outputBuffer: TerminalOutputBuffer;
+  outputEnded: boolean;
+  lastNotifiedStatus: TerminalSessionSnapshot;
   subscribers: Set<TerminalSessionSubscriber>;
   pendingAutoContinueInput?: string;
   pendingAutoContinueTimer?: ReturnType<typeof setTimeout>;
@@ -129,7 +160,29 @@ function cloneSnapshot(snapshot: TerminalSessionSnapshot): TerminalSessionSnapsh
       ...snapshot.autoContinue,
       keywords: [...snapshot.autoContinue.keywords],
     },
+    ...(snapshot.autoContinueSchedule ? { autoContinueSchedule: { ...snapshot.autoContinueSchedule } } : {}),
   };
+}
+
+function sameStatus(left: TerminalSessionSnapshot, right: TerminalSessionSnapshot): boolean {
+  const a = left.autoContinue;
+  const b = right.autoContinue;
+  return left.status === right.status
+    && left.activity === right.activity
+    && left.displayTitle === right.displayTitle
+    && left.exitCode === right.exitCode
+    && left.closeReason === right.closeReason
+    && left.autoContinueSchedule?.delayMs === right.autoContinueSchedule?.delayMs
+    && left.autoContinueSchedule?.queuedAtMs === right.autoContinueSchedule?.queuedAtMs
+    && left.autoContinueSchedule?.dueAtMs === right.autoContinueSchedule?.dueAtMs
+    && left.autoContinueSchedule?.phase === right.autoContinueSchedule?.phase
+    && left.autoContinueSchedule?.error === right.autoContinueSchedule?.error
+    && a.enabled === b.enabled && a.limit === b.limit && a.matchCount === b.matchCount
+    && a.remaining === b.remaining && a.lastMatchedKeyword === b.lastMatchedKeyword
+    && a.paused === b.paused && a.intervalMs === b.intervalMs
+    && a.intervalMode === b.intervalMode && a.intervalStdDevMs === b.intervalStdDevMs
+    && a.keywords.length === b.keywords.length
+    && a.keywords.every((keyword, index) => keyword === b.keywords[index]);
 }
 
 function normalizeDisposer(disposer: (() => void) | void): (() => void) | undefined {
@@ -180,14 +233,31 @@ export class TerminalSessionManager {
       pty,
       controller,
       activityDetector: new TerminalActivityDetector(),
-      outputChunks: [],
+      identityParser: new TerminalIdentityHintParser(),
+      inputClassifier: new TerminalInputClassifier(),
+      settled: false,
+      turnGeneration: 0,
+      notifiedTerminalEvents: new Set(),
+      outputBuffer: new TerminalOutputBuffer(MAX_BUFFERED_OUTPUT_CHARS),
+      outputEnded: false,
+      lastNotifiedStatus: cloneSnapshot(snapshot),
       subscribers: new Set(),
     };
 
     session.disposeData = normalizeDisposer(pty.onData((chunk) => {
-      this.appendOutput(session, chunk);
-      const activityObservation = session.activityDetector.observeOutput(chunk);
-      const action = session.controller.processChunk(chunk);
+      if (session.snapshot.status === "closed" || session.outputEnded) {
+        return;
+      }
+      session.outputBuffer.append(chunk);
+      session.inputClassifier.observeOutput(chunk);
+      if (session.snapshot.provider === "codex") {
+        for (const hint of session.identityParser.processChunk(chunk)) {
+          this.dependencies.onProviderIdentityHint?.(sessionId, hint);
+        }
+      }
+      const running = session.snapshot.status === "running";
+      const activityObservation = running && !session.settled ? session.activityDetector.observeOutput(chunk) : null;
+      const action = running && session.snapshot.provider !== "codex" ? session.controller.processChunk(chunk) : null;
       session.snapshot.autoContinue = session.controller.snapshot();
       this.notifyOutput(session, chunk);
       this.cancelPendingIdlePrompt(session);
@@ -198,12 +268,18 @@ export class TerminalSessionManager {
       this.notifyStatus(session);
     }));
     session.disposeExit = normalizeDisposer(pty.onExit((event) => {
+      if (session.snapshot.status === "closed" || session.outputEnded) {
+        return;
+      }
+      session.outputEnded = true;
       this.cancelPendingAutoContinue(session);
       this.cancelPendingIdlePrompt(session);
-      this.applyActivity(session, "idle", "process_exit");
       session.snapshot.status = "exited";
       session.snapshot.exitCode = event.exitCode;
       session.snapshot.autoContinue = session.controller.snapshot();
+      session.activityDetector.resetOutput();
+      this.disposePtyListeners(session);
+      this.applyActivity(session, "idle", "process_exit");
       this.notifyStatus(session);
     }));
 
@@ -214,13 +290,15 @@ export class TerminalSessionManager {
   attachSession(sessionId: string, subscriber: TerminalSessionSubscriber): () => void {
     const session = this.requireSession(sessionId);
     session.subscribers.add(subscriber);
-    if (session.snapshot.output) {
-      subscriber.onOutput(session.snapshot.output);
+    const snapshot = this.createSnapshot(session);
+    if (snapshot.output) {
+      subscriber.onOutput(snapshot.output);
     }
-    subscriber.onStatus(cloneSnapshot(session.snapshot));
+    subscriber.onStatus(snapshot);
     this.flushPendingAutoContinue(session);
     return () => {
-      session.subscribers.delete(subscriber);
+      // Completed Bridge task records may retain this disposer. Do not retain ManagedSession.
+      this.sessions.get(sessionId)?.subscribers.delete(subscriber);
     };
   }
 
@@ -229,12 +307,15 @@ export class TerminalSessionManager {
     if (session.snapshot.status !== "running") {
       return;
     }
-    if (data && (session.pendingAutoContinueInput || session.pendingAutoContinueTimer)) {
+    const classified = session.inputClassifier.classify(data);
+    if (classified.cancelAutoContinue && (session.pendingAutoContinueInput || session.pendingAutoContinueTimer || session.snapshot.autoContinueSchedule)) {
       this.cancelPendingAutoContinue(session);
     }
-    this.cancelPendingIdlePrompt(session);
-    session.controller.recordInput(data);
-    this.observeActivity(session, session.activityDetector.recordInput(data));
+    if (classified.cancelAutoContinue) this.cancelPendingIdlePrompt(session);
+    if (classified.userInput) {
+      session.controller.recordInput(classified.userInput);
+      this.observeActivity(session, session.activityDetector.recordInput(classified.userInput));
+    }
     session.pty.write(data);
   }
 
@@ -257,23 +338,41 @@ export class TerminalSessionManager {
   }
 
   async closeSession(sessionId: string, reason = "closed"): Promise<void> {
-    const session = this.requireSession(sessionId);
-    if (session.snapshot.status !== "closed") {
-      this.cancelPendingAutoContinue(session);
-      this.cancelPendingIdlePrompt(session);
-      this.applyActivity(session, "idle", "session_closed");
-      session.snapshot.status = "closed";
-      session.snapshot.closeReason = reason;
+    const session = this.sessions.get(sessionId);
+    if (!session || session.snapshot.status === "closed") {
+      return;
+    }
+    const previousStatus = session.snapshot.status;
+    // A synchronous onExit during kill must not turn closed back into exited.
+    session.snapshot.status = "closed";
+    try {
+      // node-pty's ConPTY worker can outlive process exit. Closing must also
+      // run its native cleanup for an exited terminal whose history stayed open.
       session.pty.kill();
-      session.disposeData?.();
-      session.disposeExit?.();
+    } catch (error) {
+      if (!isPtyAlreadyExitedError(error)) {
+        session.snapshot.status = previousStatus;
+        throw error;
+      }
+    }
+    this.cancelPendingAutoContinue(session);
+    this.cancelPendingIdlePrompt(session);
+    session.snapshot.closeReason = reason;
+    try {
+      this.disposePtyListeners(session);
+      this.applyActivity(session, "idle", "session_closed");
       this.notifyStatus(session);
+    } finally {
+      session.subscribers.clear();
+      session.outputBuffer.clear();
+      session.activityDetector.resetOutput();
+      this.sessions.delete(sessionId);
     }
   }
 
   getSnapshot(sessionId: string): TerminalSessionSnapshot | undefined {
     const session = this.sessions.get(sessionId);
-    return session ? cloneSnapshot(session.snapshot) : undefined;
+    return session ? this.createSnapshot(session) : undefined;
   }
 
   updateDisplayTitle(sessionId: string, displayTitle?: string): void {
@@ -295,18 +394,97 @@ export class TerminalSessionManager {
 
   reportTurnLifecycle(
     sessionId: string,
-    phase: "started" | "completed",
+    phase: TerminalTurnLifecyclePhase,
+    error?: TerminalTurnLifecycleError,
+    identity: Pick<TerminalTurnLifecycleEvent, "turnId" | "timestampMs"> = {},
   ): void {
     const session = this.requireSession(sessionId);
     if (session.snapshot.status !== "running") {
       return;
     }
+    const { turnId, timestampMs } = identity;
+    if (timestampMs !== undefined && session.submittedAtMs !== undefined
+      && timestampMs < session.submittedAtMs) {
+      return;
+    }
+    if (phase !== "started" && turnId && session.turnId && turnId !== session.turnId) {
+      return;
+    }
+    if (phase !== "started" && turnId && !session.turnId && session.submittedAtMs !== undefined) {
+      return;
+    }
+    const key = `${session.turnGeneration}:${turnId ?? ""}:${phase}`;
+    if (session.notifiedTerminalEvents.has(key)) {
+      return;
+    }
+    session.inputClassifier.resetQueries();
+    if (phase === "started") {
+      if (turnId && session.turnId === turnId) {
+        return;
+      }
+      if (session.settled) {
+        this.openTurn(session);
+      }
+      session.turnId = turnId;
+      session.lifecycleStartedAtMs = timestampMs;
+      this.cancelPendingAutoContinue(session);
+      session.controller.resetFailure();
+    } else {
+      // Even if prompt fallback already made activity idle, emit authority once.
+      session.notifiedTerminalEvents.add(key);
+      session.settled = true;
+      session.activityDetector.resetOutput();
+      this.cancelPendingAutoContinue(session);
+      session.controller.resetFailure();
+    }
     this.cancelPendingIdlePrompt(session);
     this.applyActivity(
       session,
       phase === "started" ? "busy" : "idle",
-      phase === "started" ? "turn_started" : "turn_completed",
+      phase === "started"
+        ? "turn_started"
+        : phase === "completed" ? "turn_completed" : "turn_failed",
+      phase !== "started",
+      error,
     );
+    if (phase === "failed" && error?.retryable && session.snapshot.provider === "codex") {
+      const action = session.controller.processFailure(error.message);
+      session.snapshot.autoContinue = session.controller.snapshot();
+      if (action) {
+        this.enqueueAutoContinue(session, action.input, action.delayMs);
+      }
+      this.notifyStatus(session);
+    }
+  }
+
+  resetProviderSession(sessionId: string): void {
+    const session = this.requireSession(sessionId);
+    session.inputClassifier.resetQueries();
+    this.cancelPendingAutoContinue(session);
+    this.cancelPendingIdlePrompt(session);
+    session.controller.resetFailure();
+    session.activityDetector.resetOutput();
+    session.turnId = undefined;
+    session.submittedAtMs = undefined;
+    session.lifecycleStartedAtMs = undefined;
+    session.notifiedTerminalEvents.clear();
+    session.settled = true;
+    session.turnGeneration += 1;
+    // A thread switch is not a successful completion of the previous thread.
+    this.applyActivity(session, "idle", "session_changed");
+  }
+
+  private openTurn(session: ManagedSession, resetFailure = true): void {
+    session.inputClassifier.resetQueries();
+    this.cancelPendingAutoContinue(session);
+    if (resetFailure) {
+      session.controller.resetFailure();
+    }
+    session.settled = false;
+    session.turnGeneration += 1;
+    session.turnId = undefined;
+    session.lifecycleStartedAtMs = undefined;
+    session.notifiedTerminalEvents.clear();
   }
 
   private requireSession(sessionId: string): ManagedSession {
@@ -317,14 +495,20 @@ export class TerminalSessionManager {
     return session;
   }
 
-  private appendOutput(session: ManagedSession, chunk: string): void {
-    session.outputChunks.push(chunk);
-    let output = session.outputChunks.join("");
-    if (output.length > MAX_BUFFERED_OUTPUT_CHARS) {
-      output = output.slice(-MAX_BUFFERED_OUTPUT_CHARS);
-      session.outputChunks = [output];
+  private createSnapshot(session: ManagedSession): TerminalSessionSnapshot {
+    return { ...cloneSnapshot(session.snapshot), output: session.outputBuffer.toString() };
+  }
+
+  private disposePtyListeners(session: ManagedSession): void {
+    const disposeData = session.disposeData;
+    const disposeExit = session.disposeExit;
+    session.disposeData = undefined;
+    session.disposeExit = undefined;
+    try {
+      disposeData?.();
+    } finally {
+      disposeExit?.();
     }
-    session.snapshot.output = output;
   }
 
   private notifyOutput(session: ManagedSession, chunk: string): void {
@@ -334,7 +518,15 @@ export class TerminalSessionManager {
   }
 
   private notifyStatus(session: ManagedSession): void {
-    const snapshot = cloneSnapshot(session.snapshot);
+    if (sameStatus(session.lastNotifiedStatus, session.snapshot)) {
+      return;
+    }
+    // output is delivered by onOutput; retain only lightweight metadata for comparisons.
+    session.lastNotifiedStatus = cloneSnapshot(session.snapshot);
+    if (session.subscribers.size === 0) {
+      return;
+    }
+    const snapshot = this.createSnapshot(session);
     for (const subscriber of session.subscribers) {
       subscriber.onStatus(snapshot);
     }
@@ -352,7 +544,12 @@ export class TerminalSessionManager {
       return;
     }
     if (observation.reason === "submitted_input") {
+      this.openTurn(session);
+      session.submittedAtMs = Date.now();
       this.applyActivity(session, "busy", observation.reason);
+      return;
+    }
+    if (session.settled) {
       return;
     }
     if (observation.reason === "busy_output") {
@@ -366,6 +563,9 @@ export class TerminalSessionManager {
           return;
         }
         this.applyActivity(session, "idle", observation.reason, true);
+        this.cancelPendingAutoContinue(session);
+        session.settled = true;
+        session.activityDetector.resetOutput();
       }, IDLE_PROMPT_SETTLE_MS);
     }
   }
@@ -375,6 +575,7 @@ export class TerminalSessionManager {
     activity: TerminalActivity,
     reason: TerminalActivityReason,
     emitWhenUnchanged = false,
+    error?: TerminalTurnLifecycleError,
   ): void {
     const previousActivity = session.snapshot.activity;
     if (previousActivity === activity) {
@@ -385,6 +586,7 @@ export class TerminalSessionManager {
           previousActivity,
           activity,
           reason,
+          ...(error ? { error } : {}),
         });
       }
       return;
@@ -396,6 +598,7 @@ export class TerminalSessionManager {
       previousActivity,
       activity,
       reason,
+      ...(error ? { error } : {}),
     });
     this.notifyStatus(session);
   }
@@ -433,6 +636,13 @@ export class TerminalSessionManager {
       delayMs,
       subscriberCount: session.subscribers.size,
     });
+    const generation = session.turnGeneration;
+    session.pendingAutoContinueGeneration = generation;
+    const queuedAtMs = Date.now();
+    session.snapshot.autoContinueSchedule = {
+      delayMs, queuedAtMs, dueAtMs: queuedAtMs + delayMs, phase: "waiting",
+    };
+    this.notifyStatus(session);
     if (delayMs <= 0) {
       session.pendingAutoContinueInput = input;
       this.flushPendingAutoContinue(session);
@@ -441,6 +651,9 @@ export class TerminalSessionManager {
     session.pendingAutoContinueTimer = setTimeout(() => {
       session.pendingAutoContinueTimer = undefined;
       if (session.snapshot.status !== "running") {
+        return;
+      }
+      if (session.turnGeneration !== generation || session.pendingAutoContinueGeneration !== generation) {
         return;
       }
       const autoContinue = session.controller.snapshot();
@@ -458,9 +671,24 @@ export class TerminalSessionManager {
       session.pendingAutoContinueTimer = undefined;
     }
     session.pendingAutoContinueInput = undefined;
+    session.pendingAutoContinueGeneration = undefined;
+    if (session.snapshot.autoContinueSchedule) {
+      session.snapshot.autoContinueSchedule = undefined;
+      this.notifyStatus(session);
+    }
   }
 
   private flushPendingAutoContinue(session: ManagedSession): void {
+    // Reattachment may have no input to flush (including a completed failed
+    // write). Preserve that outcome until an actual cancellation/new turn.
+    if (!session.pendingAutoContinueInput) {
+      return;
+    }
+    const config = session.controller.snapshot();
+    if (!config.enabled || config.paused || session.pendingAutoContinueGeneration !== session.turnGeneration) {
+      this.cancelPendingAutoContinue(session);
+      return;
+    }
     if (
       session.snapshot.status !== "running"
       || !session.pendingAutoContinueInput
@@ -476,6 +704,10 @@ export class TerminalSessionManager {
       return;
     }
     if (session.subscribers.size === 0) {
+      if (session.snapshot.autoContinueSchedule) {
+        session.snapshot.autoContinueSchedule = { ...session.snapshot.autoContinueSchedule, phase: "waiting_for_renderer" };
+        this.notifyStatus(session);
+      }
       this.emitAutoContinueEvent({
         sessionId: session.snapshot.sessionId,
         phase: "skipped",
@@ -486,9 +718,27 @@ export class TerminalSessionManager {
     }
     const input = session.pendingAutoContinueInput;
     session.pendingAutoContinueInput = undefined;
+    try {
+      session.pty.write(input);
+    } catch (error) {
+      session.pendingAutoContinueGeneration = undefined;
+      if (session.snapshot.autoContinueSchedule) {
+        session.snapshot.autoContinueSchedule = {
+          ...session.snapshot.autoContinueSchedule, phase: "send_failed",
+          error: error instanceof Error ? error.message : "写入终端失败",
+        };
+      }
+      this.notifyStatus(session);
+      this.emitAutoContinueEvent({ sessionId: session.snapshot.sessionId, phase: "skipped", reason: "send_failed" });
+      return;
+    }
+    this.cancelPendingAutoContinue(session);
     session.controller.recordInput(input, { source: "auto" });
-    this.observeActivity(session, session.activityDetector.recordInput(input));
-    session.pty.write(input);
+    if (session.activityDetector.recordInput(input)) {
+      this.openTurn(session, false);
+      session.submittedAtMs = Date.now();
+      this.applyActivity(session, "busy", "submitted_input");
+    }
     this.emitAutoContinueEvent({
       sessionId: session.snapshot.sessionId,
       phase: "flushed",

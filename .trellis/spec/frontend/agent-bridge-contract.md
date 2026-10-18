@@ -104,6 +104,7 @@ interface CodexCommandOptions {
 - Delivery is server-owned. It waits for a running idle parent, sends bracketed-paste input, then submits Enter. A busy parent keeps the delivery pending; a closed parent records a failure.
 - Delivery is serialized per parent terminal. Continuous child results keep per-turn text snapshots and only the next queued result is submitted after the parent's previous injected turn completes.
 - For Codex, an empty primary prompt must remain stable for 250 ms before it can emit the `idle_prompt` completion fallback. New terminal output, submitted input, or an authoritative lifecycle event cancels the pending fallback.
+- `Ask Codex to do anything` is a valid empty primary-prompt placeholder. A real final `Worked for <duration> • <clock>` separator immediately before that prompt ends old busy evidence; it must be the final complete nonblank line outside an open Markdown code fence. Quoted examples, continued answer text, new Working output and interactive confirmations must not settle a live turn.
 - Busy detection is scoped to the current submitted turn: a `Working` marker between the latest submitted prompt and the bottom placeholder keeps the terminal busy, while markers before a newer submitted prompt are scrollback and cannot block completion.
 - `turn_completed` is authoritative when available. `idle_prompt` is a fallback only after the current turn has first observed `submitted_input`, `busy_output`, or `turn_started`; a startup placeholder with no current-turn busy evidence must never complete the task. The same evidence-gated fallback remains available after provider-session association so a missing lifecycle event cannot leave a visibly idle terminal permanently `running`.
 - A Bridge `continue` request only queues terminal input; it must not itself mark the turn busy. When `continue` answers an interactive prompt such as directory trust, that response's `submitted_input` event is not model-turn busy evidence. Completion remains gated until the resumed model turn emits `busy_output` or `turn_started`.
@@ -111,6 +112,10 @@ interface CodexCommandOptions {
 - Interactive confirmations such as `Do you want to proceed? (y/n)` remain `awaiting_input`; their trailing prompt glyph must never be treated as an idle primary prompt or release queued delivery.
 - `interrupt` and `interrupt_parent` write one ESC byte (`\x1b`) only when the resolved peer is running and busy. They do not close the terminal or remove the binding. When the peer is a tracked task, the manager marks its current turn interrupted so an associated-session idle prompt can settle the task even if no lifecycle completion event follows.
 - A successfully interrupted child turn completes with empty assistant text unless that turn later produces a new answer; completion must never reuse the previous turn's last session-file answer or enqueue it for delivery again.
+- Authoritative completion/failure settles the current turn and clears historical PTY activity evidence. Old `Working` repaint cannot reopen it; a new valid submission or authoritative start opens the next turn. Late old lifecycle events must not settle a newer turn.
+- A lifecycle completion arriving after a provisional idle fallback remains observable once to authoritative consumers, while Bridge delivery remains idempotent for that turn. Replaced/closed watchers cannot dispatch after asynchronous I/O resumes.
+- Codex high-demand auto-continue requires a current final structured retryable failure and the configured keyword filter; ordinary answer text, intermediate stream errors/reconnects, and old repaint cannot authorize input. Success/new input/new turn invalidates queued actions, and timer/renderer flush rechecks the same failure generation before writing. Claude's existing provider-specific behavior remains separate.
+- The auto-continue limit is a cumulative terminal budget, not the CLI's `Reconnecting 1/5` count. Success clears obsolete failure state without resetting this budget; unlimited remains an explicit user setting.
 - Child lifetime is owned by `AgentTaskManager`, not by the request socket or the parent's current turn. Explicitly closing a visible child window still ends that child.
 
 ### 4. Validation & Error Matrix
@@ -248,3 +253,118 @@ const args = buildCodexArgs({
 ```
 
 Generated trust configuration is a structured argv contract. `LaunchService` supplies the selected `cwd` once, and the Codex command builder owns TOML key encoding and final argument ordering.
+
+## Scenario: Auto-Continue Schedule Visibility
+
+### 1. Scope / Trigger
+
+Changes to monitored retry scheduling, terminal snapshots/status deduplication, or the compact terminal toolbar must preserve the real queue-to-renderer projection.
+
+### 2. Signatures
+
+`TerminalSessionSnapshot.autoContinueSchedule?: TerminalAutoContinueSchedule`:
+
+```typescript
+interface TerminalAutoContinueSchedule {
+  delayMs: number;
+  queuedAtMs: number;
+  dueAtMs: number;
+  phase: "waiting" | "waiting_for_renderer" | "send_failed";
+  error?: string;
+}
+```
+
+### 3. Contracts
+
+- Manager owns the schedule and uses the controller's once-sampled delay. `dueAtMs = queuedAtMs + delayMs`; configured normal mean/deviation are not the actual sampled delay. Renderer must not resample or infer a pending retry from configuration alone.
+- Publish schedule creation, phase changes and removal through existing status IPC; clone this nested object and include all fields in status equality. Do not regress output-buffer ownership or status-event deduplication.
+- Cancel scheduled input on success, valid user input/new turn, pause/disable, thread switch, close/exit. Clear schedule when sent. Preserve a real send failure through renderer detach/attach until a meaningful clearing action.
+- Input cancellation distinguishes complete, recognized terminal protocol reports from real interaction. Focus reports (`ESC[I`/`ESC[O`), mouse reports and unambiguous device replies remain forwarded byte-for-byte but do not cancel the queued retry or contaminate typed-input tracking. User text, paste, real keys and mixed user/protocol chunks still cancel; unknown/incomplete sequences are conservative user input without delaying forwarding. Do not classify all CSI as protocol: modified function keys can resemble cursor-position replies, so ambiguous replies need an observed matching terminal query, consumed once within its short validity window. Clear query authorization across turn/thread boundaries without clearing an active bracketed-paste context.
+- Render actual sampled seconds, local due time and countdown while waiting. Once due but awaiting a renderer, display that reason instead of a permanently zero countdown. With no schedule, explicitly say no auto-continue is arranged; pause/disabled/exhausted states remain explicit. This does not promise every error is retryable.
+- Countdown updates locally only while waiting, with cleanup on unmount/state transition. Do not add per-second IPC or trigger xterm fit/resize solely from countdown ticks.
+- Wide-window controls and Apply share one row, leaving more terminal height. Narrow windows may wrap without horizontal overflow. Preserve setting drafts, long-title ellipsis, input/paste and output history.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required projection |
+| --- | --- |
+| Mean 50 s, actual delay 48.6 s | Show 48.6 s and actual due time; do not show mean as scheduled delay |
+| Delay expires without renderer | Waiting for terminal connection; no repeated zero countdown |
+| No action is queued | Explicitly no scheduled auto-continue |
+| Success, new input, pause, disable, switch, close or exit | Remove obsolete pending schedule |
+| PTY write throws | Show send_failed; do not claim successful delivery or silently retry |
+| Renderer reconnects after write failure | Retain failure evidence |
+| Focus/mouse/protocol report arrives before due time | Same schedule and due timestamp survive; forward report unchanged |
+| Real key, paste, mixed text or unknown/incomplete control input arrives | Cancel scheduled input; preserve user data and key semantics |
+
+### 5. Good / Base / Bad Cases
+
+- Good: A genuine retryable failure queues one 48.6-second action; UI counts down toward its actual due timestamp.
+- Base: Auto-continue is enabled but no qualifying failure occurs; UI says no action is scheduled.
+- Bad: Display a random estimate or the distribution mean when manager has no pending input.
+
+### 6. Tests Required
+
+Assert actual queue timestamps, immutable snapshots/status events, due-without-renderer, send failure/reattach and all cancellation paths. Include the observed 65.608-second queue with focus reporting at 48.791 seconds: keep the original due time and send exactly once. Assert mouse/device replies, paste boundaries, mixed input, actual navigation/interrupt keys and ambiguous cursor-position/function-key packets. Component tests verify countdown transitions and cleanup without extra resize/IPC. Inspect real renderer layout at wide and narrow widths; browser fixture proof does not replace real CLI delivery or a running packaged-app update.
+
+### 7. Wrong vs Correct
+
+Wrong: `nextInputAt = Date.now() + snapshot.autoContinue.intervalMs` on every render.
+
+Correct: derive remaining seconds only from the manager's `autoContinueSchedule.dueAtMs`, and render a separate explanation for each non-waiting phase.
+
+## 场景：受监控终端输出与资源回收
+
+### 1. 范围与触发
+
+修改 `TerminalSessionManager`、`TerminalApp`、终端订阅或 Bridge 终端适配时，保持以下输出和所有权约束。
+
+### 2. 接口
+
+```typescript
+attachSession(id: string, subscriber: TerminalSessionSubscriber): () => void;
+getSnapshot(id: string): TerminalSessionSnapshot | undefined;
+closeSession(id: string, reason?: string): Promise<void>;
+```
+
+### 3. 契约
+
+- `onOutput` 按原顺序传递所有原始块；不能对 ANSI、中文或拆开的 surrogate 做逐块转码、抽样或丢弃。重连快照保持原有末尾 64,000 个 UTF-16 code unit 窗口，追加时不重建完整历史，读取时才物化。
+- `onStatus` 在 attach 时发初始快照，之后只通知状态、活动、标题、退出信息或自动继续设置的变化。它不是输出心跳；需要终端文本的消费者订阅 `onOutput`。权威生命周期事件的独立投递不受状态去重影响。
+- xterm 持有可见历史；React 状态只保留元数据。写锁提示须支持跨输出块识别。布局变化可以 fit，PTY 尺寸未变时不重复发 resize；组件卸载后不能处理迟到 attach 结果。
+- 显式 close 通知后移除 manager 条目并释放缓冲、PTY 监听、订阅和待执行 timer；重复 close 安全。Bridge 保留的解除函数不能直接闭包引用已关闭的 ManagedSession。
+- 自然退出保留仍打开窗口的历史，释放 PTY 监听。显式 close 仍须调用 PTY 的 kill/原生清理路径：当前 node-pty 的 ConPTY 输出 Worker 会存活到该步骤，不能因 status 已是 exited 而跳过。resize 报 already exited 只证明进程状态，不能证明输出管道已排空；须接收尾部直到真实 `onExit`，之后忽略迟到回调。
+- kill 失败保留原运行对象，以便重试；同步 kill → exit 回调不能把 closed 改回 exited。已完成回合的历史 repaint 不参与活动解析，新提交或权威 started 按原契约开启下一回合。
+
+### 4. 验证与错误矩阵
+
+| 条件 | 结果 |
+| --- | --- |
+| close 成功后查询 | `undefined`，不会重建已关闭会话 |
+| 非 already-exited 的 kill 错误 | 抛出错误，保留会话与监听，允许再次 close |
+| 自然退出但窗口仍在 | 可 attach 重读原有重连窗口，PTY 监听为 0 |
+| resize 提前发现退出 | 尾部原样交付，onExit 后释放监听 |
+| 纯输出或相同标题/配置 | 输出照常交付，不重复状态快照 |
+
+### 5. 正常、基础与错误案例
+
+- 正常：反复创建、关闭终端，manager 保留会话/输出和 PTY 监听回到 0。
+- 基础：进程退出后查看窗口历史，再关闭窗口释放历史。
+- 错误：把每块完整 output 存进 React，或只把会话标记 closed 而一直留在 Map 中。
+
+### 6. 必需验证
+
+`terminal-resource-lifecycle.test.ts` 覆盖同步退出、kill 重试、迟到回调、尾部排空、原始块顺序与快照稳定性；`terminal-output-buffer.test.ts` 覆盖分块边界；`terminal-app-layout.test.tsx` 覆盖尺寸去重、标题布局、跨块提示与解除订阅。性能脚本位于 `scripts/performance/`，逻辑保留量与 OS 内存须分别报告，不使用强制 GC。
+
+### 7. 错误与正确实现
+
+```typescript
+// 错误：每个输出块重新复制重连窗口，并把完整快照作为输出心跳。
+snapshot.output = (snapshot.output + chunk).slice(-64_000);
+notifyStatus(snapshot);
+
+// 正确：有界追加、原始流交付；状态变化时才物化快照。
+session.outputBuffer.append(chunk);
+notifyOutput(session, chunk);
+notifyStatus(session); // 内部比较元数据，忽略纯 output 变化。
+```

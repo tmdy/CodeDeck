@@ -8,8 +8,10 @@ export type TerminalActivityReason =
   | "idle_prompt"
   | "turn_started"
   | "turn_completed"
+  | "turn_failed"
   | "process_exit"
-  | "session_closed";
+  | "session_closed"
+  | "session_changed";
 
 export interface TerminalActivityObservation {
   activity: TerminalActivity;
@@ -27,13 +29,32 @@ const HOOKS_REVIEW_TITLE_PATTERN = /hooks?\s+needs?\s+review/i;
 const HOOKS_REVIEW_ACTION_PATTERN =
   /(?:press\s+t\s+to\s+trust\s+all|enter\s+to\s+review\s+hooks|esc\s+to\s+close)/i;
 const PROMPT_LINE_PATTERN = /(?:^|[\r\n])\s*[›❯]\s*/g;
-const IDLE_PROMPT_PLACEHOLDER_PATTERN = /^(?:explain this codebase|implement \{feature\}|find and fix a bug in @filename|write tests for @filename|improve documentation in @filename|run \/review on my current changes|summarize recent commits)(?:\s|$)/i;
+const IDLE_PROMPT_PLACEHOLDER_PATTERN = /^(?:ask codex to do anything|explain this codebase|implement \{feature\}|find and fix a bug in @filename|write tests for @filename|improve documentation in @filename|run \/review on my current changes|summarize recent commits)(?:\s|$)/i;
+// Codex FinalMessageSeparator is painted after a finished response. Require the
+// complete duration + completion clock row, not an incidental "Worked for" quote.
+const COMPLETED_WORK_LINE_PATTERN = /^[ \t]*(?:─+[ \t]*)?Worked for (?:\d+h \d+m \d+s|\d+m \d+s|\d+s|<1s) • (?:(?:[A-Z][a-z]{2} \d{1,2}(?:, \d{4})? at )?\d{1,2}:\d{2}(?: ?[ap]m)?)(?: • [^\r\n]*)?[ \t]*(?:─+)?[ \t]*$/gim;
 const MAX_RAW_TERMINAL_TAIL = 256_000;
 
 function stripTerminalControlText(value: string): string {
   return value
     .replace(ANSI_SEQUENCE_PATTERN, "")
     .replace(CONTROL_CHAR_PATTERN, "");
+}
+
+function hasOpenCodeFence(value: string): boolean {
+  let fence: string | undefined;
+  for (const line of value.split(/\r?\n/)) {
+    const marker = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!marker) {
+      continue;
+    }
+    if (!fence) {
+      fence = marker[1];
+    } else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+      fence = undefined;
+    }
+  }
+  return fence !== undefined;
 }
 
 export function containsInteractiveTerminalPrompt(value: string): boolean {
@@ -53,6 +74,10 @@ export class TerminalActivityDetector {
   private bracketedPaste = false;
   private currentInputLine = "";
   private rawTerminalTail = "";
+
+  resetOutput(): void {
+    this.rawTerminalTail = "";
+  }
 
   recordInput(input: string): TerminalActivityObservation | null {
     let submittedNonEmptyInput = false;
@@ -124,7 +149,21 @@ export class TerminalActivityDetector {
         ? { activity: "busy", reason: "busy_output" }
         : null;
     }
-    if (containsInteractiveTerminalPrompt(candidate)) {
+    const previousPromptEnd = promptEnds.at(-2);
+    const currentTurnStart = previousPromptEnd ?? 0;
+    const beforePrompt = candidate.slice(currentTurnStart, lastPromptEnd);
+    const completion = [...beforePrompt.matchAll(COMPLETED_WORK_LINE_PATTERN)].at(-1);
+    const completionOffset = completion
+      ? (completion.index ?? 0) + completion[0].length
+      : undefined;
+    // The TUI separator is the final row before the new idle prompt. A quoted
+    // example followed by code/answer text must not discard current busy evidence.
+    const completionEnd = completion && completionOffset !== undefined
+      && /^[\s›❯]*$/.test(beforePrompt.slice(completionOffset))
+      && !hasOpenCodeFence(beforePrompt.slice(0, completion.index))
+      ? currentTurnStart + (completion.index ?? 0) + completion[0].length
+      : undefined;
+    if (containsInteractiveTerminalPrompt(candidate.slice(completionEnd ?? 0))) {
       return null;
     }
     const afterPrompt = candidate.slice(lastPromptEnd);
@@ -140,10 +179,9 @@ export class TerminalActivityDetector {
         ? { activity: "busy", reason: "busy_output" }
         : null;
     }
-    const previousPromptEnd = promptEnds.at(-2);
     if (
       previousPromptEnd !== undefined
-      && containsBusyTerminalOutput(candidate.slice(previousPromptEnd))
+      && containsBusyTerminalOutput(candidate.slice(completionEnd ?? previousPromptEnd))
     ) {
       return { activity: "busy", reason: "busy_output" };
     }

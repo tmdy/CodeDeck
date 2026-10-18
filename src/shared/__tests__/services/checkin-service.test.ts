@@ -45,7 +45,109 @@ function statusPayload(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
+function anyRouterSession(): SiteBalanceSession {
+  return makeSession({
+    base_url: "https://anyrouter.top",
+    auth_kind: "browser_session",
+    access_token: "",
+    browser_origin: "https://anyrouter.top",
+  });
+}
+
+function anyRouterOptions(fetchImpl: typeof fetch) {
+  return {
+    runId: "anyrouter-outcome",
+    trigger: "automatic" as const,
+    managementRequestContext: {
+      fetch: fetchImpl,
+      headers: { "New-Api-User": "42" },
+      userIdHeaderPolicy: "legacy_if_required" as const,
+      authMode: "browser_cookie" as const,
+    },
+  };
+}
+
 describe("CheckinService", () => {
+  it("checks in AnyRouter through its verified browser action without a monthly status endpoint", async () => {
+    const browserFetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => (
+      String(input) === "https://anyrouter.top/api/user/sign_in"
+        ? jsonResponse({ success: true, message: "签到成功" })
+        : new Response("not found", { status: 404 })
+    ));
+    const serviceFetch = vi.fn();
+    const session = makeSession({
+      base_url: "https://anyrouter.top",
+      auth_kind: "browser_session",
+      access_token: "",
+      browser_origin: "https://anyrouter.top",
+    });
+    const options = {
+      runId: "anyrouter-browser-run",
+      trigger: "automatic" as const,
+      learnedPath: {
+        platform: "management" as const,
+        endpoint_path: "/api/user/checkin" as const,
+        method: "POST" as const,
+        authorization_mode: "none" as const,
+        cookie_mode: "none" as const,
+        requires_user_id: true,
+        learned_at: new Date().toISOString(),
+        credential_updated_at: "",
+      },
+      managementRequestContext: {
+        fetch: browserFetch as unknown as typeof fetch,
+        headers: { "New-Api-User": "42" },
+        userIdHeaderPolicy: "legacy_if_required" as const,
+        authMode: "browser_cookie" as const,
+      },
+    };
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await new CheckinService(serviceFetch as unknown as typeof fetch)
+        .checkin(session, 10_000, options);
+      expect(result.status).toBe("success");
+      expect(result.endpoint).toBe("https://anyrouter.top/api/user/sign_in");
+    }
+    expect(serviceFetch).not.toHaveBeenCalled();
+    expect(browserFetch).toHaveBeenCalledTimes(2);
+    for (const [, init] of browserFetch.mock.calls) {
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toBe("{}");
+      expect(requestHeaders(init)).toEqual({
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "New-Api-User": "42",
+      });
+    }
+  });
+
+  it.each([
+    [{ ret: 1 }, 200, "success"],
+    [{ code: 0 }, 200, "success"],
+    [{ success: false, message: "今日已签到" }, 200, "already_checked"],
+    [{ ret: 0 }, 200, "failed"],
+    [{ success: false, code: 0, message: "余额不足，操作失败" }, 200, "failed"],
+    [{ success: true, ret: 0 }, 200, "failed"],
+    [{ success: true, message: "access token expired" }, 200, "login_required"],
+    [{ success: true, message: "今日已签到" }, 401, "login_required"],
+    [{ success: true, message: "今日已签到" }, 429, "failed"],
+    [{ success: true, message: "already connected" }, 500, "failed"],
+    [{ message: "already connected" }, 200, "failed"],
+    [{ message: "already checked balance" }, 200, "failed"],
+    [{ message: "already signed out" }, 200, "failed"],
+    [{ success: false, message: "Already checked in today" }, 200, "already_checked"],
+    [{ success: "true", ret: "1", code: "0" }, 200, "failed"],
+  ] as const)("classifies the AnyRouter action envelope %j at HTTP %s as %s", async (payload, status, expected) => {
+    const browserFetch = vi.fn(async () => jsonResponse(payload, status));
+    const result = await new CheckinService().checkin(
+      anyRouterSession(), 10_000, anyRouterOptions(browserFetch as typeof fetch),
+    );
+    expect(result.status).toBe(expected);
+    expect(result.success).toBe(expected === "success" || expected === "already_checked");
+    expect(browserFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("never falls back to Cookie for an explicit access-token account", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
       success: false,
@@ -936,7 +1038,7 @@ describe("CheckinService", () => {
     }));
 
     const result = await new CheckinService(fetchMock as unknown as typeof fetch).checkin(
-      makeSession({ base_url: "https://anyrouter.top" }),
+      anyRouterSession(), 10_000, anyRouterOptions(fetchMock as typeof fetch),
     );
 
     expect(result).toMatchObject({
@@ -944,4 +1046,52 @@ describe("CheckinService", () => {
       manual_url: "https://anyrouter.top/console/topup",
     });
   });
+
+  it("requires a browser login for AnyRouter instead of reinterpreting a PAT", async () => {
+    const fetchMock = vi.fn();
+    const result = await new CheckinService(fetchMock as typeof fetch).checkin(
+      makeSession({ base_url: "https://anyrouter.top", auth_kind: "access_token" }),
+    );
+    expect(result.status).toBe("login_required");
+    expect(result.message).toContain("浏览器登录");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["<html>Cloudflare challenge</html>", "manual_required"],
+    ["<html>Welcome, signed in</html>", "failed"],
+  ])("never treats an AnyRouter HTML response as check-in success", async (body, status) => {
+    const browserFetch = vi.fn(async () => new Response(body));
+    const result = await new CheckinService().checkin(
+      anyRouterSession(), 10_000, anyRouterOptions(browserFetch as typeof fetch),
+    );
+    expect(result.status).toBe(status);
+    expect(result.success).toBe(false);
+    expect(browserFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a lost AnyRouter action response unconfirmed without replaying the POST", async () => {
+    const browserFetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    const result = await new CheckinService().checkin(
+      anyRouterSession(), 10_000, anyRouterOptions(browserFetch as typeof fetch),
+    );
+    expect(result).toMatchObject({ status: "failed", error_code: "network_error", success: false });
+    expect(result.message).toContain("未能确认");
+    expect(browserFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["https://anyrouter.top.attacker.test", "https://mirror.anyrouter.top", "http://anyrouter.top", "https://anyrouter.top:444"])(
+    "keeps %s outside the canonical AnyRouter strategy", async (baseUrl) => {
+      const browserFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (
+        isStatusRequest(input, init) ? jsonResponse(statusPayload()) : jsonResponse({ success: true })
+      ));
+      const result = await new CheckinService().checkin(
+        { ...anyRouterSession(), base_url: baseUrl, browser_origin: new URL(baseUrl).origin },
+        10_000, anyRouterOptions(browserFetch as typeof fetch),
+      );
+      expect(result.status).toBe("success");
+      expect(browserFetch.mock.calls.every(([input]) => new URL(String(input)).origin === new URL(baseUrl).origin)).toBe(true);
+      expect(browserFetch.mock.calls.some(([input]) => String(input).endsWith("/api/user/sign_in"))).toBe(false);
+    },
+  );
 });

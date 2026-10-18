@@ -1,0 +1,167 @@
+{
+  "measurements": [
+    {
+      "width": 2558,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 2558.400146484375,
+        "height": 75.13750457763672
+      },
+      "controls": {
+        "x": 784.3125,
+        "y": 8,
+        "width": 1762.0875244140625,
+        "height": 50.03750228881836
+      },
+      "apply": {
+        "x": 2490.400146484375,
+        "y": 28.037500381469727,
+        "width": 56,
+        "height": 30
+      },
+      "pause": {
+        "x": 784.3125,
+        "y": 28.037500381469727,
+        "width": 57.60000228881836,
+        "height": 30
+      },
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 75.13750457763672
+      },
+      "controls": {
+        "x": 592.7999877929688,
+        "y": 8,
+        "width": 1315.2000732421875,
+        "height": 50.03750228881836
+      },
+      "apply": {
+        "x": 1852,
+        "y": 28.037500381469727,
+        "width": 56,
+        "height": 30
+      },
+      "pause": {
+        "x": 592.7999877929688,
+        "y": 28.037500381469727,
+        "width": 57.60000228881836,
+        "height": 30
+      },
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1280,
+        "height": 75.13750457763672
+      },
+      "controls": {
+        "x": 400.8000183105469,
+        "y": 8,
+        "width": 867.2000122070312,
+        "height": 50.03750228881836
+      },
+      "apply": {
+        "x": 1212,
+        "y": 28.037500381469727,
+        "width": 56,
+        "height": 30
+      },
+      "pause": {
+        "x": 400.8000183105469,
+        "y": 28.037500381469727,
+        "width": 57.60000228881836,
+        "height": 30
+      },
+      "overflow": false
+    },
+    {
+      "width": 800,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 800,
+        "height": 131.1750030517578
+      },
+      "controls": {
+        "x": 12,
+        "y": 73.3375015258789,
+        "width": 776,
+        "height": 50.03750228881836
+      },
+      "apply": {
+        "x": 732,
+        "y": 93.375,
+        "width": 56,
+        "height": 30
+      },
+      "pause": {
+        "x": 12,
+        "y": 93.375,
+        "width": 57.60000228881836,
+        "height": 30
+      },
+      "overflow": false
+    }
+  ],
+  "scheduleMeasurements": [
+    {
+      "width": 2558,
+      "clientWidth": 760,
+      "scrollWidth": 760,
+      "text": "本次等待 48.6 秒 · 19:50:50 输入 · 还剩 49 秒",
+      "clipped": false
+    },
+    {
+      "width": 1920,
+      "clientWidth": 569,
+      "scrollWidth": 569,
+      "text": "本次等待 48.6 秒 · 19:50:50 输入 · 还剩 49 秒",
+      "clipped": false
+    },
+    {
+      "width": 1280,
+      "clientWidth": 377,
+      "scrollWidth": 377,
+      "text": "本次等待 48.6 秒 · 19:50:50 输入 · 还剩 48 秒",
+      "clipped": false
+    },
+    {
+      "width": 1100,
+      "clientWidth": 1076,
+      "scrollWidth": 1076,
+      "text": "本次等待 48.6 秒 · 19:50:50 输入 · 还剩 48 秒",
+      "clipped": false
+    },
+    {
+      "width": 1024,
+      "clientWidth": 1000,
+      "scrollWidth": 1000,
+      "text": "本次等待 48.6 秒 · 19:50:50 输入 · 还剩 48 秒",
+      "clipped": false
+    },
+    {
+      "width": 800,
+      "clientWidth": 776,
+      "scrollWidth": 776,
+      "text": "本次等待 48.6 秒 · 19:50:50 输入 · 还剩 47 秒",
+      "clipped": false
+    }
+  ],
+  "scheduledText": "处理 JX\n\ncodex 运行中，PID 26536；等待输入；自动继续已启用，已触发 14 次，随机等待 μ 50 秒 / σ 3 秒\n\n本次等待 48.6 秒 · 19:50:50 输入 · 还剩 49 秒",
+  "countdownText": "处理 JX\n\ncodex 运行中，PID 26536；等待输入；自动继续已启用，已触发 14 次，随机等待 μ 50 秒 / σ 3 秒\n\n本次等待 48.6 秒 · 19:50:50 输入 · 还剩 44 秒",
+  "initialResizeCount": 13,
+  "finalResizeCount": 13,
+  "rendererWaitText": "处理 JX\n\ncodex 运行中，PID 26536；等待输入；自动继续已启用，已触发 14 次，随机等待 μ 50 秒 / σ 3 秒\n\n本次等待 48.6 秒 · 已到时间，等待终端连接后输入",
+  "unscheduledText": "处理 JX\n\ncodex 运行中，PID 26536；等待输入；自动继续已启用，已触发 14 次，随机等待 μ 50 秒 / σ 3 秒\n\n未安排自动继续；等待符合设置的可重试失败",
+  "errors": []
+}

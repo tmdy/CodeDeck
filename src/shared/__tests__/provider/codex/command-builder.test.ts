@@ -2,8 +2,26 @@
 
 import { describe, it, expect } from "vitest";
 import { buildCodexArgs, buildCodexCommand } from "../../../provider/codex/command-builder.js";
+import { buildWindowsPtyLaunchSpec } from "../../../electron/launch-runtime.js";
+import type { LaunchExecutionPlan } from "../../../services/launch-service.js";
 
 describe("buildCodexCommand", () => {
+  it("emits a TOML literal identity override that survives the Windows cmd/npm-shim launch command", () => {
+    const options = { commandBase: "codex.cmd", launchMode: "new", extraArgs: "", baseUrl: "", monitored: true };
+    const commandArgs = buildCodexArgs(options);
+    expect(commandArgs).toEqual(["-c", "tui.terminal_title=['thread-id']"]);
+    expect(buildCodexCommand(options)).toBe("codex.cmd -c tui.terminal_title=['thread-id']");
+    const plan = { commandExecutable: "codex.cmd", commandArgs, cwd: "C:/test" } as LaunchExecutionPlan;
+    const spec = buildWindowsPtyLaunchSpec(plan);
+    expect(spec.filePath.toLowerCase()).toContain("cmd");
+    expect(spec.args.at(-1)).toContain("tui.terminal_title=['thread-id']");
+    expect(spec.args.at(-1)).not.toContain('\\"thread-id\\"');
+    const initialPromptSpec = buildWindowsPtyLaunchSpec({ ...plan, agentInitialPromptEnvKey: "TEST_PROMPT" });
+    const index = initialPromptSpec.args.indexOf("-EncodedCommand") + 1;
+    const script = Buffer.from(initialPromptSpec.args[index], "base64").toString("utf16le");
+    expect(script).toContain("tui.terminal_title=[''thread-id'']");
+    expect(buildCodexArgs({ ...options, monitored: false })).toEqual([]);
+  });
   it("should build a continue_last command without changing the resume subcommand structure", () => {
     const cmd = buildCodexCommand({
       commandBase: "codex",

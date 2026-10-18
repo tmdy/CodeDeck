@@ -56,6 +56,8 @@ import { AutoUnlockKeyStore } from "../src/shared/crypto/auto-unlock-key.js";
 import { LocalStateStore } from "../src/shared/state/store.js";
 import { ProfileService } from "../src/shared/services/profile-service.js";
 import { LaunchService } from "../src/shared/services/launch-service.js";
+import { prepareCodexProviderResumeRepair } from "../src/shared/services/codex-provider-resume-repair.js";
+import { appendCodexResumeRepairExclusively } from "../src/shared/electron/codex-resume-repair-writer.js";
 import { CapabilityOverlayService } from "../src/shared/services/capability-overlay-service.js";
 import { SettingsStateService, type SessionsTabStatePatch } from "../src/shared/services/settings-state-service.js";
 import {
@@ -176,6 +178,7 @@ import {
 } from "../src/shared/electron/terminal-session-manager.js";
 import { resolveTerminalTaskbarAction } from "../src/shared/electron/terminal-taskbar.js";
 import { parseTerminalTurnLifecycleLine } from "../src/shared/electron/terminal-turn-lifecycle.js";
+import { CodexTerminalIdentityResolver } from "../src/shared/electron/terminal-session-identity.js";
 import {
   buildTerminalWindowTitle,
   normalizeTerminalDisplayTitle,
@@ -189,6 +192,7 @@ import {
 import {
   assertCanonicalCodexSessionSource,
   findMonitoredTerminalSessionTitle,
+  readCodexSessionTitle,
   getClaudeSessionDetail,
   getCodexSessionDetail,
   getSessionDetailForProvider,
@@ -352,6 +356,7 @@ const terminalSessionManager = new TerminalSessionManager({
   createPtyProcess: createNodePtyProcess,
   onAutoContinueEvent: logTerminalAutoContinueEvent,
   onActivityChange: handleTerminalActivityChange,
+  onProviderIdentityHint: handleTerminalIdentityHint,
 });
 const terminalAttachmentDisposers = new Map<string, () => void>();
 const managedTerminalParentTokens = new Map<string, string>();
@@ -359,6 +364,37 @@ const terminalIdlePromptSessions = new Set<string>();
 const terminalWindows = new Map<string, BrowserWindow>();
 const terminalFlashTimers = new Map<string, NodeJS.Timeout>();
 const terminalTitlePollTimers = new Map<string, NodeJS.Timeout>();
+interface CodexTerminalBinding {
+  home: string;
+  startedAt: Date;
+  hint?: string;
+  resolver: CodexTerminalIdentityResolver;
+  providerSessionId?: string;
+  generation: number;
+  diagnostic?: string;
+}
+const codexTerminalBindings = new Map<string, CodexTerminalBinding>();
+const pendingTerminalIdentityHints = new Map<string, string>();
+
+function handleTerminalIdentityHint(sessionId: string, hint: string): void {
+  pendingTerminalIdentityHints.set(sessionId, hint);
+  const binding = codexTerminalBindings.get(sessionId);
+  if (!binding || binding.hint === hint || binding.providerSessionId?.startsWith(hint)) {
+    return;
+  }
+  const previousHint = binding.hint;
+  binding.generation += 1;
+  binding.hint = hint;
+  binding.providerSessionId = undefined;
+  if (!previousHint || previousHint.startsWith(hint) || hint.startsWith(previousHint)) {
+    return;
+  }
+  binding.startedAt = new Date();
+  binding.resolver = new CodexTerminalIdentityResolver(binding.home, binding.startedAt.getTime());
+  stopTerminalLifecycleWatcher(sessionId);
+  terminalSessionManager.resetProviderSession(sessionId);
+  applyTerminalDisplayTitle(sessionId, "codex");
+}
 interface TerminalLifecycleWatcher {
   filePath: string;
   provider: string;
@@ -791,6 +827,16 @@ function handleTerminalActivityChange(event: TerminalSessionActivityEvent): void
   if (event.reason === "idle_prompt") {
     terminalIdlePromptSessions.add(event.sessionId);
   }
+  if (event.reason === "turn_failed") {
+    const snapshot = terminalSessionManager.getSnapshot(event.sessionId);
+    const output = cleanTerminalText(snapshot?.output ?? "").slice(-2_000);
+    settleActiveProfileHealthTurn(
+      event.sessionId,
+      {
+        error: new Error(event.error?.message || output || "健康 CLI 报告当前回合失败"),
+      },
+    );
+  }
   if (event.reason === "turn_completed") {
     const healthWatcher = terminalLifecycleWatchers.get(event.sessionId);
     if (activeProfileHealthTurnWaiters.has(event.sessionId)) {
@@ -811,6 +857,8 @@ function handleTerminalActivityChange(event: TerminalSessionActivityEvent): void
     }
   }
   if (event.reason === "process_exit" || event.reason === "session_closed") {
+    stopTerminalTitleResolution(event.sessionId);
+    stopTerminalLifecycleWatcher(event.sessionId);
     terminalIdlePromptSessions.delete(event.sessionId);
     const snapshot = terminalSessionManager.getSnapshot(event.sessionId);
     const output = cleanTerminalText(snapshot?.output ?? "").slice(-2_000);
@@ -1187,6 +1235,10 @@ async function pollTerminalLifecycle(sessionId: string): Promise<void> {
       } finally {
         await handle.close();
       }
+      if (terminalLifecycleWatchers.get(sessionId) !== watcher
+        || terminalSessionManager.getSnapshot(sessionId)?.status !== "running") {
+        return;
+      }
       const initialRead = !watcher.initialized;
       const combined = `${initialRead ? "" : watcher.remainder}${buffer.toString("utf8")}`;
       const lines = combined.split(/\r?\n/);
@@ -1198,22 +1250,32 @@ async function pollTerminalLifecycle(sessionId: string): Promise<void> {
       watcher.initialized = true;
 
       for (const line of lines) {
+        if (terminalLifecycleWatchers.get(sessionId) !== watcher
+          || terminalSessionManager.getSnapshot(sessionId)?.status !== "running") {
+          return;
+        }
         const event = parseTerminalTurnLifecycleLine(watcher.provider, line);
         if (!event) {
           continue;
         }
         if (
           initialRead
-          && (event.timestampMs === undefined || event.timestampMs < watcher.startedAtMs - 1_000)
+          && (event.timestampMs === undefined || event.timestampMs < watcher.startedAtMs)
         ) {
           continue;
         }
-        terminalSessionManager.reportTurnLifecycle(sessionId, event.phase);
+        terminalSessionManager.reportTurnLifecycle(sessionId, event.phase, event.error, event);
         appLogger.info("terminal", "turn_lifecycle", "Monitored terminal turn lifecycle changed", {
           context: {
             provider: watcher.provider,
             sessionId,
             phase: event.phase,
+            ...(event.error
+              ? {
+                  errorCode: event.error.code,
+                  retryable: event.error.retryable,
+                }
+              : {}),
             source: "session_jsonl",
           },
         });
@@ -1413,6 +1475,7 @@ function getCheckinVerificationService(): CheckinVerificationService {
     checkinVerificationService = new CheckinVerificationService({
       createSession: (partition) => electronSession.fromPartition(partition, { cache: false }),
       createWindow: (options) => new BrowserWindow(options),
+      configureRecoveryAction: (window, retry) => installBrowserNavigationMenu(window, retry),
       getParentWindow: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
       windowIcon: resolveWindowIconPath(),
       onDiagnostic: logCheckinVerificationDiagnostic,
@@ -1698,6 +1761,9 @@ async function launchMonitoredTerminalSession(
       CODEDECK_TERMINAL_PARENT_TOKEN: managedParentToken,
     }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   );
+  if (plan.provider.trim().toLowerCase() === "codex") {
+    delete mergedEnv.TERM;
+  }
   if (mergedEnv.PATH && !mergedEnv.Path) {
     mergedEnv.Path = mergedEnv.PATH;
   }
@@ -2137,6 +2203,33 @@ async function prepareLaunchExecution(
       },
     });
   }
+  if (request.provider === "codex" && plan.launchMode === "resume_selected" && plan.sessionId) {
+    const targetProvider = codexModelProviderOverride;
+    if (targetProvider) {
+      const sessionFile = await resolveMonitoredTerminalSessionFile({
+        provider: "codex",
+        cwd: plan.cwd,
+        sessionId: plan.sessionId,
+        codexHome: getModelMappingConfigService().getCodexHome(),
+      });
+      if (!sessionFile) throw new Error("未找到选中会话的恢复文件，请刷新会话列表后重试。");
+      const repair = await prepareCodexProviderResumeRepair({
+        filePath: sessionFile,
+        sessionId: plan.sessionId,
+        targetProvider,
+      });
+      if (repair) {
+        await appendCodexResumeRepairExclusively(repair, path.join(projectRoot, "app-data", "codex-resume-recovery"));
+        appLogger.info("launcher", "codex_resume_reasoning_repaired", "Incompatible cross-provider reasoning removed from active replay", {
+          context: {
+            sessionId: plan.sessionId,
+            targetProvider,
+            removedReasoningItems: repair.removedReasoningItems,
+          },
+        });
+      }
+    }
+  }
   return { planRequest, plan };
 }
 
@@ -2426,9 +2519,15 @@ async function launchAgentTask(
   const initialPromptEnvKey = "CODEDECK_AGENT_INITIAL_PROMPT_BASE64";
   const submitInitialPromptAtLaunch = profile.provider === "codex"
     && initialPromptBase64.length <= 24_000;
-  const launchPlan = submitInitialPromptAtLaunch
-    ? { ...plan, agentInitialPromptEnvKey: initialPromptEnvKey }
-    : plan;
+  const launchPlan = {
+    ...plan,
+    // Agent Bridge owns continuation decisions explicitly. Do not inherit
+    // the interactive terminal's keyword-based retry loop for delegated work.
+    ...(profile.provider === "codex" ? { codexAutoContinue: undefined } : {}),
+    ...(submitInitialPromptAtLaunch
+      ? { agentInitialPromptEnvKey: initialPromptEnvKey }
+      : {}),
+  };
   const snapshot = await launchMonitoredTerminalSession(launchPlan, {
     showWindow: options.showTerminal,
     expectedPreview: options.initialPrompt,
@@ -3048,13 +3147,14 @@ async function loadProfileBrowserUrlWithTimeout(
   }
 }
 
-function installBrowserNavigationMenu(browserWindow: BrowserWindow): void {
+function installBrowserNavigationMenu(browserWindow: BrowserWindow, retryCheckin?: () => Promise<void>): void {
   const navigate = (action: BrowserNavigationAction) => {
     if (!browserWindow.isDestroyed()) {
       runBrowserNavigationAction(browserWindow.webContents, action);
     }
   };
   browserWindow.setMenu(Menu.buildFromTemplate([
+    ...(retryCheckin ? [{ label: "验证完成并重试", click: () => { void retryCheckin(); } }] : []),
     { label: "后退", accelerator: "Alt+Left", click: () => navigate("back") },
     { label: "前进", accelerator: "Alt+Right", click: () => navigate("forward") },
     { label: "刷新", accelerator: "CmdOrCtrl+R", click: () => navigate("reload") },
@@ -3501,6 +3601,14 @@ function mergeCheckinVerificationResult(
       ...shared,
       status: verificationResult.status,
       success: true,
+    };
+  }
+  if (verificationResult.status === "login_required") {
+    return {
+      ...shared,
+      status: "login_required",
+      success: false,
+      error_code: verificationResult.error_code ?? "auth_not_logged_in",
     };
   }
   if (verificationResult.status === "canceled" || verificationResult.status === "timeout") {
@@ -4239,6 +4347,8 @@ function describeLaunchResult(planTerminalMode: "direct" | "monitored", snapshot
 }
 
 function stopTerminalTitleResolution(sessionId: string): void {
+  codexTerminalBindings.delete(sessionId);
+  pendingTerminalIdentityHints.delete(sessionId);
   const timer = terminalTitlePollTimers.get(sessionId);
   if (!timer) {
     return;
@@ -4247,12 +4357,9 @@ function stopTerminalTitleResolution(sessionId: string): void {
   terminalTitlePollTimers.delete(sessionId);
 }
 
-function applyTerminalDisplayTitle(sessionId: string, provider: string, displayTitle: string): void {
+function applyTerminalDisplayTitle(sessionId: string, provider: string, displayTitle?: string): void {
   const normalizedTitle = normalizeTerminalDisplayTitle(displayTitle);
-  if (!normalizedTitle) {
-    return;
-  }
-  terminalSessionManager.updateDisplayTitle(sessionId, normalizedTitle);
+  terminalSessionManager.updateDisplayTitle(sessionId, normalizedTitle || undefined);
   const browserWindow = terminalWindows.get(sessionId);
   if (!browserWindow || browserWindow.isDestroyed()) {
     return;
@@ -4267,6 +4374,10 @@ function scheduleTerminalTitleResolution(
   expectedPreview?: string,
 ): void {
   const sessionId = snapshot.sessionId;
+  if (snapshot.provider === "codex") {
+    scheduleCodexTerminalBinding(snapshot, plan, startedAt);
+    return;
+  }
   const deadlineMs = Date.now() + TERMINAL_TITLE_POLL_TIMEOUT_MS;
 
   const poll = async (): Promise<void> => {
@@ -4367,6 +4478,93 @@ function scheduleTerminalTitleResolution(
     }, TERMINAL_TITLE_POLL_INTERVAL_MS));
   };
 
+  void poll();
+}
+
+function scheduleCodexTerminalBinding(
+  snapshot: TerminalSessionSnapshot,
+  plan: Parameters<typeof executeLaunchPlan>[0],
+  startedAt: Date,
+): void {
+  const sessionId = snapshot.sessionId;
+  const home = plan.env.CODEX_HOME;
+  if (!home) {
+    return;
+  }
+  const binding: CodexTerminalBinding = {
+    home,
+    startedAt,
+    hint: pendingTerminalIdentityHints.get(sessionId) ?? plan.sessionId,
+    resolver: new CodexTerminalIdentityResolver(home, startedAt.getTime()),
+    generation: 0,
+  };
+  codexTerminalBindings.set(sessionId, binding);
+  const current = () => codexTerminalBindings.get(sessionId) === binding
+    && terminalSessionManager.getSnapshot(sessionId)?.status === "running";
+  const poll = async (): Promise<void> => {
+    if (!current()) {
+      if (codexTerminalBindings.get(sessionId) === binding) {
+        stopTerminalTitleResolution(sessionId);
+      }
+      return;
+    }
+    const generation = binding.generation;
+    try {
+      if (binding.hint) {
+        const identity = await binding.resolver.resolve(binding.hint);
+        if (!current() || binding.generation !== generation) {
+          return;
+        }
+        if (identity) {
+          binding.providerSessionId = identity.sessionId;
+          if (terminalLifecycleWatchers.get(sessionId)?.filePath !== identity.filePath) {
+            stopTerminalLifecycleWatcher(sessionId);
+          }
+          if (identity.filePath && !terminalLifecycleWatchers.has(sessionId)) {
+            agentTaskManager?.associateProviderSession(sessionId, identity.sessionId, identity.filePath);
+            startTerminalLifecycleWatcher(sessionId, "codex", identity.filePath, binding.startedAt);
+          }
+          if (!identity.filePath && binding.diagnostic !== "source_pending") {
+            binding.diagnostic = "source_pending";
+            appLogger.debug("terminal", "identity_source_pending", "Lifecycle source is ambiguous", {
+              context: { sessionId, sourceCount: identity.sourceCount },
+            });
+          }
+          if (identity.filePath) {
+            binding.diagnostic = "bound";
+          }
+          const title = await readCodexSessionTitle(home, identity.sessionId);
+          if (!current() || binding.generation !== generation) {
+            return;
+          }
+          if (title && terminalSessionManager.getSnapshot(sessionId)?.displayTitle !== title) {
+            applyTerminalDisplayTitle(sessionId, "codex", title);
+          }
+        } else {
+          stopTerminalLifecycleWatcher(sessionId);
+          if (binding.diagnostic !== "identity_pending") {
+            binding.diagnostic = "identity_pending";
+            appLogger.debug("terminal", "identity_pending", "Waiting for uniquely verified terminal identity", {
+              context: { sessionId },
+            });
+          }
+        }
+      } else if (binding.diagnostic !== "hint_pending") {
+        binding.diagnostic = "hint_pending";
+        appLogger.debug("terminal", "identity_hint_pending", "Waiting for the terminal's thread identity signal", {
+          context: { sessionId },
+        });
+      }
+    } catch (error) {
+      appLogger.debug("terminal", "identity_poll_failed", "Failed to verify terminal identity", {
+        context: { sessionId }, error,
+      });
+    } finally {
+      if (current()) {
+        terminalTitlePollTimers.set(sessionId, setTimeout(() => { void poll(); }, TERMINAL_TITLE_POLL_INTERVAL_MS));
+      }
+    }
+  };
   void poll();
 }
 

@@ -412,6 +412,45 @@ export const ProfileEditForm = memo(function ProfileEditForm({
     });
   }, [advancedMapping, onAdvancedModelMappingChange, provider]);
 
+  const updateCodexSubagentMappingEnabled = useCallback((enabled: boolean) => {
+    onAdvancedModelMappingChange({
+      ...advancedMapping,
+      enabled,
+      claude: {
+        ...advancedMapping.claude,
+      },
+      codex: {
+        ...advancedMapping.codex,
+      },
+    });
+  }, [advancedMapping, onAdvancedModelMappingChange]);
+
+  const updateCodexSubagentTarget = useCallback((value: string) => {
+    onAdvancedModelMappingChange({
+      ...advancedMapping,
+      claude: {
+        ...advancedMapping.claude,
+      },
+      codex: {
+        ...advancedMapping.codex,
+        subagentTarget: value,
+      },
+    });
+  }, [advancedMapping, onAdvancedModelMappingChange]);
+
+  const updateCodexSubagentReasoningEffort = useCallback((value: string) => {
+    onAdvancedModelMappingChange({
+      ...advancedMapping,
+      claude: {
+        ...advancedMapping.claude,
+      },
+      codex: {
+        ...advancedMapping.codex,
+        subagentReasoningEffort: normalizeCodexReasoningEffort(value) as CodexReasoningEffort | "",
+      },
+    });
+  }, [advancedMapping, onAdvancedModelMappingChange]);
+
   const applyRecommendedClaudeCompatibility = useCallback(() => {
     onAdvancedModelMappingChange({
       ...advancedMapping,
@@ -709,28 +748,43 @@ export const ProfileEditForm = memo(function ProfileEditForm({
           {!isNativeStartup && provider === "codex" && (
             <GlassCard
               title="Codex 子代理模型映射"
-              subtitle="共享用户 Codex Home 模式下已停用；不会写入全局 Worker Agent"
+              subtitle="仅作用于当前启动进程，不写入全局 Worker Agent"
             >
               <p className="settings-hint">
-                为避免站点模型泄漏到直接 Codex 会话，当前版本不提供 Codex Worker 子代理模型覆盖。
+                为当前 Codex Profile 的子代理请求设置模型和思考等级，不修改用户全局 Codex 配置。
               </p>
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={false}
-                  readOnly
-                  disabled
+                  checked={advancedMapping.enabled}
+                  onChange={(event) => updateCodexSubagentMappingEnabled(event.target.checked)}
+                  disabled={disabled}
                 />
-                启用子代理模型映射（已停用）
+                启用子代理模型映射
               </label>
               <label>
                 子代理模型
                 <input
                   value={advancedMapping.codex?.subagentTarget ?? ""}
+                  onChange={(event) => updateCodexSubagentTarget(event.target.value)}
                   placeholder={draft.selectedModelId || "例如 gpt-5.6-terra"}
-                  readOnly
-                  disabled
+                  disabled={disabled || !advancedMapping.enabled}
                 />
+              </label>
+              <label>
+                思考等级
+                <select
+                  value={normalizeCodexReasoningEffort(advancedMapping.codex?.subagentReasoningEffort)}
+                  onChange={(event) => updateCodexSubagentReasoningEffort(event.target.value)}
+                  disabled={disabled || !advancedMapping.enabled}
+                >
+                  <option value="">沿用默认</option>
+                  {CODEX_REASONING_EFFORTS.map((item) => (
+                    <option key={`codex-subagent-reasoning-${item}`} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
               </label>
             </GlassCard>
           )}

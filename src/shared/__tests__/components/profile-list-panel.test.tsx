@@ -13,6 +13,32 @@ import { createOfficialNativeProfile, type Profile } from "../../profile/types.j
   .IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("ProfileListPanel", () => {
+  it("shows check-in attention on an unselected profile and clears it after recovery", async () => {
+    const profiles: Profile[] = [
+      { provider: "codex", name: "AnyRouter", url: "https://anyrouter.top", key: "sk-test" },
+      { provider: "codex", name: "Selected", url: "https://selected.example", key: "sk-test" },
+    ];
+    const props = {
+      profiles, activeProvider: "codex" as const, selectedKey: "codex::Selected",
+      orderedKeys: ["codex::AnyRouter", "codex::Selected"], balanceEntries: {},
+      onSelect: vi.fn(), onReorder: vi.fn(), onCreate: vi.fn(), onClone: vi.fn(), onDelete: vi.fn(),
+    };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => root.render(<ProfileListPanel {...props} checkinEntries={{
+      "codex::AnyRouter": { label: "签到失败", variant: "danger", title: "最近自动签到：网络请求失败" },
+    }} />));
+    const row = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("AnyRouter"));
+    expect(row?.textContent).toContain("签到失败");
+    expect(row?.querySelector(".profile-item-checkin.danger")?.getAttribute("title")).toContain("网络请求失败");
+    expect(row?.classList.contains("selected")).toBe(false);
+    await act(async () => row?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(props.onSelect).toHaveBeenCalledWith("codex::AnyRouter");
+    await act(async () => root.render(<ProfileListPanel {...props} checkinEntries={{}} />));
+    expect(container.textContent).not.toContain("签到失败");
+    await act(async () => root.unmount());
+  });
+
   it("filters visible profiles by the active provider", () => {
     const profiles: Profile[] = [
       { provider: "claude", name: "ClaudeOnly", url: "https://claude.example.com", key: "sk-claude" },

@@ -197,3 +197,36 @@ Trust the selected Codex cwd per launch, preserve hooks disablement, normalize W
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: CodeDeck 第一阶段性能审计与资源优化
+
+**Date**: 2026-10-11
+**Task**: CodeDeck 第一阶段性能审计与资源优化
+**Branch**: `main`
+
+### Summary
+
+完成当前源码资源审计、隔离 Electron/ConPTY 与模块基线；修复关闭保留、输出复制和状态推送、Renderer 布局、分页缓存，保留已有未提交工作。
+
+### Main Changes
+
+- 关闭后 manager 会话与输出归零；保留自然退出历史、尾部排空及 node-pty 原生关闭步骤。
+- 保存 docs/performance-audit-2026-10-11.md、scripts/performance/ 和归档任务 evidence-summary.json。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] 最终 84 项相关回归与 typecheck 通过；最终 Electron 12 场景、20 次开关和 60 秒恢复完整。
+- [OK] Main/Renderer/GPU/Utility、外部 fixture 与 ConPTY 支持进程分开计量；没有强制 GC 或模型调用。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 优先修复既存 ConPTY 管道/conhost 残留和活动回合 256k 重放；再考虑共享监控、日志批写和长期缓存。前台及长期真实 CLI 验收未完成。

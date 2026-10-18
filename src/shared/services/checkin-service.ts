@@ -1,4 +1,9 @@
 import type { SiteBalanceSession } from "../balance/site-balance-sessions.js";
+import {
+  ANYROUTER_CHECKIN_ENDPOINT,
+  ANYROUTER_CHECKIN_PAGE_URL,
+  isAnyRouterBaseUrl,
+} from "../checkin/anyrouter.js";
 import type {
   CheckinErrorCode,
   CheckinResult,
@@ -96,6 +101,7 @@ export interface CheckinDiagnosticsOptions {
 }
 
 const ALREADY_CHECKED_PATTERN = /今天?已(?:经)?签到|今日已(?:经)?签到|已经签到|已签到|already\s+(?:checked|signed|check(?:ed)?\s*in)|already\s+sign(?:ed)?\s+in|checked[_\s-]*in[_\s-]*today/i;
+const ANYROUTER_ALREADY_CHECKED_PATTERN = /今天?已(?:经)?签到|今日已(?:经)?签到|已经签到|已签到|already\s+(?:checked(?:\s*in)?|check\s*in|sign(?:ed)?\s*in)(?:\s+today)?[.!。！\s]*$|checked[_\s-]*in[_\s-]*today/i;
 const MANUAL_REQUIRED_PATTERN = /turnstile|cloudflare|captcha|challenge|人机|验证码|校验/i;
 const USER_ID_MISSING_PATTERN = /missing[^\n]*(?:user[-_ ]?id|new-api-user)|(?:user[-_ ]?id|new-api-user)[^\n]*(?:missing|required)|用户\s*(?:id|ID)[^\n]*(?:缺少|必填|需要)|未提供[^\n]*用户/i;
 const USER_ID_MISMATCH_PATTERN = /(?:user[-_ ]?id|new-api-user)[^\n]*(?:mismatch|does not match|incorrect)|用户\s*(?:id|ID)[^\n]*(?:不匹配|不一致|错误)/i;
@@ -170,6 +176,48 @@ export class CheckinService {
         credential_updated_at: session.updated_at,
       });
     };
+
+    if (isAnyRouterBaseUrl(baseUrl)) {
+      if (!requestContext || session.auth_kind !== "browser_session") {
+        return finish({
+          status: "login_required",
+          success: false,
+          message: "AnyRouter 签到需要浏览器登录，请登录该站点后台账号后重试",
+          endpoint: ANYROUTER_CHECKIN_ENDPOINT,
+          manual_url: ANYROUTER_CHECKIN_PAGE_URL,
+        });
+      }
+      if (!savedUserId) {
+        return finish(failedResult(ANYROUTER_CHECKIN_ENDPOINT, "浏览器后台账号缺少已验证的用户 ID", "user_id_missing"));
+      }
+      // This provider has no verified read-only daily status endpoint. A stale
+      // generic learned path must not prevent its explicit check-in action.
+      const response = await request(
+        ANYROUTER_CHECKIN_ENDPOINT,
+        requestTimeout(timeoutMs),
+        { "X-Requested-With": "XMLHttpRequest" },
+        { method: "POST" },
+      );
+      const result = classifyAnyRouterResponse(response, baseUrl);
+      emitDiagnostic(diagnostics, {
+        event: "auth_attempt",
+        run_id: diagnostics?.runId ?? "",
+        trigger: diagnostics?.trigger ?? "manual",
+        base_url_host: "anyrouter.top",
+        stage: "sign_in_cookie",
+        authorization_mode: requestContext.authMode === "browser_bearer" ? "bearer" : "none",
+        cookie_mode: "none",
+        user_id_source: "saved",
+        method: "POST",
+        endpoint_path: "/api/user/sign_in",
+        http_status: response.status,
+        payload_success: result.success,
+        response_kind: response.responseKind,
+        message_code: diagnosticMessageCode(result),
+        duration_ms: response.durationMs,
+      });
+      return finish(result);
+    }
 
     if (!requestContext && isKnownUnsupportedCheckinPlatform(baseUrl)) {
       return finish(unsupportedResult(
@@ -885,6 +933,55 @@ function inspectCheckinStatus(
   };
 }
 
+function classifyAnyRouterResponse(response: CheckinResponse, baseUrl: string): CheckinResult {
+  const endpoint = ANYROUTER_CHECKIN_ENDPOINT;
+  const message = extractResponseMessage(response);
+  if (response.status === 0) {
+    return failedResult(endpoint, "未能确认签到结果，可稍后重新签到", "network_error");
+  }
+  if (looksLikeManualVerification(response.bodyText, message)) {
+    return manualRequiredResult(endpoint, baseUrl, "AnyRouter 需要人工验证，请完成验证后重试签到");
+  }
+  const errorCode = classifyErrorCode(response, message);
+  if (isAuthErrorCode(errorCode)) {
+    return {
+      status: "login_required",
+      success: false,
+      message: "AnyRouter 登录状态已失效，请重新登录该后台账号后签到",
+      endpoint,
+      manual_url: ANYROUTER_CHECKIN_PAGE_URL,
+      error_code: errorCode,
+    };
+  }
+  if (response.status < 200 || response.status >= 300) {
+    return response.status === 404 || response.status === 405
+      ? unsupportedResult(endpoint, baseUrl, "AnyRouter 签到接口暂不可用")
+      : failedResult(endpoint, defaultFailureMessage(response.status, errorCode), errorCode);
+  }
+  if (response.responseKind !== "json" || !response.payload || typeof response.payload !== "object" || Array.isArray(response.payload)) {
+    return failedResult(endpoint, "AnyRouter 未返回可确认的签到结果，请稍后重试", "unknown_failure");
+  }
+  const payload = response.payload as Record<string, unknown>;
+  if (ANYROUTER_ALREADY_CHECKED_PATTERN.test(message)) {
+    return alreadyCheckedResult(endpoint, message, extractReward(payload));
+  }
+  const conflictingStatus = ("success" in payload && payload.success !== true)
+    || ("ret" in payload && payload.ret !== 1)
+    || ("code" in payload && payload.code !== 0)
+    || (payload.error !== undefined && payload.error !== null && payload.error !== "" && payload.error !== false)
+    || /失败|拒绝|不足|\b(?:failed|failure|denied|insufficient)\b/i.test(message);
+  if (!conflictingStatus && (payload.success === true || payload.ret === 1 || payload.code === 0)) {
+    return {
+      status: "success",
+      success: true,
+      message: message || "签到成功",
+      endpoint,
+      ...(extractReward(payload) ? { reward: extractReward(payload) } : {}),
+    };
+  }
+  return failedResult(endpoint, message || "AnyRouter 未确认签到成功，请稍后重试", "business_rejected");
+}
+
 function classifyResponse(
   response: CheckinResponse,
   endpoint: string,
@@ -1065,7 +1162,7 @@ function normalizeFinalFailure(
   result: CheckinResult,
   userIdDiscoveryAllowed: boolean,
 ): CheckinResult {
-  if (result.success || result.status === "manual_required" || result.error_code === "business_rejected") {
+  if (result.success || result.status === "manual_required" || result.status === "login_required" || result.error_code === "business_rejected") {
     return result;
   }
   if (result.error_code === "user_id_missing" || result.error_code === "user_id_mismatch") {

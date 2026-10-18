@@ -316,6 +316,111 @@ describe("AgentTaskManager", () => {
     }));
   });
 
+  it("reports provider failures and resumes the same session only on explicit continue", async () => {
+    const fixture = createFixture({ initialPromptSubmitted: true });
+    const initial = await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "first task",
+      waitMs: 0,
+    });
+    const error = {
+      code: "provider_error",
+      message: "unexpected status 503 Service Unavailable: No available channel",
+      retryable: true,
+    };
+
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_failed",
+      error,
+    });
+
+    expect(fixture.manager.status(initial.session_id)).toMatchObject({
+      ok: false,
+      status: "failed",
+      session_id: initial.session_id,
+      assistant_text: "",
+      question: null,
+      error,
+    });
+
+    await expect(fixture.manager.continue(initial.session_id, "retry explicitly", 0))
+      .resolves.toMatchObject({
+        ok: true,
+        status: "running",
+        session_id: initial.session_id,
+        error: null,
+      });
+    expect(fixture.sentInputs.at(-1)).toEqual({
+      sessionId: "terminal-1",
+      data: "retry explicitly",
+    });
+  });
+
+  it("does not let stale completion events overwrite a provider failure", async () => {
+    let resolveRead!: (value: string) => void;
+    const oldRead = new Promise<string>((resolve) => {
+      resolveRead = resolve;
+    });
+    const fixture = createFixture({ initialPromptSubmitted: true });
+    fixture.readLastAssistantText.mockImplementationOnce(() => oldRead);
+    const initial = await fixture.manager.run({
+      profileKey: "codex::demo",
+      prompt: "first task",
+      waitMs: 0,
+    });
+    fixture.manager.associateProviderSession("terminal-1", "provider-session", "session.jsonl");
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "busy",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    await vi.waitFor(() => expect(fixture.readLastAssistantText).toHaveBeenCalledTimes(1));
+
+    const error = {
+      code: "provider_error",
+      message: "unexpected status 521 Web Server Is Down",
+      retryable: true,
+    };
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "idle",
+      activity: "idle",
+      reason: "turn_failed",
+      error,
+    });
+    resolveRead("stale assistant result");
+    await Promise.resolve();
+
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "idle",
+      activity: "idle",
+      reason: "turn_completed",
+    });
+    fixture.manager.handleActivityChange({
+      sessionId: "terminal-1",
+      provider: "codex",
+      previousActivity: "idle",
+      activity: "idle",
+      reason: "idle_prompt",
+    });
+
+    expect(fixture.manager.status(initial.session_id)).toMatchObject({
+      status: "failed",
+      assistant_text: "",
+      error,
+    });
+    expect(fixture.readLastAssistantText).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps an interactive prompt awaiting input when an idle prompt is reported", async () => {
     const fixture = createFixture({ initialPromptSubmitted: true });
     const initial = await fixture.manager.run({
