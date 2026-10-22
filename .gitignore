@@ -46,6 +46,10 @@ release/
 release-*/
 *.blockmap
 
+# Portable packages exceed GitHub's 100 MB single-file limit
+CodeDeck-Portable-*.zip
+*.bundle
+
 # Local browser/test artifacts
 .codedeck-bridge-test/
 .playwright-mcp/
